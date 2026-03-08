@@ -1,0 +1,55 @@
+{
+  "app": {
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "compatibleSdkVersion": "5.0.0(12)",
+        "targetSdkVersion": "6.0.2(22)",
+        "runtimeOS": "HarmonyOS"
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+        "buildOption": {
+          "strictMode": {
+            "useNormalizedOHMUrl": true
+          }
+        }
+      },
+      {
+        "name": "release"
+      }
+    ],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\gzr\\.ohos\\config\\default_code_ortXc_lfck890vB3q-l4_o4ZeTXBlluK_RPZzHQTL0Q=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001BF2299ECD8F64D03884F4BB587154489150F359EE2459B5F558B61E98C2D299520E7F8B3E88E4F8",
+          "profile": "C:\\Users\\gzr\\.ohos\\config\\default_code_ortXc_lfck890vB3q-l4_o4ZeTXBlluK_RPZzHQTL0Q=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\gzr\\.ohos\\config\\default_code_ortXc_lfck890vB3q-l4_o4ZeTXBlluK_RPZzHQTL0Q=.p12",
+          "storePassword": "0000001BB47B11BDB8A7FCDB8C622DEF0B6438B8F1C6563F2F08FA9F4611E796B10BC39B9A4921784F7862"
+        }
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

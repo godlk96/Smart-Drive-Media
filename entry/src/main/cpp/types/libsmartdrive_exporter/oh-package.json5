@@ -1,0 +1,6 @@
+{
+  "name": "libsmartdrive_exporter.so",
+  "types": "./Index.d.ts",
+  "version": "1.0.0",
+  "description": "SmartDrive native exporter napi module"
+}

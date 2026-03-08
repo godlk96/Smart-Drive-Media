@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>剪辑工作台 - 智驾影音</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            500: '#3B82F6',
+                            600: '#2563EB',
+                        },
+                        slate: {
+                            50: '#F8FAFC',
+                            400: '#94A3B8',
+                            500: '#64748B',
+                            600: '#475569',
+                            700: '#334155',
+                            800: '#1E293B',
+                            900: '#0F172A',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['HarmonyOS Sans', 'Roboto', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #0F172A;
+            color: #F8FAFC;
+        }
+        .scrollbar-hide::-webkit-scrollbar {
+            display: none;
+        }
+        .scrollbar-hide {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+</head>
+<body class="antialiased min-h-screen flex flex-col h-screen overflow-hidden">
+
+    <!-- Header -->
+    <header class="h-14 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4 z-50">
+        <a href="index.html" class="p-2 -ml-2 rounded-full hover:bg-slate-800 text-slate-400">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+            </svg>
+        </a>
+        <div class="text-center">
+            <h1 class="text-sm font-bold">3月6日 夜间行车</h1>
+            <p class="text-[10px] text-slate-500">22:20 - 23:05</p>
+        </div>
+        <button class="bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold px-4 py-1.5 rounded-full transition-colors">
+            导出
+        </button>
+    </header>
+
+    <!-- Video Preview Area (Top Half) -->
+    <div class="flex-1 bg-black relative flex items-center justify-center group">
+        <!-- Main Video Placeholder -->
+        <div class="w-full h-full bg-slate-900 flex items-center justify-center relative overflow-hidden">
+            <!-- Simulated Video Content -->
+            <div class="absolute inset-0 bg-gradient-to-b from-transparent to-black/60 z-10"></div>
+            <img src="https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?ixlib=rb-1.2.1&auto=format&fit=crop&w=1950&q=80" alt="Driving" class="w-full h-full object-cover opacity-80">
+            
+            <!-- PIP (Picture in Picture) Preview -->
+            <div class="absolute top-4 right-4 w-32 h-20 bg-slate-800 rounded-lg border border-slate-600 shadow-lg overflow-hidden z-20">
+                <img src="https://images.unsplash.com/photo-1449965408869-eaa3f722e40d?ixlib=rb-1.2.1&auto=format&fit=crop&w=1950&q=80" class="w-full h-full object-cover">
+                <div class="absolute bottom-1 right-1 text-[8px] bg-black/50 px-1 rounded text-white">后视</div>
+            </div>
+
+            <!-- Play Button Overlay -->
+            <button class="absolute z-30 bg-white/20 backdrop-blur-sm p-4 rounded-full hover:bg-white/30 transition-all">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-white fill-current" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z"/>
+                </svg>
+            </button>
+
+            <!-- Mode Switcher -->
+            <div class="absolute bottom-4 left-1/2 -translate-x-1/2 flex space-x-2 z-30 bg-black/50 backdrop-blur rounded-full p-1">
+                <button class="px-3 py-1 text-xs rounded-full bg-brand-600 text-white">单视</button>
+                <button class="px-3 py-1 text-xs rounded-full hover:bg-white/10 text-slate-300">画中画</button>
+                <button class="px-3 py-1 text-xs rounded-full hover:bg-white/10 text-slate-300">全景</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Controls & Timeline (Bottom Half) -->
+    <div class="h-[45%] bg-slate-900 flex flex-col border-t border-slate-800">
+        
+        <!-- Toolbar -->
+        <div class="h-12 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-800/50">
+            <div class="flex space-x-4">
+                <button class="flex flex-col items-center space-y-0.5 text-slate-400 hover:text-white">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" />
+                    </svg>
+                    <span class="text-[9px]">截取</span>
+                </button>
+                <button class="flex flex-col items-center space-y-0.5 text-brand-500">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                    </svg>
+                    <span class="text-[9px]">隐私</span>
+                </button>
+            </div>
+            
+            <div class="flex items-center space-x-2">
+                <span class="text-xs text-slate-500 font-mono">00:05:23 / 00:45:00</span>
+            </div>
+        </div>
+
+        <!-- Privacy Settings Panel (Contextual) -->
+        <div class="bg-slate-800/80 px-4 py-2 flex items-center space-x-4 border-b border-slate-700/50">
+            <span class="text-[10px] text-slate-400 uppercase tracking-wider font-bold">隐私遮挡</span>
+            <label class="flex items-center space-x-2 cursor-pointer">
+                <input type="checkbox" checked class="form-checkbox h-3 w-3 text-brand-500 rounded bg-slate-700 border-slate-600 focus:ring-0">
+                <span class="text-xs text-slate-300">车速</span>
+            </label>
+            <label class="flex items-center space-x-2 cursor-pointer">
+                <input type="checkbox" checked class="form-checkbox h-3 w-3 text-brand-500 rounded bg-slate-700 border-slate-600 focus:ring-0">
+                <span class="text-xs text-slate-300">GPS</span>
+            </label>
+            <label class="flex items-center space-x-2 cursor-pointer">
+                <input type="checkbox" class="form-checkbox h-3 w-3 text-brand-500 rounded bg-slate-700 border-slate-600 focus:ring-0">
+                <span class="text-xs text-slate-300">VIN码</span>
+            </label>
+        </div>
+
+        <!-- Multi-Track Timeline -->
+        <div class="flex-1 overflow-y-auto overflow-x-hidden relative bg-slate-900 pt-2">
+            <!-- Time Ruler -->
+            <div class="h-6 w-full flex text-[10px] text-slate-500 border-b border-slate-800 sticky top-0 bg-slate-900 z-10 pl-24">
+                <div class="flex-1 flex justify-between px-2">
+                    <span>00:00</span><span>00:15</span><span>00:30</span><span>00:45</span><span>01:00</span>
+                </div>
+            </div>
+
+            <!-- Tracks Container -->
+            <div class="relative min-w-full">
+                <!-- Playhead (Global) -->
+                <div class="absolute top-0 bottom-0 left-1/2 w-0.5 bg-brand-500 z-20 shadow-[0_0_10px_rgba(59,130,246,0.5)]">
+                    <div class="absolute -top-1 -left-1.5 w-3 h-3 bg-brand-500 rotate-45"></div>
+                </div>
+
+                <!-- Track 1: Front (Main) -->
+                <div class="h-12 flex items-center border-b border-slate-800/50 relative group hover:bg-slate-800/30 transition-colors">
+                    <div class="w-20 pl-4 text-xs text-slate-400 font-medium sticky left-0 bg-slate-900 z-10 flex items-center h-full shadow-r">
+                        <span class="w-2 h-8 rounded-l bg-blue-500/50 mr-2"></span>前摄
+                    </div>
+                    <div class="flex-1 flex space-x-0.5 px-4 overflow-hidden">
+                        <div class="h-8 w-24 bg-slate-700 rounded-sm border border-slate-600"></div>
+                        <div class="h-8 w-24 bg-slate-700 rounded-sm border border-slate-600"></div>
+                        <div class="h-8 w-24 bg-brand-900/40 rounded-sm border border-brand-500/50 relative overflow-hidden">
+                            <div class="absolute inset-0 flex items-center justify-center text-[8px] text-brand-200">Selected</div>
+                        </div>
+                        <div class="h-8 w-24 bg-slate-700 rounded-sm border border-slate-600"></div>
+                    </div>
+                </div>
+
+                <!-- Track 2: Back -->
+                <div class="h-12 flex items-center border-b border-slate-800/50 relative group hover:bg-slate-800/30 transition-colors">
+                    <div class="w-20 pl-4 text-xs text-slate-400 font-medium sticky left-0 bg-slate-900 z-10 flex items-center h-full">
+                        <span class="w-2 h-8 rounded-l bg-slate-600 mr-2"></span>后摄
+                    </div>
+                    <div class="flex-1 flex space-x-0.5 px-4 overflow-hidden opacity-80">
+                        <div class="h-8 w-24 bg-slate-800 rounded-sm border border-slate-700"></div>
+                        <div class="h-8 w-24 bg-slate-800 rounded-sm border border-slate-700"></div>
+                        <div class="h-8 w-24 bg-slate-800 rounded-sm border border-slate-700"></div>
+                        <div class="h-8 w-24 bg-slate-800 rounded-sm border border-slate-700"></div>
+                    </div>
+                </div>
+
+                <!-- Track 3: Left -->
+                <div class="h-12 flex items-center border-b border-slate-800/50 relative group hover:bg-slate-800/30 transition-colors">
+                    <div class="w-20 pl-4 text-xs text-slate-500 font-medium sticky left-0 bg-slate-900 z-10 flex items-center h-full">
+                        <span class="w-2 h-8 rounded-l bg-slate-700 mr-2"></span>左侧
+                    </div>
+                    <div class="flex-1 flex space-x-0.5 px-4 overflow-hidden opacity-60">
+                        <div class="h-8 w-24 bg-slate-800 rounded-sm border border-slate-700"></div>
+                        <div class="h-8 w-24 bg-slate-800/50 rounded-sm border border-slate-700 border-dashed"></div> <!-- Missing Segment -->
+                        <div class="h-8 w-24 bg-slate-800 rounded-sm border border-slate-700"></div>
+                        <div class="h-8 w-24 bg-slate-800 rounded-sm border border-slate-700"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>

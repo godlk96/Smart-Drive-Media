@@ -1,0 +1,12 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "entry module",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "libsmartdrive_exporter.so": "file:./src/main/cpp/types/libsmartdrive_exporter",
+    "@sj/ffmpeg": "2.0.2"
+  }
+}

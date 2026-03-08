@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "app_name",
+      "value": "智驾影音"
+    },
+    {
+      "name": "module_desc",
+      "value": "智驾影音 HarmonyOS6 API22 壳工程"
+    },
+    {
+      "name": "permission_read_media_reason",
+      "value": "用于读取本机媒体文件并构建行程库"
+    },
+    {
+      "name": "permission_read_imagevideo_reason",
+      "value": "用于读取图片和视频文件以进行剪辑与导出"
+    },
+    {
+      "name": "permission_write_imagevideo_reason",
+      "value": "用于将导出视频写入系统相册"
+    }
+  ]
+}
