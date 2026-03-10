@@ -14,12 +14,17 @@
     "codebase-search": {
       "source": "supercent-io/skills-template",
       "sourceType": "github",
-      "computedHash": "6390cbb0df21130adea16a0bd854131213733e7df2e027743c29033985811aa9"
+      "computedHash": "e0c9dd7e2f99574d78109db2bad6475801b4748e2f91a8fce7e736f5efa15923"
     },
     "frontend-design": {
       "source": "anthropics/skills",
       "sourceType": "github",
-      "computedHash": "516bd2154eb843a8240e43d5b285229129853114ad7075a5e141e1c08e408c84"
+      "computedHash": "063a0e6448123cd359ad0044cc46b0e490cc7964d45ef4bb9fd842bd2ffbca67"
+    },
+    "prd-development": {
+      "source": "deanpeters/product-manager-skills",
+      "sourceType": "github",
+      "computedHash": "03f7586e21391986880d3c7a50bcd845ed8d3b3922298b7d8b0e2e6359f5c598"
     },
     "remotion-best-practices": {
       "source": "remotion-dev/skills",
@@ -29,12 +34,17 @@
     "sleek-design-mobile-apps": {
       "source": "sleekdotdesign/agent-skills",
       "sourceType": "github",
-      "computedHash": "3886ddabb4e56f93a18fd6da9c51181f8bce953e543a55e480757e3980af1d8f"
+      "computedHash": "58114c00f6fad065388af90270ce9a1c95c327a009889397525c92694afde12d"
+    },
+    "technical-design-doc-creator": {
+      "source": "tech-leads-club/agent-skills",
+      "sourceType": "github",
+      "computedHash": "d05974df076f695f96b4e4c263ad19f2aaffe8ee6248c1b07a634dd9ed0ea51e"
     },
     "ui-ux-pro-max": {
       "source": "nextlevelbuilder/ui-ux-pro-max-skill",
       "sourceType": "github",
-      "computedHash": "4cfe5e95a230616c17d92b44e3cd37bae543ce087a7756a446a62f77d7c58a37"
+      "computedHash": "e688fcd4c5693e14ebd00d48e982dbd2be060fbea89f5f60531e79c704a1bc28"
     },
     "vercel-composition-patterns": {
       "source": "vercel-labs/agent-skills",
@@ -54,7 +64,7 @@
     "web-design-guidelines": {
       "source": "vercel-labs/agent-skills",
       "sourceType": "github",
-      "computedHash": "d8e7d3afe37dcc8a97b99ffb5afdb4d0919ae0092ea8b68f44eb201f035e33ac"
+      "computedHash": "a6a44d5498f7e8f68289902f3dedfc6f38ae0cee1e96527c80724cf27f727c2a"
     }
   }
 }

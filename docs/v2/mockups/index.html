@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Smart Drive Video V2 - Trip Library</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b',
+                            950: '#020617',
+                        },
+                        orange: {
+                            500: '#f97316',
+                            600: '#ea580c',
+                        }
+                    },
+                    spacing: {
+                        'safe-top': 'env(safe-area-inset-top)',
+                        'safe-bottom': 'env(safe-area-inset-bottom)',
+                        'safe-left': 'env(safe-area-inset-left)',
+                        'safe-right': 'env(safe-area-inset-right)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        body {
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-50 font-sans antialiased h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="h-[calc(3.5rem+env(safe-area-inset-top))] pt-safe-top px-4 flex items-center justify-between bg-slate-900/90 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50 transition-all">
+        <h1 id="header-title" class="text-lg font-bold tracking-tight">Library</h1>
+        
+        <div id="header-selection" class="hidden flex items-center gap-2">
+            <button onclick="toggleSelectionMode()" class="text-slate-400 text-sm font-medium p-2 -ml-2">Cancel</button>
+            <span class="text-white font-bold" id="selected-count">0 Selected</span>
+        </div>
+
+        <div class="flex items-center space-x-2">
+            <button id="btn-select" onclick="toggleSelectionMode()" class="px-3 py-1.5 text-xs font-bold text-orange-500 bg-orange-500/10 border border-orange-500/20 rounded-full active:bg-orange-500 active:text-white transition-colors">
+                Select
+            </button>
+            <button id="btn-settings" class="p-2 text-slate-400 active:text-white transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Trip List (Grid Layout) -->
+    <main class="flex-1 overflow-y-auto p-4 pb-[calc(8rem+env(safe-area-inset-bottom))]">
+        
+        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Today, March 10</div>
+        
+        <!-- Grid Container -->
+        <div class="grid grid-cols-2 gap-3">
+            
+            <!-- Trip Card 1: 22:17 -->
+            <div class="trip-item relative group aspect-[4/3]" onclick="handleItemClick(this)">
+                <!-- Selection Overlay (Full cover) -->
+                <div class="selection-overlay absolute inset-0 z-20 bg-orange-500/20 border-2 border-orange-500 rounded-xl hidden pointer-events-none transition-all">
+                    <div class="absolute top-2 right-2 w-5 h-5 bg-orange-500 rounded-full flex items-center justify-center shadow-sm">
+                        <svg class="w-3 h-3 text-white" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </div>
+                </div>
+
+                <!-- Content -->
+                <div class="card-content w-full h-full bg-slate-900 rounded-xl overflow-hidden relative active:scale-[0.98] transition-transform">
+                    <!-- Front Camera Thumbnail (Simulated Image) -->
+                    <div class="absolute inset-0 bg-slate-800">
+                         <!-- Placeholder pattern to simulate road -->
+                         <div class="w-full h-full opacity-30" style="background-image: linear-gradient(135deg, #1e293b 25%, #334155 25%, #334155 50%, #1e293b 50%, #1e293b 75%, #334155 75%, #334155 100%); background-size: 20px 20px;"></div>
+                         <div class="absolute inset-0 flex items-center justify-center">
+                            <svg class="w-8 h-8 text-slate-500 opacity-50" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 10l4.553-2.276A1 1 0 0 1 21 8.618v6.764a1 1 0 0 1-1.447.894L15 14M5 18h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z"/></svg>
+                         </div>
+                    </div>
+                    
+                    <!-- Gradient Overlay -->
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent"></div>
+
+                    <!-- Metadata -->
+                    <div class="absolute top-2 right-2 px-1.5 py-0.5 bg-black/60 backdrop-blur rounded text-[10px] font-mono text-white font-medium">
+                        01:00
+                    </div>
+
+                    <div class="absolute bottom-2 left-2 right-2">
+                        <h3 class="text-sm font-bold text-white leading-tight">22:17</h3>
+                        <div class="flex justify-between items-end mt-0.5">
+                            <span class="text-[10px] text-slate-400 font-medium">Clip #302</span>
+                            <div class="flex gap-0.5">
+                                <div class="w-1.5 h-1.5 rounded-full bg-orange-500"></div>
+                                <div class="w-1.5 h-1.5 rounded-full bg-slate-600"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trip Card 2: 22:16 -->
+            <div class="trip-item relative group aspect-[4/3]" onclick="handleItemClick(this)">
+                <div class="selection-overlay absolute inset-0 z-20 bg-orange-500/20 border-2 border-orange-500 rounded-xl hidden pointer-events-none transition-all">
+                    <div class="absolute top-2 right-2 w-5 h-5 bg-orange-500 rounded-full flex items-center justify-center shadow-sm">
+                        <svg class="w-3 h-3 text-white" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </div>
+                </div>
+                <div class="card-content w-full h-full bg-slate-900 rounded-xl overflow-hidden relative active:scale-[0.98] transition-transform">
+                    <div class="absolute inset-0 bg-slate-800">
+                         <div class="w-full h-full opacity-30" style="background-image: linear-gradient(135deg, #1e293b 25%, #334155 25%, #334155 50%, #1e293b 50%, #1e293b 75%, #334155 75%, #334155 100%); background-size: 20px 20px;"></div>
+                         <div class="absolute inset-0 flex items-center justify-center">
+                            <svg class="w-8 h-8 text-slate-500 opacity-50" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 10l4.553-2.276A1 1 0 0 1 21 8.618v6.764a1 1 0 0 1-1.447.894L15 14M5 18h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z"/></svg>
+                         </div>
+                    </div>
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent"></div>
+                    <div class="absolute top-2 right-2 px-1.5 py-0.5 bg-black/60 backdrop-blur rounded text-[10px] font-mono text-white font-medium">
+                        01:00
+                    </div>
+                    <div class="absolute bottom-2 left-2 right-2">
+                        <h3 class="text-sm font-bold text-white leading-tight">22:16</h3>
+                        <div class="flex justify-between items-end mt-0.5">
+                            <span class="text-[10px] text-slate-400 font-medium">Clip #301</span>
+                            <div class="flex gap-0.5">
+                                <div class="w-1.5 h-1.5 rounded-full bg-orange-500"></div>
+                                <div class="w-1.5 h-1.5 rounded-full bg-slate-600"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trip Card 3: 22:15 -->
+            <div class="trip-item relative group aspect-[4/3]" onclick="handleItemClick(this)">
+                <div class="selection-overlay absolute inset-0 z-20 bg-orange-500/20 border-2 border-orange-500 rounded-xl hidden pointer-events-none transition-all">
+                    <div class="absolute top-2 right-2 w-5 h-5 bg-orange-500 rounded-full flex items-center justify-center shadow-sm">
+                        <svg class="w-3 h-3 text-white" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </div>
+                </div>
+                <div class="card-content w-full h-full bg-slate-900 rounded-xl overflow-hidden relative active:scale-[0.98] transition-transform">
+                    <div class="absolute inset-0 bg-slate-800">
+                         <div class="w-full h-full opacity-30" style="background-image: linear-gradient(135deg, #1e293b 25%, #334155 25%, #334155 50%, #1e293b 50%, #1e293b 75%, #334155 75%, #334155 100%); background-size: 20px 20px;"></div>
+                         <div class="absolute inset-0 flex items-center justify-center">
+                            <svg class="w-8 h-8 text-slate-500 opacity-50" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 10l4.553-2.276A1 1 0 0 1 21 8.618v6.764a1 1 0 0 1-1.447.894L15 14M5 18h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z"/></svg>
+                         </div>
+                    </div>
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent"></div>
+                    <div class="absolute top-2 right-2 px-1.5 py-0.5 bg-black/60 backdrop-blur rounded text-[10px] font-mono text-white font-medium">
+                        01:00
+                    </div>
+                    <div class="absolute bottom-2 left-2 right-2">
+                        <h3 class="text-sm font-bold text-white leading-tight">22:15</h3>
+                        <div class="flex justify-between items-end mt-0.5">
+                            <span class="text-[10px] text-slate-400 font-medium">Clip #300</span>
+                            <div class="flex gap-0.5">
+                                <div class="w-1.5 h-1.5 rounded-full bg-orange-500"></div>
+                                <div class="w-1.5 h-1.5 rounded-full bg-slate-600"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trip Card 4: 22:14 -->
+             <div class="trip-item relative group aspect-[4/3]" onclick="handleItemClick(this)">
+                <div class="selection-overlay absolute inset-0 z-20 bg-orange-500/20 border-2 border-orange-500 rounded-xl hidden pointer-events-none transition-all">
+                    <div class="absolute top-2 right-2 w-5 h-5 bg-orange-500 rounded-full flex items-center justify-center shadow-sm">
+                        <svg class="w-3 h-3 text-white" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </div>
+                </div>
+                <div class="card-content w-full h-full bg-slate-900 rounded-xl overflow-hidden relative active:scale-[0.98] transition-transform">
+                    <div class="absolute inset-0 bg-slate-800">
+                         <div class="w-full h-full opacity-30" style="background-image: linear-gradient(135deg, #1e293b 25%, #334155 25%, #334155 50%, #1e293b 50%, #1e293b 75%, #334155 75%, #334155 100%); background-size: 20px 20px;"></div>
+                         <div class="absolute inset-0 flex items-center justify-center">
+                            <svg class="w-8 h-8 text-slate-500 opacity-50" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 10l4.553-2.276A1 1 0 0 1 21 8.618v6.764a1 1 0 0 1-1.447.894L15 14M5 18h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z"/></svg>
+                         </div>
+                    </div>
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent"></div>
+                    <div class="absolute top-2 right-2 px-1.5 py-0.5 bg-black/60 backdrop-blur rounded text-[10px] font-mono text-white font-medium">
+                        01:00
+                    </div>
+                    <div class="absolute bottom-2 left-2 right-2">
+                        <h3 class="text-sm font-bold text-white leading-tight">22:14</h3>
+                        <div class="flex justify-between items-end mt-0.5">
+                            <span class="text-[10px] text-slate-400 font-medium">Clip #299</span>
+                            <div class="flex gap-0.5">
+                                <div class="w-1.5 h-1.5 rounded-full bg-orange-500"></div>
+                                <div class="w-1.5 h-1.5 rounded-full bg-slate-600"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Normal Mode: Import FAB -->
+    <button id="fab-import" class="fixed bottom-[calc(2rem+env(safe-area-inset-bottom))] right-6 w-14 h-14 bg-orange-600 active:bg-orange-500 text-white rounded-full shadow-xl shadow-orange-900/40 flex items-center justify-center transition-all active:scale-95 z-50 duration-300">
+        <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+    </button>
+
+    <!-- Selection Mode: Bottom Merge Bar -->
+    <div id="merge-bar" class="fixed bottom-0 left-0 w-full bg-slate-900/95 backdrop-blur-md border-t border-slate-800 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-4 px-6 flex items-center justify-between translate-y-full transition-transform duration-300 z-50">
+        <div class="text-sm text-slate-400">
+            <span id="merge-duration">0 min</span> total
+        </div>
+        <button id="btn-merge" class="px-6 py-3 bg-orange-600 active:bg-orange-500 text-white font-bold rounded-xl shadow-lg disabled:opacity-50 disabled:grayscale transition-all flex items-center gap-2" disabled onclick="window.location.href='editor.html'">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+            Merge & Edit
+        </button>
+    </div>
+
+    <script>
+        let isSelectionMode = false;
+        let selectedCount = 0;
+
+        function toggleSelectionMode() {
+            isSelectionMode = !isSelectionMode;
+            
+            // Header UI
+            document.getElementById('header-title').classList.toggle('hidden');
+            document.getElementById('header-selection').classList.toggle('hidden');
+            document.getElementById('btn-select').classList.toggle('hidden');
+            document.getElementById('btn-settings').classList.toggle('hidden');
+
+            // FAB & Merge Bar
+            const fab = document.getElementById('fab-import');
+            const mergeBar = document.getElementById('merge-bar');
+            
+            if (isSelectionMode) {
+                fab.classList.add('translate-y-32', 'opacity-0');
+                mergeBar.classList.remove('translate-y-full');
+            } else {
+                fab.classList.remove('translate-y-32', 'opacity-0');
+                mergeBar.classList.add('translate-y-full');
+                resetSelections();
+            }
+
+            // Visual State for Selection Mode
+            // In Grid mode, we don't shift content, we just enable the overlay logic
+        }
+
+        function handleItemClick(element) {
+            if (!isSelectionMode) {
+                // Normal mode: Go to editor
+                window.location.href = 'editor.html';
+                return;
+            }
+
+            // Selection mode logic
+            const overlay = element.querySelector('.selection-overlay');
+            const isSelected = !overlay.classList.contains('hidden');
+
+            if (isSelected) {
+                // Deselect
+                overlay.classList.add('hidden');
+                selectedCount--;
+            } else {
+                // Select
+                overlay.classList.remove('hidden');
+                selectedCount++;
+            }
+
+            updateSelectionUI();
+        }
+
+        function updateSelectionUI() {
+            document.getElementById('selected-count').textContent = `${selectedCount} Selected`;
+            document.getElementById('merge-duration').textContent = `${selectedCount} min`;
+            
+            const btnMerge = document.getElementById('btn-merge');
+            if (selectedCount > 0) {
+                btnMerge.removeAttribute('disabled');
+            } else {
+                btnMerge.setAttribute('disabled', 'true');
+            }
+        }
+
+        function resetSelections() {
+            selectedCount = 0;
+            document.querySelectorAll('.selection-overlay').forEach(el => el.classList.add('hidden'));
+            updateSelectionUI();
+        }
+    </script>
+</body>
+</html>

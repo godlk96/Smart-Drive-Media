@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Smart Drive Video V2 - Editor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', // Custom dark
+                            950: '#020617', // Deep background
+                        },
+                        orange: {
+                            500: '#f97316', // Primary Action
+                            600: '#ea580c', // Hover Action
+                        }
+                    },
+                    spacing: {
+                        'safe-top': 'env(safe-area-inset-top)',
+                        'safe-bottom': 'env(safe-area-inset-bottom)',
+                        'safe-left': 'env(safe-area-inset-left)',
+                        'safe-right': 'env(safe-area-inset-right)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Hide scrollbar for Chrome, Safari and Opera */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        /* Hide scrollbar for IE, Edge and Firefox */
+        .no-scrollbar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+        body {
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-50 font-sans antialiased h-screen flex flex-col overflow-hidden">
+
+    <!-- Layer 1: The Stage (Preview Area) -->
+    <!-- Simulating 16:9 Aspect Ratio Container -->
+    <div class="flex-1 relative bg-black flex items-center justify-center overflow-hidden pt-safe-top">
+        
+        <!-- Video Container (16:9) -->
+        <div class="relative w-full max-w-4xl aspect-video bg-slate-900 shadow-2xl ring-1 ring-slate-800">
+            <!-- Main Video (Front) -->
+            <div class="absolute inset-0 flex items-center justify-center text-slate-600">
+                <span class="text-4xl md:text-6xl opacity-20 text-center font-bold tracking-widest">FRONT<br>CAMERA</span>
+            </div>
+
+            <!-- Overlay: Rear Camera (PiP Template) -->
+            <div class="absolute top-4 right-4 w-1/4 aspect-video bg-slate-800 rounded-lg shadow-lg border border-slate-700 overflow-hidden">
+                 <div class="w-full h-full flex items-center justify-center text-slate-500 text-[10px] md:text-xs font-bold tracking-wider">
+                    REAR
+                 </div>
+            </div>
+
+            <!-- Overlay: Privacy Mask (Speed) - Only visible if toggled -->
+            <div id="mask-speed" class="absolute bottom-4 left-4 w-24 md:w-32 h-6 md:h-8 bg-red-500/20 border border-red-500 backdrop-blur-sm rounded flex items-center justify-center text-red-200 text-[10px] md:text-xs font-mono hidden">
+                SPEED HIDDEN
+            </div>
+
+            <!-- Overlay: Watermark -->
+            <div class="absolute bottom-2 right-2 md:bottom-4 md:right-4 text-slate-400 text-[10px] md:text-xs font-medium opacity-50">
+                Shot on AITO
+            </div>
+        </div>
+
+        <!-- Top Bar: Navigation -->
+        <div class="absolute top-0 left-0 w-full pt-[calc(1rem+env(safe-area-inset-top))] px-4 pb-4 flex justify-between items-start z-10 bg-gradient-to-b from-black/80 to-transparent pointer-events-none">
+            <a href="index.html" class="pointer-events-auto p-2 rounded-full bg-slate-800/50 active:bg-slate-700/80 backdrop-blur text-white transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+            </a>
+            <a href="export.html" class="pointer-events-auto px-4 py-2 bg-orange-600 active:bg-orange-500 text-white text-sm font-bold rounded-full shadow-lg shadow-orange-900/20 transition-all active:scale-95">
+                Export 4K
+            </a>
+        </div>
+    </div>
+
+    <!-- Layer 2: Control Deck -->
+    <div class="h-14 bg-slate-900/90 border-t border-slate-800 flex items-center justify-between px-4 backdrop-blur-md shrink-0 z-20">
+        <!-- Left: Playback -->
+        <div class="flex items-center space-x-6">
+            <button class="text-slate-400 active:text-white p-2 -ml-2"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" x2="5" y1="19" y2="5"/></svg></button>
+            <button class="text-white active:text-orange-500 p-1"><svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
+            <button class="text-slate-400 active:text-white p-2"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" x2="19" y1="5" y2="19"/></svg></button>
+        </div>
+
+        <!-- Center: Timecode -->
+        <div class="font-mono text-sm text-slate-300 tabular-nums">
+            00:15 <span class="text-slate-600">/</span> 00:45
+        </div>
+
+        <!-- Right: Toggles -->
+        <div class="flex items-center space-x-3">
+            <button class="px-2 py-1 text-xs font-bold text-slate-400 border border-slate-700 rounded active:bg-slate-800 active:text-white transition">1.0X</button>
+            <button class="p-1 text-slate-400 active:text-white"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" x2="1" y1="9" y2="15"/></svg></button>
+        </div>
+    </div>
+
+    <!-- Layer 3: Logic Timeline -->
+    <div class="h-24 bg-slate-900 border-t border-slate-800 relative select-none shrink-0 touch-none">
+        <!-- Track Background (Thumbnails) -->
+        <div class="absolute inset-0 flex overflow-hidden opacity-30 grayscale pointer-events-none">
+            <!-- Simulated thumbnails -->
+            <div class="w-20 h-full bg-slate-700 border-r border-slate-800 shrink-0"></div>
+            <div class="w-20 h-full bg-slate-600 border-r border-slate-800 shrink-0"></div>
+            <div class="w-20 h-full bg-slate-700 border-r border-slate-800 shrink-0"></div>
+            <div class="w-20 h-full bg-slate-600 border-r border-slate-800 shrink-0"></div>
+            <div class="w-20 h-full bg-slate-700 border-r border-slate-800 shrink-0"></div>
+            <div class="w-20 h-full bg-slate-600 border-r border-slate-800 shrink-0"></div>
+            <div class="w-20 h-full bg-slate-700 border-r border-slate-800 shrink-0"></div>
+        </div>
+
+        <!-- Range Selection Overlay -->
+        <div class="absolute inset-0 px-8 flex items-center">
+            <!-- Left Handle -->
+            <div class="absolute left-1/4 top-0 bottom-0 w-8 -ml-4 bg-transparent z-20 flex items-center justify-center cursor-ew-resize touch-manipulation">
+                <div class="w-6 h-full bg-orange-500 rounded-l-lg shadow-lg flex items-center justify-center">
+                    <div class="w-1 h-8 bg-white/50 rounded-full"></div>
+                </div>
+            </div>
+            
+            <!-- Active Region (Highlight) -->
+            <div class="absolute left-1/4 right-1/4 top-0 bottom-0 bg-orange-500/10 border-t-2 border-b-2 border-orange-500 z-10 pointer-events-none"></div>
+
+            <!-- Right Handle -->
+            <div class="absolute right-1/4 top-0 bottom-0 w-8 -mr-4 bg-transparent z-20 flex items-center justify-center cursor-ew-resize touch-manipulation">
+                 <div class="w-6 h-full bg-orange-500 rounded-r-lg shadow-lg flex items-center justify-center">
+                    <div class="w-1 h-8 bg-white/50 rounded-full"></div>
+                </div>
+            </div>
+            
+            <!-- Playhead -->
+            <div class="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white z-30 shadow-[0_0_10px_rgba(255,255,255,0.5)] pointer-events-none">
+                <div class="absolute -top-1 -left-1.5 w-3 h-3 bg-white rotate-45"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Layer 4: Template Drawer & Privacy -->
+    <div class="bg-slate-950 border-t border-slate-800 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] flex flex-col space-y-4 shrink-0 z-30">
+        
+        <!-- Privacy Toggles (Floating above drawer) -->
+        <div class="flex justify-end space-x-2 -mt-12 mb-2 relative z-40 pointer-events-none">
+             <div class="pointer-events-auto flex space-x-2">
+                <label class="cursor-pointer group active:scale-95 transition-transform">
+                    <input type="checkbox" class="peer sr-only" onchange="document.getElementById('mask-speed').classList.toggle('hidden')">
+                    <div class="px-3 py-1.5 text-xs font-medium rounded-full bg-slate-900/90 border border-slate-700 text-slate-400 peer-checked:bg-red-900/90 peer-checked:text-red-400 peer-checked:border-red-500 transition-all select-none flex items-center gap-1.5 shadow-lg backdrop-blur">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
+                        Hide Speed
+                    </div>
+                </label>
+                <label class="cursor-pointer group active:scale-95 transition-transform">
+                    <input type="checkbox" class="peer sr-only">
+                    <div class="px-3 py-1.5 text-xs font-medium rounded-full bg-slate-900/90 border border-slate-700 text-slate-400 peer-checked:bg-red-900/90 peer-checked:text-red-400 peer-checked:border-red-500 transition-all select-none flex items-center gap-1.5 shadow-lg backdrop-blur">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        Hide VIN
+                    </div>
+                </label>
+            </div>
+        </div>
+
+        <!-- Template List (Horizontal Scroll) -->
+        <div class="flex space-x-4 overflow-x-auto no-scrollbar pb-2 px-1 snap-x">
+            
+            <!-- Template 1: Single View -->
+            <button class="snap-start flex-shrink-0 w-20 h-20 bg-slate-900 rounded-xl border border-slate-700 active:border-slate-500 flex flex-col items-center justify-center space-y-1.5 group transition-all active:scale-95">
+                <div class="p-1.5 bg-slate-800 rounded-lg group-active:bg-slate-700 transition-colors">
+                    <svg class="text-slate-400 group-active:text-white" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                </div>
+                <span class="text-[10px] text-slate-400 font-medium group-active:text-white">Single</span>
+            </button>
+
+            <!-- Template 2: PiP (Selected) -->
+            <button class="snap-start flex-shrink-0 w-20 h-20 bg-slate-800 rounded-xl border-2 border-orange-500 shadow-lg shadow-orange-900/20 flex flex-col items-center justify-center space-y-1.5 group transition-all relative overflow-hidden active:scale-95">
+                <div class="absolute inset-0 bg-orange-500/5"></div>
+                <div class="p-1.5 bg-slate-700 rounded-lg group-active:bg-slate-600 transition-colors z-10">
+                    <svg class="text-orange-400 group-active:text-orange-300" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><rect width="8" height="6" x="12" y="4" rx="1"/></svg>
+                </div>
+                <span class="text-[10px] text-orange-400 font-bold z-10">PiP (Rear)</span>
+            </button>
+
+            <!-- Template 3: Matrix -->
+            <button class="snap-start flex-shrink-0 w-20 h-20 bg-slate-900 rounded-xl border border-slate-700 active:border-slate-500 flex flex-col items-center justify-center space-y-1.5 group transition-all active:scale-95">
+                <div class="p-1.5 bg-slate-800 rounded-lg group-active:bg-slate-700 transition-colors">
+                    <svg class="text-slate-400 group-active:text-white" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
+                </div>
+                <span class="text-[10px] text-slate-400 font-medium group-active:text-white">Matrix</span>
+            </button>
+
+            <!-- Template 4: Vlog (Vertical) -->
+            <button class="snap-start flex-shrink-0 w-20 h-20 bg-slate-900 rounded-xl border border-slate-700 active:border-slate-500 flex flex-col items-center justify-center space-y-1.5 group transition-all active:scale-95">
+                <div class="p-1.5 bg-slate-800 rounded-lg group-active:bg-slate-700 transition-colors">
+                    <svg class="text-slate-400 group-active:text-white" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="10" height="18" x="7" y="3" rx="2"/></svg>
+                </div>
+                <span class="text-[10px] text-slate-400 font-medium group-active:text-white">Vlog (9:16)</span>
+            </button>
+
+             <!-- Template 5: Split -->
+             <button class="snap-start flex-shrink-0 w-20 h-20 bg-slate-900 rounded-xl border border-slate-700 active:border-slate-500 flex flex-col items-center justify-center space-y-1.5 group transition-all active:scale-95">
+                <div class="p-1.5 bg-slate-800 rounded-lg group-active:bg-slate-700 transition-colors">
+                    <svg class="text-slate-400 group-active:text-white" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><line x1="12" x2="12" y1="3" y2="21"/></svg>
+                </div>
+                <span class="text-[10px] text-slate-400 font-medium group-active:text-white">Split</span>
+            </button>
+        </div>
+    </div>
+
+</body>
+</html>
