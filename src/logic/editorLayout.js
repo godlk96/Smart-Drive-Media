@@ -10,12 +10,24 @@ export function getEditorLayout(orientation) {
   if (orientation === Orientation.LANDSCAPE) {
     return {
       preview: { region: 'left', ratio: 0.6 },
-      timeline: { region: 'right', ratio: 0.4 }
+      timeline: { region: 'right', ratio: 0.4 },
+      layers: [
+        { id: 'preview', ratio: 0.58 },
+        { id: 'control', ratio: 0.14 },
+        { id: 'timeline', ratio: 0.14 },
+        { id: 'drawer', ratio: 0.14 }
+      ]
     }
   }
 
   return {
     preview: { region: 'top', ratio: 0.35 },
-    timeline: { region: 'bottom', ratio: 0.65 }
+    timeline: { region: 'bottom', ratio: 0.65 },
+    layers: [
+      { id: 'preview', ratio: 0.52 },
+      { id: 'control', ratio: 0.12 },
+      { id: 'timeline', ratio: 0.16 },
+      { id: 'drawer', ratio: 0.2 }
+    ]
   }
 }

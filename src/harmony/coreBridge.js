@@ -176,6 +176,7 @@ export class HarmonyCoreBridge {
       ...this.privacyConfig,
       ...nextConfig
     }
+    this.editorScreen.setPrivacyConfig(this.privacyConfig)
     return { ...this.privacyConfig }
   }
 
@@ -193,13 +194,28 @@ export class HarmonyCoreBridge {
       }
     }
     const frontTrack = trip.videoTracks.find(track => track.cameraPosition === 'Front')
-    const backTrack = trip.videoTracks.find(track => track.cameraPosition === 'Back')
     const frontInputFiles = frontTrack?.segments?.map(item => item.filePath) ?? []
-    const backInputFiles = backTrack?.segments?.map(item => item.filePath) ?? []
     const primaryTrack = frontTrack ?? trip.videoTracks[0]
     const primaryInputFiles = primaryTrack?.segments?.map(item => item.filePath) ?? []
-    const useFrontBackStack = frontInputFiles.length > 0 && backInputFiles.length > 0
-    const inputFiles = useFrontBackStack ? frontInputFiles : primaryInputFiles
+    const inputFiles = frontInputFiles.length > 0 ? frontInputFiles : primaryInputFiles
+    const trackInputs = trip.videoTracks.reduce((result, track) => {
+      const files = track.segments?.map(item => item.filePath) ?? []
+      if (files.length > 0) {
+        result[track.cameraPosition] = files
+      }
+      return result
+    }, {})
+    const editorState = this.editorScreen.getState()
+    const templateId = editorState?.templateDrawer?.activeTemplateId ?? 'T2'
+    const privacyConfig = {
+      ...this.privacyConfig,
+      ...editorState?.privacyConfig
+    }
+    const exportControls = {
+      speed: editorState?.controlDeck?.speed ?? '1.0X',
+      muted: Boolean(editorState?.controlDeck?.muted),
+      watermarkEnabled: editorState?.controlDeck?.watermarkEnabled !== false
+    }
     if (inputFiles.length === 0) {
       return {
         ok: false,
@@ -222,13 +238,16 @@ export class HarmonyCoreBridge {
       totalDurationSec,
       command: this.exportEngine.createPlan({
         inputFiles,
-        secondaryInputFiles: useFrontBackStack ? backInputFiles : [],
+        secondaryInputFiles: [],
+        trackInputs,
         outputPath,
         trackCount: trip.videoTracks.length,
-        privacyConfig: this.privacyConfig,
+        privacyConfig,
+        exportControls,
         hasVisualEffects,
         socialShareMode,
-        layoutMode: useFrontBackStack ? 'front_back_stack' : 'single_track'
+        layoutMode: 'scenario_template',
+        templateId
       })
     }
   }

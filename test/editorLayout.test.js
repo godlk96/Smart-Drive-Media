@@ -7,6 +7,10 @@ test('getEditorLayout returns portrait ratios by default', () => {
   assert.equal(layout.preview.region, 'top')
   assert.equal(layout.timeline.region, 'bottom')
   assert.equal(layout.preview.ratio, 0.35)
+  assert.deepEqual(
+    layout.layers.map(layer => layer.id),
+    ['preview', 'control', 'timeline', 'drawer']
+  )
 })
 
 test('getEditorLayout returns landscape ratios', () => {
@@ -14,4 +18,5 @@ test('getEditorLayout returns landscape ratios', () => {
   assert.equal(layout.preview.region, 'left')
   assert.equal(layout.timeline.region, 'right')
   assert.equal(layout.preview.ratio, 0.6)
+  assert.equal(layout.layers.length, 4)
 })

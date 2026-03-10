@@ -1,0 +1,79 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { EditorScreenAdapter } from '../src/ui/editorScreenAdapter.js'
+import { MultiTrackEditorSession } from '../src/logic/multiTrackEditorSession.js'
+import { ExportStatusViewModel } from '../src/viewmodel/exportStatusViewModel.js'
+import { ExportJobState } from '../src/logic/exportJobState.js'
+import { ScreenRouter } from '../src/ui/screenRouter.js'
+import { Orientation } from '../src/logic/editorLayout.js'
+import { CameraPosition } from '../src/model/types.js'
+
+test('EditorScreenAdapter exposes layout sync and export status', () => {
+  const adapter = new EditorScreenAdapter({
+    editorSession: new MultiTrackEditorSession(),
+    exportStatusViewModel: new ExportStatusViewModel({ exportJobState: new ExportJobState() }),
+    router: new ScreenRouter()
+  })
+
+  adapter.loadTrip({
+    videoTracks: [
+      {
+        cameraPosition: CameraPosition.FRONT,
+        segments: [{ filePath: 'front.mp4', startTime: new Date(), duration: 60 }]
+      }
+    ]
+  })
+  assert.equal(adapter.getState().timeline.length, 6)
+
+  adapter.setOrientation(Orientation.LANDSCAPE)
+  assert.equal(adapter.getState().layout.preview.region, 'left')
+  assert.equal(adapter.getState().layout.layers.length, 4)
+
+  adapter.seekTo(5000)
+  adapter.syncToMaster({ [CameraPosition.BACK]: 4000 })
+  assert.equal(adapter.getState().syncCorrections.length, 1)
+
+  adapter.startExport('out.mp4')
+  adapter.updateExportProgress(60)
+  adapter.finishExportSuccess()
+  assert.equal(adapter.getState().exportStatus.statusText, 'success')
+})
+
+test('EditorScreenAdapter supports task3 timeline range and task4 template preview states', () => {
+  const adapter = new EditorScreenAdapter({
+    editorSession: new MultiTrackEditorSession(),
+    exportStatusViewModel: new ExportStatusViewModel({ exportJobState: new ExportJobState() }),
+    router: new ScreenRouter()
+  })
+
+  adapter.loadTrip({
+    videoTracks: [
+      {
+        cameraPosition: CameraPosition.FRONT,
+        segments: [
+          { filePath: 'front-a.mp4', startTime: new Date(), duration: 60 },
+          { filePath: 'front-b.mp4', startTime: new Date(Date.now() + 60000), duration: 60 }
+        ]
+      }
+    ]
+  })
+
+  adapter.updateSelectionRange(10000, 70000)
+  assert.deepEqual(adapter.getState().selectionRangeMs, { start: 10000, end: 70000 })
+
+  adapter.selectTemplate('T4')
+  assert.equal(adapter.getState().templateDrawer.activeTemplateId, 'T4')
+  assert.equal(adapter.getState().previewTemplate.aspectRatio, '9:16')
+  assert.equal(adapter.getState().previewTemplate.slots.length, 3)
+  assert.equal(adapter.getState().previewTemplate.slots[0].track, CameraPosition.LEFT_FRONT)
+  assert.equal(adapter.getState().previewTemplate.guides.length, 2)
+
+  adapter.setDrawerExpanded(false)
+  assert.equal(adapter.getState().templateDrawer.expanded, false)
+
+  adapter.cycleSpeed()
+  assert.equal(adapter.getState().controlDeck.speed, '4.0X')
+
+  adapter.toggleMuted()
+  assert.equal(adapter.getState().controlDeck.muted, true)
+})

@@ -6,7 +6,8 @@ export function createDefaultPrivacyConfig() {
     hideSpeed: true,
     hideVin: true,
     hideGps: true,
-    mode: 'overlay'
+    mode: 'overlay',
+    cinematicCrop: false
   }
 }
 
@@ -23,6 +24,7 @@ export function buildPrivacyPlan(config = {}, cropRatio = 0.85) {
   const hideVin = Boolean(config.hideVin)
   const hideGps = Boolean(config.hideGps)
   const mode = config.mode === 'delogo' ? 'delogo' : 'overlay'
+  const cinematicCrop = Boolean(config.cinematicCrop)
 
   const overlayMasks = []
   if (hideSpeed) {
@@ -36,14 +38,19 @@ export function buildPrivacyPlan(config = {}, cropRatio = 0.85) {
   }
 
   const safeCropRatio = clampCropRatio(cropRatio)
-  const cropExpression = `crop=in_w:in_h*${safeCropRatio.toFixed(2)}:0:0`
+  const cropExpression = cinematicCrop
+    ? 'crop=in_w:in_w*9/21:0:0'
+    : `crop=in_w:in_h*${safeCropRatio.toFixed(2)}:0:0`
+  const outputAspectRatio = cinematicCrop ? '21:9' : 'source'
 
   return {
     mode,
     hideSpeed,
     hideVin,
     hideGps,
+    cinematicCrop,
     overlayMasks,
-    cropExpression
+    cropExpression,
+    outputAspectRatio
   }
 }

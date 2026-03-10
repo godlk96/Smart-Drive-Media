@@ -3,6 +3,8 @@ export interface TripCardModel {
   title: string
   subtitle: string
   durationText: string
+  durationSec: number
+  previewUri: string
 }
 
 export interface LibraryStateModel {
@@ -19,6 +21,22 @@ export interface TimelineTrackModel {
   degraded: boolean
 }
 
+export interface EditorLayerModel {
+  name: string
+  heightRatio: number
+}
+
+export interface TimelineMarkerModel {
+  positionSec: number
+  style: string
+}
+
+export interface TemplateCardModel {
+  id: string
+  title: string
+  subtitle: string
+}
+
 export interface EditorStateModel {
   tripId: string
   tripTitle: string
@@ -32,6 +50,16 @@ export interface EditorStateModel {
   playheadText: string
   totalDurationSec: number
   timeline: Array<TimelineTrackModel>
+  layers: Array<EditorLayerModel>
+  selectionStartSec: number
+  selectionEndSec: number
+  boundaryMarkers: Array<TimelineMarkerModel>
+  templateCards: Array<TemplateCardModel>
+  activeTemplateId: string
+  drawerExpanded: boolean
+  speedLabel: string
+  muted: boolean
+  watermarkEnabled: boolean
   hideSpeed: boolean
   hideGps: boolean
   hideVin: boolean

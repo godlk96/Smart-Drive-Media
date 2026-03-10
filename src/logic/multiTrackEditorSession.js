@@ -3,6 +3,8 @@
  */
 import { CameraPosition } from '../model/types.js'
 import { buildTrackFallbackPlan } from './trackFallbackPlanner.js'
+import { SeamlessPlayer } from './seamlessPlayer.js'
+import { assembleVirtualClip } from './virtualTimeline.js'
 
 const CAMERA_ORDER = [
   CameraPosition.FRONT,
@@ -21,6 +23,8 @@ export class MultiTrackEditorSession {
     this.playheadMs = 0
     this.trackMap = new Map(CAMERA_ORDER.map(camera => [camera, []]))
     this.degradedTracks = []
+    this.masterVirtualClip = assembleVirtualClip([])
+    this.seamlessPlayer = new SeamlessPlayer()
   }
 
   loadTrip(trip) {
@@ -31,11 +35,17 @@ export class MultiTrackEditorSession {
       this.trackMap.set(track.cameraPosition, [...track.segments])
     }
     this.playheadMs = 0
+    const masterSegments = this.trackMap.get(this.masterCamera) ?? []
+    this.masterVirtualClip = assembleVirtualClip(masterSegments, { id: `${this.masterCamera}-virtual-clip` })
+    this.seamlessPlayer.loadVirtualClip(this.masterVirtualClip)
     return this.getTimeline()
   }
 
   seekTo(positionMs) {
-    this.playheadMs = Math.max(0, Number(positionMs) || 0)
+    const clamped = Math.max(0, Number(positionMs) || 0)
+    const mapping = this.masterVirtualClip.mapTime(clamped)
+    this.playheadMs = mapping?.logicalTimeMs ?? clamped
+    this.seamlessPlayer.syncToMapping(mapping)
     return this.playheadMs
   }
 
@@ -64,5 +74,21 @@ export class MultiTrackEditorSession {
       segments: [...(this.trackMap.get(cameraPosition) ?? [])],
       degraded: this.degradedTracks.includes(cameraPosition)
     }))
+  }
+
+  getSeamlessPlaybackState() {
+    return this.seamlessPlayer.getState()
+  }
+
+  mapMasterTime(logicalTimeMs) {
+    return this.masterVirtualClip.mapTime(logicalTimeMs)
+  }
+
+  getMasterBoundaries() {
+    return [...(this.masterVirtualClip.boundaries ?? [])]
+  }
+
+  getMasterRange(startMs, endMs) {
+    return this.masterVirtualClip.calculateRange(startMs, endMs)
   }
 }

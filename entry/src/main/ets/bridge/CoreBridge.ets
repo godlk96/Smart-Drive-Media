@@ -1,4 +1,12 @@
-import { EditorStateModel, LibraryStateModel, TimelineTrackModel, TripCardModel } from '../model/AppState'
+import {
+  EditorLayerModel,
+  EditorStateModel,
+  LibraryStateModel,
+  TemplateCardModel,
+  TimelineMarkerModel,
+  TimelineTrackModel,
+  TripCardModel
+} from '../model/AppState'
 import { CAMERA_ORDER, DvrMeta, ExportComposeRequest, TripSnapshot } from '../model/TripModels'
 import { parseDvrFileName, pickPreviewSource } from '../service/DvrScannerService'
 import { buildTimeline, mergeTimeline } from '../service/TimelineService'
@@ -14,6 +22,14 @@ const JS_BRIDGE_ENTRY: string = 'entry/src/main/js/harmonyBridge.mjs'
 const HUAWEI_SHARE_ALBUM_NAMES: Array<string> = ['华为分享', 'Huawei Share']
 const CLIP_DURATION_SEC: number = 60
 const EXPORT_PIPELINE_VERSION: string = 'native-stack-v6'
+const EDITOR_SPEEDS: Array<string> = ['1.0X', '4.0X', '8.0X', '16.0X']
+const DEFAULT_TEMPLATE_ID: string = 'T2'
+const TEMPLATE_CARDS: Array<TemplateCardModel> = [
+  { id: 'T1', title: '单视角', subtitle: '16:9' },
+  { id: 'T2', title: '画中画', subtitle: '16:9' },
+  { id: 'T3', title: '矩阵', subtitle: '16:9' },
+  { id: 'T4', title: '旅拍', subtitle: '9:16' }
+]
 
 function toTimeText(date: Date): string {
   const hh = date.getHours().toString().padStart(2, '0')
@@ -48,6 +64,13 @@ export class CoreBridge {
   private hideGps: boolean = true
   private hideVin: boolean = true
   private playheadMs: number = 0
+  private selectionStartSec: number = 0
+  private selectionEndSec: number = CLIP_DURATION_SEC
+  private activeTemplateId: string = DEFAULT_TEMPLATE_ID
+  private drawerExpanded: boolean = true
+  private speedIndex: number = 0
+  private muted: boolean = false
+  private watermarkEnabled: boolean = true
   private exportStatusText: string = '待导出'
   private exporting: boolean = false
   private exportProgress: number = 0
@@ -279,7 +302,9 @@ export class CoreBridge {
           id: item.id,
           title: item.title,
           subtitle: item.subtitle,
-          durationText: `${item.durationSec}s`
+          durationText: `${item.durationSec}s`,
+          durationSec: item.durationSec,
+          previewUri: item.previewUri
         }
         return card
       })
@@ -370,6 +395,22 @@ export class CoreBridge {
       this.currentClipIndex = 0
       this.currentClipTotal = 0
     }
+    this.selectionStartSec = Math.max(0, Math.min(this.selectionStartSec, this.tripDurationSec))
+    this.selectionEndSec = Math.max(this.selectionStartSec, Math.min(this.selectionEndSec, this.tripDurationSec))
+    const segmentCount = Math.max(1, Math.ceil(this.tripDurationSec / CLIP_DURATION_SEC))
+    const markers: Array<TimelineMarkerModel> = []
+    for (let i = 1; i < segmentCount; i++) {
+      markers.push({
+        positionSec: Math.min(this.tripDurationSec, i * CLIP_DURATION_SEC),
+        style: 'dashed'
+      })
+    }
+    const layers: Array<EditorLayerModel> = [
+      { name: 'preview', heightRatio: 0.52 },
+      { name: 'control', heightRatio: 0.12 },
+      { name: 'timeline', heightRatio: 0.16 },
+      { name: 'drawer', heightRatio: 0.20 }
+    ]
     return {
       tripId: this.tripId,
       tripTitle: this.tripTitle,
@@ -383,6 +424,16 @@ export class CoreBridge {
       playheadText: `00:00:00 / ${secondsToClock(this.tripDurationSec)}`,
       totalDurationSec: this.tripDurationSec,
       timeline: this.tripTimeline,
+      layers: layers,
+      selectionStartSec: this.selectionStartSec,
+      selectionEndSec: this.selectionEndSec,
+      boundaryMarkers: markers,
+      templateCards: [...TEMPLATE_CARDS],
+      activeTemplateId: this.activeTemplateId,
+      drawerExpanded: this.drawerExpanded,
+      speedLabel: EDITOR_SPEEDS[this.speedIndex],
+      muted: this.muted,
+      watermarkEnabled: this.watermarkEnabled,
       hideSpeed: this.hideSpeed,
       hideGps: this.hideGps,
       hideVin: this.hideVin,
@@ -394,8 +445,16 @@ export class CoreBridge {
     debugLog('剪辑', `加载行程详情，行程ID=${tripId}`)
     const selected = this.trips.get(tripId)
     this.playheadMs = 0
+    this.selectionStartSec = 0
+    this.selectionEndSec = this.tripDurationSec
+    this.activeTemplateId = DEFAULT_TEMPLATE_ID
+    this.drawerExpanded = true
+    this.speedIndex = 0
+    this.muted = false
+    this.watermarkEnabled = true
     this.exportStatusText = '待导出'
     if (selected) {
+      this.selectionEndSec = selected.durationSec
       const trackSummary = selected.timeline.map((item: TimelineTrackModel) => `${item.cameraPosition}:${item.segmentCount}`).join(',')
       debugLog('剪辑', `命中缓存行程，范围=${selected.tripRange}，时长=${selected.durationSec}s，轨道=${trackSummary}，预览视角=${selected.previewCamera}，预览URI长度=${selected.previewUri.length}`)
       return this.buildEditorState(selected, selected.previewCamera, 0)
@@ -420,6 +479,48 @@ export class CoreBridge {
     const second: number = Math.floor(this.playheadMs / 1000)
     const text = `${secondsToClock(second)} / ${secondsToClock(this.tripDurationSec)}`
     return text
+  }
+
+  updateSelectionRange(startSec: number, endSec: number): EditorStateModel {
+    const max = Math.max(0, this.tripDurationSec)
+    const nextStart = Math.max(0, Math.min(Math.floor(startSec), max))
+    const nextEnd = Math.max(nextStart, Math.min(Math.floor(endSec), max))
+    this.selectionStartSec = nextStart
+    this.selectionEndSec = nextEnd
+    this.playheadMs = Math.max(nextStart * 1000, Math.min(this.playheadMs, nextEnd * 1000))
+    const snapshot = this.trips.get(this.tripId)
+    return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
+  }
+
+  selectTemplate(templateId: string): EditorStateModel {
+    const exists = TEMPLATE_CARDS.some((item: TemplateCardModel) => item.id === templateId)
+    this.activeTemplateId = exists ? templateId : DEFAULT_TEMPLATE_ID
+    const snapshot = this.trips.get(this.tripId)
+    return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
+  }
+
+  toggleTemplateDrawer(expanded: boolean): EditorStateModel {
+    this.drawerExpanded = expanded
+    const snapshot = this.trips.get(this.tripId)
+    return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
+  }
+
+  cycleSpeed(): EditorStateModel {
+    this.speedIndex = (this.speedIndex + 1) % EDITOR_SPEEDS.length
+    const snapshot = this.trips.get(this.tripId)
+    return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
+  }
+
+  toggleMuted(): EditorStateModel {
+    this.muted = !this.muted
+    const snapshot = this.trips.get(this.tripId)
+    return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
+  }
+
+  toggleWatermark(): EditorStateModel {
+    this.watermarkEnabled = !this.watermarkEnabled
+    const snapshot = this.trips.get(this.tripId)
+    return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
   }
 
   updatePrivacy(type: string, enabled: boolean): EditorStateModel {

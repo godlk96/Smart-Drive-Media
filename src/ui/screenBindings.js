@@ -57,6 +57,54 @@ export function bindEditorScreen(adapter) {
       adapter.syncToMaster(slaveTimes)
       return signal.emit()
     },
+    updateSelectionRange(startMs, endMs) {
+      adapter.updateSelectionRange(startMs, endMs)
+      return signal.emit()
+    },
+    selectTemplate(templateId) {
+      adapter.selectTemplate(templateId)
+      return signal.emit()
+    },
+    setDrawerExpanded(expanded) {
+      adapter.setDrawerExpanded(expanded)
+      return signal.emit()
+    },
+    cycleSpeed() {
+      adapter.cycleSpeed()
+      return signal.emit()
+    },
+    toggleMuted() {
+      adapter.toggleMuted()
+      return signal.emit()
+    },
+    toggleWatermark() {
+      adapter.toggleWatermark()
+      return signal.emit()
+    },
+    setControlDeck(nextControlDeck) {
+      adapter.setControlDeck(nextControlDeck)
+      return signal.emit()
+    },
+    setPrivacyConfig(nextPrivacyConfig) {
+      adapter.setPrivacyConfig(nextPrivacyConfig)
+      return signal.emit()
+    },
+    toggleHideSpeed() {
+      adapter.toggleHideSpeed()
+      return signal.emit()
+    },
+    toggleHideVin() {
+      adapter.toggleHideVin()
+      return signal.emit()
+    },
+    toggleHideGps() {
+      adapter.toggleHideGps()
+      return signal.emit()
+    },
+    toggleCinematicCrop() {
+      adapter.toggleCinematicCrop()
+      return signal.emit()
+    },
     startExport(outputPath) {
       adapter.startExport(outputPath)
       return signal.emit()

@@ -1,6 +1,11 @@
 {
   "version": 1,
   "skills": {
+    "arkts-syntax-assistant": {
+      "source": "summerkaze/skill-arkts-syntax-assistant",
+      "sourceType": "github",
+      "computedHash": "c2545a8a537c5dd76a695ad015bf94a49740c2a6cd261c9db32ecd839663728f"
+    },
     "canvas-design": {
       "source": "anthropics/skills",
       "sourceType": "github",

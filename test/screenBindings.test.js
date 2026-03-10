@@ -65,10 +65,16 @@ test('bindEditorScreen publishes status and timeline updates', () => {
     ]
   })
   binding.startExport('output.mp4')
+  binding.updateSelectionRange(5000, 30000)
+  binding.selectTemplate('T3')
+  binding.setDrawerExpanded(false)
   binding.updateExportProgress(80)
   const finalState = binding.finishExportSuccess()
 
   assert.equal(finalState.timeline.length, 6)
+  assert.equal(finalState.templateDrawer.activeTemplateId, 'T3')
+  assert.deepEqual(finalState.selectionRangeMs, { start: 5000, end: 30000 })
+  assert.equal(finalState.templateDrawer.expanded, false)
   assert.equal(finalState.exportStatus.statusText, 'success')
   assert.equal(events.includes('running'), true)
   assert.equal(events[events.length - 1], 'success')

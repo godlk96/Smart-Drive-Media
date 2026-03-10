@@ -4,6 +4,14 @@
 import { buildPrivacyPlan } from './privacyConfig.js'
 import { buildStreamCopyCommand, buildTranscodeCommand } from './ffmpegBuilder.js'
 
+function parseSpeedValue(speedLabel) {
+  const speed = Number.parseFloat(String(speedLabel ?? '1.0X').replace(/x$/i, ''))
+  if (!Number.isFinite(speed) || speed <= 0) {
+    return 1
+  }
+  return speed
+}
+
 export const ExportMode = Object.freeze({
   STREAM_COPY: 'stream_copy',
   TRANSCODE: 'transcode'
@@ -24,16 +32,28 @@ export class ExportEngine {
   createPlan({
     inputFiles,
     secondaryInputFiles = [],
+    trackInputs = {},
     outputPath,
     trackCount,
     privacyConfig,
+    exportControls = {},
     hasVisualEffects = false,
     socialShareMode = false,
-    layoutMode = 'single_track'
+    layoutMode = 'single_track',
+    templateId = 'T2'
   }) {
     const privacyPlan = buildPrivacyPlan(privacyConfig)
     const hasPrivacyMask = privacyPlan.hideSpeed || privacyPlan.hideVin || privacyPlan.hideGps
-    const mode = selectExportMode({ trackCount, hasPrivacyMask, hasVisualEffects })
+    const hasTemplateLayout = layoutMode === 'scenario_template'
+    const speedValue = parseSpeedValue(exportControls.speed)
+    const hasCinematicCrop = privacyPlan.cinematicCrop
+    const hasTailmark = Boolean(exportControls.watermarkEnabled)
+    const hasAdvancedControls = speedValue > 1 || hasTailmark || hasCinematicCrop
+    const mode = selectExportMode({
+      trackCount,
+      hasPrivacyMask,
+      hasVisualEffects: hasVisualEffects || hasTemplateLayout || hasAdvancedControls
+    })
 
     if (mode === ExportMode.STREAM_COPY) {
       return buildStreamCopyCommand(inputFiles, outputPath)
@@ -43,8 +63,11 @@ export class ExportEngine {
       secondaryInputFiles,
       outputPath,
       privacyPlan,
+      exportControls,
       socialShareMode,
-      layoutMode
+      layoutMode,
+      templateId,
+      trackInputs
     })
   }
 }
