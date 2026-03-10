@@ -1,4 +1,3 @@
-import router from '@ohos.router'
 import common from '@ohos.app.ability.common'
 import abilityAccessCtrl from '@ohos.abilityAccessCtrl'
 import { Permissions } from '@kit.AbilityKit'
@@ -33,7 +32,7 @@ struct Index {
 
   private refreshState(): void {
     debugLog('首页', `刷新列表，授权状态=${this.permissionGranted}`)
-    const context = getContext(this) as common.UIAbilityContext
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext
     this.bridge.createLibraryState(this.permissionGranted, context)
       .then((next: LibraryStateModel) => {
         this.state = next
@@ -46,14 +45,19 @@ struct Index {
 
   private openEditor(card: TripCardModel): void {
     debugLog('首页', `进入剪辑，行程=${card.id}`)
-    router.pushUrl({
-      url: 'pages/Editor',
-      params: {
-        tripId: card.id,
-        title: card.title,
-        subtitle: card.subtitle
-      }
-    })
+    try {
+      this.getUIContext().getRouter().pushUrl({
+        url: 'pages/Editor',
+        params: {
+          tripId: card.id,
+          title: card.title,
+          subtitle: card.subtitle
+        }
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('首页', `进入剪辑失败：${message}`)
+    }
   }
 
   private toggleTripSelection(card: TripCardModel): void {
@@ -116,18 +120,23 @@ struct Index {
       return
     }
     debugLog('首页', `进入合并剪辑，行程数量=${this.selectedTripIds.length}`)
-    router.pushUrl({
-      url: 'pages/Editor',
-      params: {
-        tripId: mergedTripId,
-        title: '',
-        subtitle: ''
-      }
-    })
+    try {
+      this.getUIContext().getRouter().pushUrl({
+        url: 'pages/Editor',
+        params: {
+          tripId: mergedTripId,
+          title: '',
+          subtitle: ''
+        }
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('首页', `进入合并剪辑失败：${message}`)
+    }
   }
 
   private requestMediaPermissionAndRefresh(): void {
-    const context = getContext(this) as common.UIAbilityContext
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext
     const atManager = abilityAccessCtrl.createAtManager()
     atManager.requestPermissionsFromUser(context, REQUIRED_PERMISSIONS)
       .then((result) => {

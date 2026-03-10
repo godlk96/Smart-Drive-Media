@@ -1,4 +1,3 @@
-import router from '@ohos.router'
 import { sharedCoreBridge } from '../bridge/CoreBridge'
 import { EditorStateModel, TemplateCardModel, TimelineMarkerModel, TimelineTrackModel } from '../model/AppState'
 import { debugLog } from '../utils/Logger'
@@ -55,10 +54,16 @@ struct Editor {
   }
 
   aboutToAppear(): void {
-    const params = router.getParams() as Record<string, string>
-    const tripId = params?.tripId ?? 'trip-demo-1'
-    const title = params?.title ?? ''
-    const subtitle = params?.subtitle ?? ''
+    let params: Record<string, string> = {}
+    try {
+      params = this.getUIContext().getRouter().getParams() as Record<string, string>
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('剪辑页', `读取路由参数失败：${message}`)
+    }
+    const tripId = params.tripId ?? 'trip-demo-1'
+    const title = params.title ?? ''
+    const subtitle = params.subtitle ?? ''
     debugLog('剪辑页', `进入页面，行程ID=${tripId}，标题提示=${title}，副标题提示=${subtitle}`)
     this.applyState(this.bridge.createEditorState(tripId, title, subtitle))
     this.showPreviewCover = this.state.previewUri.length > 0
@@ -94,7 +99,7 @@ struct Editor {
       if (latestStatus === this.state.exportStatusText) {
         return
       }
-      this.applyState({ ...this.state, exportStatusText: latestStatus })
+      this.state.exportStatusText = latestStatus
       if (latestStatus.includes('导出完成') || latestStatus.includes('导出失败')) {
         this.clearExportPollTimer()
       }
@@ -149,10 +154,7 @@ struct Editor {
   private updatePlayhead(second: number): void {
     const clamped = Math.max(this.timelineStartSec, Math.min(Math.floor(second), this.timelineEndSec))
     this.playheadSec = clamped
-    this.applyState({
-      ...this.state,
-      playheadText: this.bridge.updatePlayhead(clamped * 1000)
-    })
+    this.state.playheadText = this.bridge.updatePlayhead(clamped * 1000)
     if (clamped !== this.lastLoggedSecond) {
       this.lastLoggedSecond = clamped
       debugLog('剪辑页', `拖动进度，秒=${clamped}，文案=${this.state.playheadText}`)
@@ -211,7 +213,12 @@ struct Editor {
           .fontSize(12)
           .onClick(() => {
             debugLog('剪辑页', '点击返回')
-            router.back()
+            try {
+              this.getUIContext().getRouter().back()
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error)
+              debugLog('剪辑页', `返回失败：${message}`)
+            }
           })
         Column({ space: 2 }) {
           Text(this.state.tripTitle)
@@ -228,7 +235,7 @@ struct Editor {
           .type(ButtonType.Capsule)
           .fontSize(12)
           .onClick(() => {
-            this.applyState({ ...this.state, exportStatusText: this.bridge.startExport() })
+            this.state.exportStatusText = this.bridge.startExport()
             debugLog('剪辑页', `点击导出，状态=${this.state.exportStatusText}`)
             this.startExportPoll()
             this.showControlsTemporarily()

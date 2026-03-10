@@ -716,6 +716,9 @@ export class CoreBridge {
         const writeLen = await fs.write(dstFd, payload)
         written += writeLen
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`写入相册文件失败：${message}`)
     } finally {
       if (srcFd >= 0) {
         try {
