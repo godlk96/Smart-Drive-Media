@@ -16,6 +16,7 @@ const REQUIRED_PERMISSIONS: Array<Permissions> = [
 struct Index {
   private bridge = sharedCoreBridge
   @State private permissionGranted: boolean = false
+  @State private hasAutoRequestedPermission: boolean = false
   @State private selectionMode: boolean = false
   @State private selectedTripIds: Array<string> = []
   @State private state: LibraryStateModel = {
@@ -27,12 +28,31 @@ struct Index {
   }
 
   aboutToAppear(): void {
+    if (!this.permissionGranted && !this.hasAutoRequestedPermission) {
+      this.requestMediaPermissionAndRefresh(false)
+    }
     this.refreshState()
+  }
+
+  private getHostContextOrNull(): common.UIAbilityContext | null {
+    try {
+      const host = this.getUIContext().getHostContext()
+      if (host) {
+        return host as common.UIAbilityContext
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('首页', `获取上下文失败：${message}`)
+    }
+    return null
   }
 
   private refreshState(): void {
     debugLog('首页', `刷新列表，授权状态=${this.permissionGranted}`)
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext
+    const context = this.getHostContextOrNull()
+    if (context === null) {
+      return
+    }
     this.bridge.createLibraryState(this.permissionGranted, context)
       .then((next: LibraryStateModel) => {
         this.state = next
@@ -135,8 +155,13 @@ struct Index {
     }
   }
 
-  private requestMediaPermissionAndRefresh(): void {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext
+  private requestMediaPermissionAndRefresh(shouldGuideToSetting: boolean = true): void {
+    this.hasAutoRequestedPermission = true
+    const context = this.getHostContextOrNull()
+    if (context === null) {
+      this.permissionGranted = false
+      return
+    }
     const atManager = abilityAccessCtrl.createAtManager()
     atManager.requestPermissionsFromUser(context, REQUIRED_PERMISSIONS)
       .then((result) => {
@@ -144,6 +169,12 @@ struct Index {
         if (allGranted) {
           this.permissionGranted = true
           debugLog('首页', '权限申请完成，已全部授权')
+          this.refreshState()
+          return
+        }
+        if (!shouldGuideToSetting) {
+          this.permissionGranted = false
+          debugLog('首页', '自动权限申请未全部通过，展示无权限态')
           this.refreshState()
           return
         }
@@ -190,13 +221,15 @@ struct Index {
               .fontWeight(FontWeight.Bold)
               .fontColor('#F8FAFC')
             Blank()
-            Button(this.permissionGranted ? '已授权' : '授权读取')
-              .type(ButtonType.Capsule)
-              .fontSize(12)
-              .onClick(() => {
-                debugLog('首页', '点击授权按钮')
-                this.requestMediaPermissionAndRefresh()
-              })
+            if (!this.permissionGranted) {
+              Button('授权读取')
+                .type(ButtonType.Capsule)
+                .fontSize(12)
+                .onClick(() => {
+                  debugLog('首页', '点击授权按钮')
+                  this.requestMediaPermissionAndRefresh()
+                })
+            }
             Button('选择')
               .type(ButtonType.Capsule)
               .fontSize(12)
@@ -224,7 +257,29 @@ struct Index {
             .padding({ left: 16, right: 16, top: 2 })
         }
 
-        if (this.state.empty) {
+        if (!this.permissionGranted && this.state.empty) {
+          Column({ space: 10 }) {
+            Text('需要访问相册权限')
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#F8FAFC')
+            Text(this.state.emptyText)
+              .fontSize(13)
+              .fontColor('#94A3B8')
+              .textAlign(TextAlign.Center)
+            Button('授权并刷新')
+              .type(ButtonType.Capsule)
+              .fontSize(13)
+              .fontColor('#FFFFFF')
+              .backgroundColor('#EA580C')
+              .onClick(() => this.requestMediaPermissionAndRefresh())
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+          .padding({ left: 20, right: 20 })
+        } else if (this.state.empty) {
           Column() {
             Text(this.state.emptyText)
               .fontSize(13)
@@ -242,15 +297,38 @@ struct Index {
               GridItem() {
                 Stack({ alignContent: Alignment.TopEnd }) {
                   Stack({ alignContent: Alignment.BottomStart }) {
-                    if (item.previewUri.length > 0) {
-                      Image(item.previewUri)
-                        .width('100%')
-                        .height('100%')
-                        .objectFit(ImageFit.Cover)
+                    if (item.previewFrameUri.length > 0) {
+                      if (item.previewFrameUri.endsWith('.jpg') || item.previewFrameUri.endsWith('.jpeg') || item.previewFrameUri.endsWith('.png') || item.previewFrameUri.endsWith('.webp')) {
+                        Image(item.previewFrameUri)
+                          .width('100%')
+                          .height('100%')
+                          .objectFit(ImageFit.Cover)
+                      } else {
+                        Video({
+                          src: item.previewFrameUri
+                        })
+                          .width('100%')
+                          .height('100%')
+                          .objectFit(ImageFit.Cover)
+                          .autoPlay(true)
+                          .controls(false)
+                          .muted(true)
+                      }
                     } else {
-                      Column()
+                      Column({ space: 4 }) {
+                        Text('暂无封面')
+                          .fontSize(11)
+                          .fontColor('#94A3B8')
+                        if (item.previewUri.length > 0) {
+                          Text('可播放视频已命中')
+                            .fontSize(10)
+                            .fontColor('#64748B')
+                        }
+                      }
                         .width('100%')
                         .height('100%')
+                        .justifyContent(FlexAlign.Center)
+                        .alignItems(HorizontalAlign.Center)
                         .backgroundColor('#1E293B')
                     }
 
@@ -264,6 +342,18 @@ struct Index {
                       .alignSelf(ItemAlign.End)
 
                     Column({ space: 4 }) {
+                      Row() {
+                        if (item.previewCamera.length > 0) {
+                          Text(item.previewCamera === 'Front' ? '前视封面' : `${item.previewCamera}封面`)
+                            .fontSize(10)
+                            .fontColor('#D1FAE5')
+                            .backgroundColor('#064E3B99')
+                            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                            .borderRadius(6)
+                        }
+                        Blank()
+                      }
+                      .width('100%')
                       Row() {
                         Text(item.durationText)
                           .fontSize(10)

@@ -14,7 +14,11 @@ export function buildComposeRequestByService(
   expectedDurationSec: number,
   hideSpeed: boolean,
   hideGps: boolean,
-  hideVin: boolean
+  hideVin: boolean,
+  templateId: string,
+  speedLabel: string,
+  muted: boolean,
+  watermarkEnabled: boolean
 ): ExportComposeRequest {
   ensureCoreApiContract()
   const request = new ExportComposeRequest()
@@ -24,6 +28,10 @@ export function buildComposeRequestByService(
   request.hideSpeed = hideSpeed
   request.hideGps = hideGps
   request.hideVin = hideVin
+  request.templateId = templateId
+  request.speedLabel = speedLabel
+  request.muted = muted
+  request.watermarkEnabled = watermarkEnabled
   const nativeBuild = smartdriveExporter.buildComposeRequest as ((
     clipsCsv: string,
     fileName: string,

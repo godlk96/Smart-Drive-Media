@@ -2,6 +2,7 @@ import {
   EditorLayerModel,
   EditorStateModel,
   LibraryStateModel,
+  PreviewSlotModel,
   TemplateCardModel,
   TimelineMarkerModel,
   TimelineTrackModel,
@@ -11,7 +12,7 @@ import { CAMERA_ORDER, DvrMeta, ExportComposeRequest, TripSnapshot } from '../mo
 import { parseDvrFileName, pickPreviewSource } from '../service/DvrScannerService'
 import { buildTimeline, mergeTimeline } from '../service/TimelineService'
 import { buildComposeRequestByService } from '../service/ExportService'
-import { executeFfmpegComposeByService } from '../service/ExportRuntimeService'
+import { executeFfmpegComposeByService, extractFirstFrameByService } from '../service/ExportRuntimeService'
 import { debugLog } from '../utils/Logger'
 import photoAccessHelper from '@ohos.file.photoAccessHelper'
 import dataSharePredicates from '@ohos.data.dataSharePredicates'
@@ -22,8 +23,10 @@ const JS_BRIDGE_ENTRY: string = 'entry/src/main/js/harmonyBridge.mjs'
 const HUAWEI_SHARE_ALBUM_NAMES: Array<string> = ['华为分享', 'Huawei Share']
 const CLIP_DURATION_SEC: number = 60
 const EXPORT_PIPELINE_VERSION: string = 'native-stack-v6'
-const EDITOR_SPEEDS: Array<string> = ['1.0X', '4.0X', '8.0X', '16.0X']
+const EDITOR_SPEEDS: Array<string> = ['1.5X', '2.0X', '3.0X', '4.0X']
 const DEFAULT_TEMPLATE_ID: string = 'T2'
+const DVR_FILE_PATTERN: RegExp = /^DVR_LoopRecording_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_.+_camera\.(mp4|mov|ts)$/i
+const LOCAL_FILE_VIDEO_PATTERN: RegExp = /^(file:\/\/\/data\/storage\/.+|\/data\/storage\/.+)\.(mp4|mov|ts)(\?.*)?$/i
 const TEMPLATE_CARDS: Array<TemplateCardModel> = [
   { id: 'T1', title: '单视角', subtitle: '16:9' },
   { id: 'T2', title: '画中画', subtitle: '16:9' },
@@ -44,6 +47,39 @@ function secondsToClock(totalSec: number): string {
   const minute = Math.floor((sec % 3600) / 60)
   const second = sec % 60
   return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:${second.toString().padStart(2, '0')}`
+}
+
+function isDvrCandidateName(name: string): boolean {
+  return DVR_FILE_PATTERN.test(name)
+}
+
+function canExtractPreviewFrame(uri: string): boolean {
+  return LOCAL_FILE_VIDEO_PATTERN.test(uri)
+}
+
+function resolvePreviewTrack(track: string, availableTracks: Array<string>): string {
+  let preferred: Array<string>
+  if (track === 'Front') {
+    preferred = ['Front', 'LeftFront', 'RightFront', 'Back', 'Left', 'Right']
+  } else if (track === 'Back') {
+    preferred = ['Back', 'Front', 'Right', 'Left', 'LeftFront', 'RightFront']
+  } else if (track === 'Left') {
+    preferred = ['Left', 'LeftFront', 'Front', 'Right', 'Back', 'RightFront']
+  } else if (track === 'Right') {
+    preferred = ['Right', 'RightFront', 'Front', 'Left', 'Back', 'LeftFront']
+  } else if (track === 'LeftFront') {
+    preferred = ['LeftFront', 'Front', 'Left', 'RightFront', 'Back', 'Right']
+  } else if (track === 'RightFront') {
+    preferred = ['RightFront', 'Front', 'Right', 'LeftFront', 'Back', 'Left']
+  } else {
+    preferred = [track]
+  }
+  for (const candidate of preferred) {
+    if (availableTracks.some((item: string) => item === candidate)) {
+      return candidate
+    }
+  }
+  return availableTracks[0] ?? track
 }
 
 export class CoreBridge {
@@ -76,6 +112,7 @@ export class CoreBridge {
   private exportProgress: number = 0
   private exportTimer: number = -1
   private lastContext?: common.UIAbilityContext = undefined
+  private previewFrameCache: Map<string, string> = new Map()
 
   getJsBridgeEntry(): string {
     return this.jsBridgeEntry
@@ -100,6 +137,12 @@ export class CoreBridge {
         const asset = await fetchResult.getObjectByPosition(i)
         const name = String(asset?.displayName ?? '')
         const uri = String(asset?.uri ?? '')
+        if (name.length === 0 || uri.length === 0) {
+          continue
+        }
+        if (!isDvrCandidateName(name)) {
+          continue
+        }
         const parsed = parseDvrFileName(name, uri)
         if (parsed !== null) {
           metas.push(parsed)
@@ -177,6 +220,94 @@ export class CoreBridge {
     }
   }
 
+  private async resolveTripPreviewFrames(trips: Array<TripSnapshot>): Promise<void> {
+    const cacheDir = this.lastContext?.cacheDir ?? '/data/storage/el2/base/cache'
+    for (const trip of trips) {
+      if (trip.previewUri.length === 0) {
+        trip.previewFrameUri = ''
+        continue
+      }
+      const cached = this.previewFrameCache.get(trip.previewUri)
+      if (cached && cached.length > 0) {
+        trip.previewFrameUri = cached
+        continue
+      }
+      const cacheKey = `${trip.id}_${trip.startTs}`
+      debugLog('扫描', `封面处理，行程=${trip.id}，URI=${trip.previewUri}`)
+      if (!canExtractPreviewFrame(trip.previewUri)) {
+        trip.previewFrameUri = trip.previewUri
+        debugLog('扫描', `封面跳过提取，使用视频回退预览，行程=${trip.id}`)
+        continue
+      }
+      try {
+        const framePath = await extractFirstFrameByService(trip.previewUri, cacheDir, cacheKey)
+        trip.previewFrameUri = framePath
+        this.previewFrameCache.set(trip.previewUri, framePath)
+        debugLog('扫描', `封面提取成功，行程=${trip.id}，封面=${framePath}`)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        trip.previewFrameUri = trip.previewUri
+        debugLog('扫描', `提取首帧失败，回退视频预览，行程=${trip.id}，原因=${message}`)
+      }
+    }
+  }
+
+  private getTemplateSlotDefs(templateId: string): Array<PreviewSlotModel> {
+    if (templateId === 'T1') {
+      return [
+        { id: 'main', camera: 'Front', uri: '', x: 0, y: 0, width: 1, height: 1 },
+        { id: 'pip', camera: 'Back', uri: '', x: 0.68, y: 0.06, width: 0.28, height: 0.26 }
+      ]
+    }
+    if (templateId === 'T3') {
+      return [
+        { id: 'left', camera: 'Left', uri: '', x: 0, y: 0, width: 0.5, height: 1 },
+        { id: 'right', camera: 'Right', uri: '', x: 0.5, y: 0, width: 0.5, height: 1 }
+      ]
+    }
+    if (templateId === 'T4') {
+      return [
+        { id: 'top', camera: 'LeftFront', uri: '', x: 0, y: 0, width: 1, height: 0.3333 },
+        { id: 'middle', camera: 'Front', uri: '', x: 0, y: 0.3333, width: 1, height: 0.3334 },
+        { id: 'bottom', camera: 'RightFront', uri: '', x: 0, y: 0.6667, width: 1, height: 0.3333 }
+      ]
+    }
+    return [
+      { id: 'top', camera: 'Front', uri: '', x: 0, y: 0, width: 1, height: 0.5 },
+      { id: 'bottomLeft', camera: 'Right', uri: '', x: 0, y: 0.5, width: 0.5, height: 0.5 },
+      { id: 'bottomRight', camera: 'Back', uri: '', x: 0.5, y: 0.5, width: 0.5, height: 0.5 }
+    ]
+  }
+
+  private pickSlotUri(snapshot: TripSnapshot, camera: string, clipIndex: number): string {
+    const clips = snapshot.clips
+      .filter((item: DvrMeta) => item.camera === camera && item.uri.length > 0)
+      .sort((a: DvrMeta, b: DvrMeta) => a.timestamp - b.timestamp)
+    if (clips.length === 0) {
+      return ''
+    }
+    const index = Math.max(0, Math.min(clipIndex, clips.length - 1))
+    return clips[index].uri
+  }
+
+  private buildPreviewSlots(snapshot: TripSnapshot, clipIndex: number): Array<PreviewSlotModel> {
+    const defs = this.getTemplateSlotDefs(this.activeTemplateId)
+    const availableTracks = snapshot.timeline.map((item: TimelineTrackModel) => item.cameraPosition)
+    return defs.map((slot: PreviewSlotModel) => {
+      const resolvedCamera = resolvePreviewTrack(slot.camera, availableTracks)
+      const previewSlot: PreviewSlotModel = {
+        id: slot.id,
+        camera: resolvedCamera,
+        uri: this.pickSlotUri(snapshot, resolvedCamera, clipIndex),
+        x: slot.x,
+        y: slot.y,
+        width: slot.width,
+        height: slot.height
+      }
+      return previewSlot
+    })
+  }
+
   private buildTripsFromMetas(metas: Array<DvrMeta>): Array<TripSnapshot> {
     if (metas.length === 0) {
       return []
@@ -211,6 +342,7 @@ export class CoreBridge {
       trip.tripTitle = `${title.replace(/-/g, '/')} 夜间行车`
       trip.tripRange = `${startText} - ${endText}`
       trip.previewUri = preview.uri
+      trip.previewFrameUri = preview.frameUri
       trip.previewCamera = preview.camera
       trip.clips = [...group]
       trip.timeline = buildTimeline(group)
@@ -258,6 +390,7 @@ export class CoreBridge {
     merged.tripTitle = `${title.replace(/-/g, '/')} 合并行程`
     merged.tripRange = `${toTimeText(startDate)} - ${toTimeText(endDate)}`
     merged.previewUri = preview?.previewUri ?? ''
+    merged.previewFrameUri = preview?.previewFrameUri ?? ''
     merged.previewCamera = preview?.previewCamera ?? ''
     merged.clips = mergedClips
     merged.timeline = timeline
@@ -295,6 +428,7 @@ export class CoreBridge {
     try {
       const metas = await this.readHuaweiShareDvrFiles(context)
       const tripSnapshots = this.buildTripsFromMetas(metas)
+      await this.resolveTripPreviewFrames(tripSnapshots)
       this.trips.clear()
       this.cards = tripSnapshots.map((item: TripSnapshot) => {
         this.trips.set(item.id, item)
@@ -304,8 +438,11 @@ export class CoreBridge {
           subtitle: item.subtitle,
           durationText: `${item.durationSec}s`,
           durationSec: item.durationSec,
-          previewUri: item.previewUri
+          previewUri: item.previewUri,
+          previewFrameUri: item.previewFrameUri,
+          previewCamera: item.previewCamera
         }
+        debugLog('扫描', `首页卡片，行程=${card.id}，封面长度=${card.previewFrameUri.length}，预览URI长度=${card.previewUri.length}`)
         return card
       })
       if (tripSnapshots.length > 0) {
@@ -411,6 +548,7 @@ export class CoreBridge {
       { name: 'timeline', heightRatio: 0.16 },
       { name: 'drawer', heightRatio: 0.20 }
     ]
+    const previewSlots = activeSnapshot ? this.buildPreviewSlots(activeSnapshot, this.currentClipIndex) : []
     return {
       tripId: this.tripId,
       tripTitle: this.tripTitle,
@@ -421,7 +559,7 @@ export class CoreBridge {
       canPlayNext: this.currentClipTotal > 0 && this.currentClipIndex < this.currentClipTotal - 1,
       currentClipIndex: this.currentClipTotal === 0 ? 0 : this.currentClipIndex + 1,
       currentClipTotal: this.currentClipTotal,
-      playheadText: `00:00:00 / ${secondsToClock(this.tripDurationSec)}`,
+      playheadText: `${secondsToClock(Math.floor(this.playheadMs / 1000))} / ${secondsToClock(this.tripDurationSec)}`,
       totalDurationSec: this.tripDurationSec,
       timeline: this.tripTimeline,
       layers: layers,
@@ -429,6 +567,7 @@ export class CoreBridge {
       selectionEndSec: this.selectionEndSec,
       boundaryMarkers: markers,
       templateCards: [...TEMPLATE_CARDS],
+      previewSlots: previewSlots,
       activeTemplateId: this.activeTemplateId,
       drawerExpanded: this.drawerExpanded,
       speedLabel: EDITOR_SPEEDS[this.speedIndex],
@@ -479,6 +618,18 @@ export class CoreBridge {
     const second: number = Math.floor(this.playheadMs / 1000)
     const text = `${secondsToClock(second)} / ${secondsToClock(this.tripDurationSec)}`
     return text
+  }
+
+  seekGlobalPlayhead(second: number): EditorStateModel {
+    const clamped = Math.max(0, Math.min(Math.floor(second), this.tripDurationSec))
+    this.playheadMs = clamped * 1000
+    const snapshot = this.trips.get(this.tripId)
+    if (!snapshot || this.currentClipTotal <= 0) {
+      return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
+    }
+    const clipSpanSec = Math.max(1, Math.floor(this.tripDurationSec / this.currentClipTotal))
+    const targetIndex = Math.max(0, Math.min(Math.floor(clamped / clipSpanSec), this.currentClipTotal - 1))
+    return this.buildEditorState(snapshot, this.previewCamera, targetIndex)
   }
 
   updateSelectionRange(startSec: number, endSec: number): EditorStateModel {
@@ -621,7 +772,11 @@ export class CoreBridge {
       snapshot.durationSec,
       this.hideSpeed,
       this.hideGps,
-      this.hideVin
+      this.hideVin,
+      this.activeTemplateId,
+      EDITOR_SPEEDS[this.speedIndex],
+      this.muted,
+      this.watermarkEnabled
     )
   }
 

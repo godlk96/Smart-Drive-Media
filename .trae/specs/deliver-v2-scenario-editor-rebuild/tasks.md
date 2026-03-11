@@ -59,6 +59,15 @@
   - [ ] SubTask 9.8：执行 2K/4K 样本遮罩定位与导出可用性验证
   - [ ] SubTask 9.9：汇总未通过缺陷并回归 checklist 未通过项
 
+- [x] Task 10：完成体验修复与日志同步能力补齐
+  - [x] SubTask 10.1：新增日志同步脚本并输出 logs/full.log
+  - [x] SubTask 10.2：实现首页首次自动请求权限与无权限态引导
+  - [x] SubTask 10.3：补齐首页前视封面展示与封面来源标识
+  - [x] SubTask 10.4：修复模板预览联动与多片段无缝预览切片
+  - [x] SubTask 10.5：修复时间轴双端裁剪拖拽交互
+  - [x] SubTask 10.6：将导出页改为弹窗式并增加背景虚化
+  - [x] SubTask 10.7：完成构建与回归验证（assembleHap + npm test）
+
 # Task Dependencies
 
 - Task 2 依赖 Task 1（多选合并结果决定逻辑时间轴输入）。
@@ -69,6 +78,7 @@
 - Task 7 依赖 Task 1~6 全部完成后执行。
 - Task 8 依赖 Task 7，并作为设备级最终验收闭环。
 - Task 9 依赖 Task 7 与 Task 8 的未通过项结果，作为落地补齐计划。
+- Task 10 依赖 Task 9 的问题清单输入，可并行推进代码修复项。
 
 # Parallelizable Work
 

@@ -12,6 +12,39 @@
 #include <cctype>
 #include <cstdlib>
 
+static std::string readUtf8Arg(napi_env env, napi_value value)
+{
+    if (value == nullptr) {
+        return "";
+    }
+    napi_valuetype valueType = napi_undefined;
+    if (napi_typeof(env, value, &valueType) != napi_ok) {
+        return "";
+    }
+    if (valueType == napi_undefined || valueType == napi_null) {
+        return "";
+    }
+    napi_value textValue = value;
+    if (valueType != napi_string) {
+        if (napi_coerce_to_string(env, value, &textValue) != napi_ok) {
+            return "";
+        }
+    }
+    size_t size = 0;
+    if (napi_get_value_string_utf8(env, textValue, nullptr, 0, &size) != napi_ok) {
+        return "";
+    }
+    if (size == 0) {
+        return "";
+    }
+    std::vector<char> buffer(size + 1, '\0');
+    size_t copied = 0;
+    if (napi_get_value_string_utf8(env, textValue, buffer.data(), size + 1, &copied) != napi_ok) {
+        return "";
+    }
+    return std::string(buffer.data(), copied);
+}
+
 static std::string readPayload(napi_env env, napi_callback_info info)
 {
     size_t argc = 1;
@@ -20,13 +53,7 @@ static std::string readPayload(napi_env env, napi_callback_info info)
     if (argc < 1) {
         return "";
     }
-    size_t size = 0;
-    napi_get_value_string_utf8(env, args[0], nullptr, 0, &size);
-    std::string payload(size, '\0');
-    size_t copied = 0;
-    napi_get_value_string_utf8(env, args[0], &payload[0], size + 1, &copied);
-    payload.resize(copied);
-    return payload;
+    return readUtf8Arg(env, args[0]);
 }
 
 static std::string extractString(const std::string &payload, const std::string &key)
@@ -380,23 +407,12 @@ static napi_value ParseDvrFileName(napi_env env, napi_callback_info info)
     size_t argc = 2;
     napi_value args[2] = {nullptr, nullptr};
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    std::string name;
-    std::string uri;
-    if (argc > 0) {
-        size_t size = 0;
-        napi_get_value_string_utf8(env, args[0], nullptr, 0, &size);
-        name.assign(size, '\0');
-        size_t copied = 0;
-        napi_get_value_string_utf8(env, args[0], &name[0], size + 1, &copied);
-        name.resize(copied);
-    }
-    if (argc > 1) {
-        size_t size = 0;
-        napi_get_value_string_utf8(env, args[1], nullptr, 0, &size);
-        uri.assign(size, '\0');
-        size_t copied = 0;
-        napi_get_value_string_utf8(env, args[1], &uri[0], size + 1, &copied);
-        uri.resize(copied);
+    std::string name = argc > 0 ? readUtf8Arg(env, args[0]) : "";
+    std::string uri = argc > 1 ? readUtf8Arg(env, args[1]) : "";
+    if (name.empty() || uri.empty()) {
+        napi_value nil = nullptr;
+        napi_get_null(env, &nil);
+        return nil;
     }
     const std::regex pattern("^DVR_LoopRecording_(\\d{4}-\\d{2}-\\d{2})_(\\d{2})-(\\d{2})-(\\d{2})_([a-z_]+)_camera\\.(mp4|mov|ts)$", std::regex::icase);
     std::smatch match;
@@ -457,12 +473,7 @@ static napi_value BuildComposeRequest(napi_env env, napi_callback_info info)
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     std::vector<std::string> params(4, "");
     for (size_t i = 0; i < argc && i < 4; i++) {
-        size_t size = 0;
-        napi_get_value_string_utf8(env, args[i], nullptr, 0, &size);
-        params[i].assign(size, '\0');
-        size_t copied = 0;
-        napi_get_value_string_utf8(env, args[i], &params[i][0], size + 1, &copied);
-        params[i].resize(copied);
+        params[i] = readUtf8Arg(env, args[i]);
     }
     std::vector<std::string> frontUris;
     std::vector<std::string> backUris;

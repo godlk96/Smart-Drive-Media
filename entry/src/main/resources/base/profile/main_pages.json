@@ -1,6 +1,7 @@
 {
   "src": [
     "pages/Index",
-    "pages/Editor"
+    "pages/Editor",
+    "pages/Export"
   ]
 }

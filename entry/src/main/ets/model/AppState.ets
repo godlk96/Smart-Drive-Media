@@ -5,6 +5,8 @@ export interface TripCardModel {
   durationText: string
   durationSec: number
   previewUri: string
+  previewFrameUri: string
+  previewCamera: string
 }
 
 export interface LibraryStateModel {
@@ -37,6 +39,16 @@ export interface TemplateCardModel {
   subtitle: string
 }
 
+export interface PreviewSlotModel {
+  id: string
+  camera: string
+  uri: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface EditorStateModel {
   tripId: string
   tripTitle: string
@@ -55,6 +67,7 @@ export interface EditorStateModel {
   selectionEndSec: number
   boundaryMarkers: Array<TimelineMarkerModel>
   templateCards: Array<TemplateCardModel>
+  previewSlots: Array<PreviewSlotModel>
   activeTemplateId: string
   drawerExpanded: boolean
   speedLabel: string

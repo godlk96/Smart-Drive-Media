@@ -84,6 +84,119 @@ async function probeVideoBitrate(inputPath: string): Promise<number> {
   }
 }
 
+function parseSpeedValue(speedLabel: string): number {
+  const speed = Number.parseFloat(String(speedLabel ?? '1.0X').replace(/x$/i, ''))
+  if (!Number.isFinite(speed) || speed <= 0) {
+    return 1
+  }
+  return speed
+}
+
+function buildTemplateLayoutNodes(templateId: string, hasBack: boolean): Array<string> {
+  const normalizedId = templateId === 'T1' || templateId === 'T2' || templateId === 'T3' || templateId === 'T4'
+    ? templateId
+    : 'T2'
+  if (normalizedId === 'T1') {
+    return ['[front_v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[layout_v]']
+  }
+  if (normalizedId === 'T3') {
+    if (!hasBack) {
+      return ['[front_v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[layout_v]']
+    }
+    return [
+      '[front_v]scale=960:1080:force_original_aspect_ratio=decrease,pad=960:1080:(ow-iw)/2:(oh-ih)/2:black[left_v]',
+      '[back_v]scale=960:1080:force_original_aspect_ratio=decrease,pad=960:1080:(ow-iw)/2:(oh-ih)/2:black[right_v]',
+      '[left_v][right_v]hstack=inputs=2[layout_v]'
+    ]
+  }
+  if (normalizedId === 'T4') {
+    if (!hasBack) {
+      return [
+        'color=c=black:s=1080x1920[canvas_v]',
+        '[front_v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black[single_v]',
+        '[canvas_v][single_v]overlay=0:0[layout_v]'
+      ]
+    }
+    return [
+      'color=c=black:s=1080x1920[canvas_v]',
+      '[front_v]scale=1080:960:force_original_aspect_ratio=decrease,pad=1080:960:(ow-iw)/2:(oh-ih)/2:black[top_v]',
+      '[back_v]scale=1080:960:force_original_aspect_ratio=decrease,pad=1080:960:(ow-iw)/2:(oh-ih)/2:black[bottom_v]',
+      '[canvas_v][top_v]overlay=0:0[stack_v]',
+      '[stack_v][bottom_v]overlay=0:960[layout_v]'
+    ]
+  }
+  if (!hasBack) {
+    return ['[front_v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[layout_v]']
+  }
+  return [
+    '[front_v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[base_v]',
+    '[back_v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:black[pip_v]',
+    '[base_v][pip_v]overlay=x=W-w-48:y=48[layout_v]'
+  ]
+}
+
+function buildPostVideoNode(speed: number, watermarkEnabled: boolean): string {
+  const filters: Array<string> = []
+  if (watermarkEnabled) {
+    filters.push('drawbox=x=iw-300:y=ih-72:w=280:h=52:color=black@0.32:t=fill')
+  }
+  if (speed !== 1) {
+    const normalized = Math.max(0.25, Math.min(speed, 16))
+    filters.push(`setpts=PTS/${normalized}`)
+  }
+  if (filters.length === 0) {
+    return '[layout_v]null[v]'
+  }
+  return `[layout_v]${filters.join(',')}[v]`
+}
+
+async function ensureParentDirectory(filePath: string): Promise<void> {
+  const slashIndex = filePath.lastIndexOf('/')
+  if (slashIndex <= 0) {
+    return
+  }
+  const outputDir = filePath.slice(0, slashIndex)
+  try {
+    await fs.stat(outputDir)
+  } catch (_) {
+    try {
+      await fs.mkdir(outputDir)
+    } catch (mkdirError) {
+      const message = mkdirError instanceof Error ? mkdirError.message : String(mkdirError)
+      throw new Error(`创建输出目录失败：${message}`)
+    }
+  }
+}
+
+export async function extractFirstFrameByService(sourceUri: string, cacheDir: string, cacheKey: string): Promise<string> {
+  if (!sourceUri || sourceUri.length === 0) {
+    return ''
+  }
+  const inputPath = await resolveInputForFfmpeg(sourceUri)
+  const safeKey = cacheKey.replace(/[^a-zA-Z0-9_-]/g, '_')
+  const outputPath = `${cacheDir}/first_frame_${safeKey}.jpg`
+  try {
+    await fs.stat(outputPath)
+    return outputPath
+  } catch (_) {
+  }
+  await ensureParentDirectory(outputPath)
+  try {
+    await FFmpeg.execute([
+      'ffmpeg',
+      '-y',
+      '-i', inputPath,
+      '-frames:v', '1',
+      '-q:v', '3',
+      outputPath
+    ])
+    return outputPath
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`提取首帧失败：${message}`)
+  }
+}
+
 export async function executeFfmpegComposeByService(
   request: ExportComposeRequest,
   cacheDir: string,
@@ -119,37 +232,38 @@ export async function executeFfmpegComposeByService(
     inputs.push('-i')
     inputs.push(path)
   })
+  const hasBack: boolean = backPaths.length > 0
+  const speed = parseSpeedValue(request.speedLabel)
+  const muted = request.muted || speed > 1
   const frontRefs = frontPaths.map((_, index: number) => `[${index}:v]`).join('')
-  const backRefs = backPaths.map((_, index: number) => `[${frontPaths.length + index}:v]`).join('')
+  const backRefs = hasBack ? backPaths.map((_, index: number) => `[${frontPaths.length + index}:v]`).join('') : ''
   const frontAudioRefs = frontPaths.map((_, index: number) => `[${index}:a]`).join('')
-  const videoFilter = `${frontRefs}concat=n=${frontPaths.length}:v=1:a=0[top];${backRefs}concat=n=${backPaths.length}:v=1:a=0[bottom];[top][bottom]vstack=inputs=2[v]`
-  const audioFilter = `${frontAudioRefs}concat=n=${frontPaths.length}:v=0:a=1[a]`
-  const filter = `${videoFilter};${audioFilter}`
-  const outputPath = toFfmpegPath(request.outputPath)
-  const slashIndex = outputPath.lastIndexOf('/')
-  if (slashIndex > 0) {
-    const outputDir = outputPath.slice(0, slashIndex)
-    try {
-      await fs.stat(outputDir)
-    } catch (_) {
-      try {
-        await fs.mkdir(outputDir)
-      } catch (mkdirError) {
-        const message = mkdirError instanceof Error ? mkdirError.message : String(mkdirError)
-        throw new Error(`创建输出目录失败：${message}`)
-      }
-    }
+  const concatNodes: Array<string> = [
+    `${frontRefs}concat=n=${frontPaths.length}:v=1:a=0[front_v]`
+  ]
+  if (hasBack) {
+    concatNodes.push(`${backRefs}concat=n=${backPaths.length}:v=1:a=0[back_v]`)
+  } else {
+    concatNodes.push('[front_v]null[back_v]')
   }
+  const layoutNodes = buildTemplateLayoutNodes(request.templateId, hasBack)
+  const videoFilter = [...concatNodes, ...layoutNodes, buildPostVideoNode(speed, request.watermarkEnabled)].join(';')
+  const audioFilter = frontAudioRefs.length > 0 ? `${frontAudioRefs}concat=n=${frontPaths.length}:v=0:a=1[a]` : ''
+  const filter = audioFilter.length > 0 ? `${videoFilter};${audioFilter}` : videoFilter
+  const outputPath = toFfmpegPath(request.outputPath)
+  await ensureParentDirectory(outputPath)
+  const audioArgs = muted
+    ? ['-an']
+    : ['-map', '[a]', '-c:a', 'aac']
   const coreArgs: Array<string> = [
     'ffmpeg',
     '-y',
     ...inputs,
     '-filter_complex', filter,
     '-map', '[v]',
-    '-map', '[a]',
     '-c:v', 'mpeg4',
-    '-c:a', 'aac',
     '-pix_fmt', 'yuv420p',
+    ...audioArgs,
     outputPath
   ]
   const fallbackArgs: Array<string> = [
@@ -158,8 +272,7 @@ export async function executeFfmpegComposeByService(
     ...inputs,
     '-filter_complex', videoFilter,
     '-map', '[v]',
-    '-map', '0:a?',
-    '-c:a', 'aac',
+    ...(muted ? ['-an'] : ['-map', '0:a?', '-c:a', 'aac']),
     outputPath
   ]
   const frontBitrate = frontPaths.length > 0 ? await probeVideoBitrate(frontPaths[0]) : 0
@@ -170,6 +283,7 @@ export async function executeFfmpegComposeByService(
     coreArgs.splice(coreArgs.length - 1, 0, '-maxrate', `${targetBitrate}`)
     coreArgs.splice(coreArgs.length - 1, 0, '-bufsize', `${targetBitrate * 2}`)
   }
+  onLog(`FFmpeg模板参数 template=${request.templateId} speed=${request.speedLabel} muted=${muted} watermark=${request.watermarkEnabled}`)
   onLog(`FFmpeg目标码率=${targetBitrate}`)
   onLog(`FFmpeg命令输入统计 Front=${frontPaths.length} Back=${backPaths.length} 输出=${outputPath}`)
   const parseProgressPercent = (msg: string): number => {

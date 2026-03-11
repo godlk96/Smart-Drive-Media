@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "sync:full-log": "powershell -ExecutionPolicy Bypass -File ./tools/sync_full_log.ps1"
   },
   "engines": {
     "node": ">=20"

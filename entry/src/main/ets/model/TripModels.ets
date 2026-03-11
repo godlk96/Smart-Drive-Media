@@ -19,6 +19,7 @@ export class TripSnapshot {
   tripTitle: string = ''
   tripRange: string = ''
   previewUri: string = ''
+  previewFrameUri: string = ''
   previewCamera: string = ''
   clips: Array<DvrMeta> = []
   timeline: Array<TimelineTrackModel> = []
@@ -28,6 +29,7 @@ export class TripSnapshot {
 
 export class PreviewSource {
   uri: string = ''
+  frameUri: string = ''
   camera: string = ''
 }
 
@@ -41,4 +43,8 @@ export class ExportComposeRequest {
   hideSpeed: boolean = true
   hideGps: boolean = true
   hideVin: boolean = true
+  templateId: string = 'T2'
+  speedLabel: string = '1.0X'
+  muted: boolean = false
+  watermarkEnabled: boolean = true
 }
