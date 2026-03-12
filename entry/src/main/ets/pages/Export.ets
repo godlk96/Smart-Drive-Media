@@ -9,7 +9,6 @@ struct Export {
   @State private tripTitle: string = '导出中'
   @State private statusText: string = '导出处理中 0%'
   @State private progress: number = 0
-  @State private remainingText: string = '预计剩余：--'
   @State private isSuccess: boolean = false
   @State private isFailed: boolean = false
 
@@ -59,23 +58,18 @@ struct Export {
     this.isFailed = status.includes('导出失败')
     if (this.isSuccess) {
       this.progress = 100
-      this.remainingText = '预计剩余：0s'
       return
     }
     if (this.isFailed) {
-      this.remainingText = '请返回重试'
       return
     }
     const progressMatch = status.match(/(\d+)%/)
     if (!progressMatch) {
-      this.remainingText = '预计剩余：--'
       return
     }
     const nextProgress = Number.parseInt(progressMatch[1] ?? '0')
     const normalized = Math.max(0, Math.min(100, Number.isFinite(nextProgress) ? nextProgress : 0))
     this.progress = normalized
-    const remainSec = Math.max(1, Math.round((100 - normalized) / 5))
-    this.remainingText = `预计剩余：${remainSec}s`
   }
 
   private backToLibrary(): void {
@@ -168,7 +162,7 @@ struct Export {
               .backgroundColor('#F97316')
           }
           .width('100%')
-          Text(this.remainingText)
+          Text(`导出进度 ${this.progress}%`)
             .fontSize(12)
             .fontColor('#64748B')
         } else if (this.isSuccess) {

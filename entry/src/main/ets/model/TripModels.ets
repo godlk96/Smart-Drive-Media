@@ -1,6 +1,6 @@
 import { TimelineTrackModel } from './AppState'
 
-export const CAMERA_ORDER: Array<string> = ['Front', 'Back', 'Left', 'Right', 'LeftFront', 'RightFront']
+
 
 export class DvrMeta {
   fileName: string = ''
@@ -39,6 +39,7 @@ export class ExportComposeRequest {
   preferredMode: string = 'A_FFMPEG'
   frontUris: Array<string> = []
   backUris: Array<string> = []
+  sideUris: Array<string> = []
   expectedDurationSec: number = 0
   hideSpeed: boolean = true
   hideGps: boolean = true

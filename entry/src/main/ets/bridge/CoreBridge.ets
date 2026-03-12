@@ -8,7 +8,7 @@ import {
   TimelineTrackModel,
   TripCardModel
 } from '../model/AppState'
-import { CAMERA_ORDER, DvrMeta, ExportComposeRequest, TripSnapshot } from '../model/TripModels'
+import { DvrMeta, ExportComposeRequest, TripSnapshot } from '../model/TripModels'
 import { parseDvrFileName, pickPreviewSource } from '../service/DvrScannerService'
 import { buildTimeline, mergeTimeline } from '../service/TimelineService'
 import { buildComposeRequestByService } from '../service/ExportService'
@@ -23,15 +23,15 @@ const JS_BRIDGE_ENTRY: string = 'entry/src/main/js/harmonyBridge.mjs'
 const HUAWEI_SHARE_ALBUM_NAMES: Array<string> = ['华为分享', 'Huawei Share']
 const CLIP_DURATION_SEC: number = 60
 const EXPORT_PIPELINE_VERSION: string = 'native-stack-v6'
-const EDITOR_SPEEDS: Array<string> = ['1.5X', '2.0X', '3.0X', '4.0X']
+const EDITOR_SPEEDS: Array<string> = ['1.0X', '1.5X', '2.0X', '3.0X', '4.0X']
 const DEFAULT_TEMPLATE_ID: string = 'T2'
 const DVR_FILE_PATTERN: RegExp = /^DVR_LoopRecording_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_.+_camera\.(mp4|mov|ts)$/i
 const LOCAL_FILE_VIDEO_PATTERN: RegExp = /^(file:\/\/\/data\/storage\/.+|\/data\/storage\/.+)\.(mp4|mov|ts)(\?.*)?$/i
 const TEMPLATE_CARDS: Array<TemplateCardModel> = [
-  { id: 'T1', title: '单视角', subtitle: '16:9' },
-  { id: 'T2', title: '画中画', subtitle: '16:9' },
-  { id: 'T3', title: '矩阵', subtitle: '16:9' },
-  { id: 'T4', title: '旅拍', subtitle: '9:16' }
+  { id: 'T1', title: '防追尾双录', subtitle: '画中画' },
+  { id: 'T2', title: '避险防加塞', subtitle: '倒品字' },
+  { id: 'T3', title: '侧向防开门杀', subtitle: '左右分屏' },
+  { id: 'T4', title: '沉浸式旅拍', subtitle: '三段堆叠' }
 ]
 
 function toTimeText(date: Date): string {
@@ -646,6 +646,7 @@ export class CoreBridge {
   selectTemplate(templateId: string): EditorStateModel {
     const exists = TEMPLATE_CARDS.some((item: TemplateCardModel) => item.id === templateId)
     this.activeTemplateId = exists ? templateId : DEFAULT_TEMPLATE_ID
+    debugLog('剪辑', `选择模板，模板ID=${this.activeTemplateId}`)
     const snapshot = this.trips.get(this.tripId)
     return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
   }
@@ -660,6 +661,13 @@ export class CoreBridge {
     this.speedIndex = (this.speedIndex + 1) % EDITOR_SPEEDS.length
     const snapshot = this.trips.get(this.tripId)
     return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
+  }
+
+  private syncSpeedByLabel(speedLabel: string): void {
+    const index = EDITOR_SPEEDS.findIndex((item: string) => item === speedLabel)
+    if (index >= 0) {
+      this.speedIndex = index
+    }
   }
 
   toggleMuted(): EditorStateModel {
@@ -765,7 +773,7 @@ export class CoreBridge {
   private buildComposeRequest(snapshot: TripSnapshot, fileName: string): ExportComposeRequest {
     const baseDir = this.lastContext?.cacheDir ?? this.lastContext?.filesDir ?? '/data/storage/el2/base/files'
     const outputPath = `${baseDir}/${fileName}`
-    return buildComposeRequestByService(
+    const request = buildComposeRequestByService(
       snapshot.clips,
       fileName,
       outputPath,
@@ -778,6 +786,8 @@ export class CoreBridge {
       this.muted,
       this.watermarkEnabled
     )
+    debugLog('导出', `导出取源快照 模板=${request.templateId} Front=${request.frontUris.length} Back=${request.backUris.length} Side=${request.sideUris.length}`)
+    return request
   }
 
   private async composeExportSourceUri(
@@ -900,7 +910,7 @@ export class CoreBridge {
     return albumUri
   }
 
-  startExport(): string {
+  startExport(templateId?: string, speedLabel?: string, muted?: boolean, watermarkEnabled?: boolean): string {
     const snapshot = this.trips.get(this.tripId)
     if (!snapshot) {
       this.exportStatusText = '导出失败：缺少行程数据'
@@ -908,6 +918,18 @@ export class CoreBridge {
     }
     if (this.exporting) {
       return this.exportStatusText
+    }
+    if (templateId && templateId.length > 0) {
+      this.activeTemplateId = templateId
+    }
+    if (speedLabel && speedLabel.length > 0) {
+      this.syncSpeedByLabel(speedLabel)
+    }
+    if (muted !== undefined) {
+      this.muted = muted
+    }
+    if (watermarkEnabled !== undefined) {
+      this.watermarkEnabled = watermarkEnabled
     }
     const exportCameras: Array<string> = ['Front', 'Back']
     const details: Array<string> = []
@@ -917,7 +939,7 @@ export class CoreBridge {
         .sort((a: DvrMeta, b: DvrMeta) => a.timestamp - b.timestamp)
       details.push(`${camera}:${clips.length}`)
     })
-    debugLog('导出', `策略=前后分轨时间拼接后上下合成，版本=${EXPORT_PIPELINE_VERSION}，明细=${details.join(',')}`)
+    debugLog('导出', `策略=前后分轨时间拼接后上下合成，版本=${EXPORT_PIPELINE_VERSION}，模板=${this.activeTemplateId}，倍速=${EDITOR_SPEEDS[this.speedIndex]}，静音=${this.muted}，尾标=${this.watermarkEnabled}，明细=${details.join(',')}`)
     const fileName = this.buildExportFileName()
     this.exportStatusText = `导出处理中 0%（${fileName}）`
     this.startExportPipeline(fileName)

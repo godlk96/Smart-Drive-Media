@@ -92,12 +92,61 @@ function parseSpeedValue(speedLabel: string): number {
   return speed
 }
 
-function buildTemplateLayoutNodes(templateId: string, hasBack: boolean): Array<string> {
+function buildAtempoChain(speed: number): string {
+  const nodes: Array<string> = []
+  let rest = speed
+  while (rest > 2) {
+    nodes.push('atempo=2')
+    rest = rest / 2
+  }
+  while (rest < 0.5) {
+    nodes.push('atempo=0.5')
+    rest = rest / 0.5
+  }
+  if (Math.abs(rest - 1) > 0.001) {
+    nodes.push(`atempo=${rest.toFixed(3)}`)
+  }
+  if (nodes.length === 0) {
+    return 'anull'
+  }
+  return nodes.join(',')
+}
+
+function buildTemplateLayoutNodes(templateId: string, hasBack: boolean, hasSide: boolean): Array<string> {
   const normalizedId = templateId === 'T1' || templateId === 'T2' || templateId === 'T3' || templateId === 'T4'
     ? templateId
     : 'T2'
   if (normalizedId === 'T1') {
-    return ['[front_v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[layout_v]']
+    if (!hasBack) {
+      return ['[front_v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[layout_v]']
+    }
+    return [
+      '[front_v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[base_v]',
+      '[back_v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:black[pip_v]',
+      '[base_v][pip_v]overlay=x=W-w-48:y=48[layout_v]'
+    ]
+  }
+  if (normalizedId === 'T2') {
+    if (!hasBack && !hasSide) {
+      return ['[front_v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[layout_v]']
+    }
+    if (!hasBack) {
+      return [
+        '[front_v]scale=1920:540:force_original_aspect_ratio=decrease,pad=1920:540:(ow-iw)/2:(oh-ih)/2:black[top_v]',
+        '[side_v]scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2:black[bottom_left_v]',
+        '[front_v]scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2:black[bottom_right_v]',
+        '[bottom_left_v][bottom_right_v]hstack=inputs=2[bottom_v]',
+        '[top_v][bottom_v]vstack=inputs=2[layout_v]'
+      ]
+    }
+    const leftRef = hasSide ? '[side_v]' : '[front_v]'
+    return [
+      '[front_v]scale=1920:540:force_original_aspect_ratio=decrease,pad=1920:540:(ow-iw)/2:(oh-ih)/2:black[top_v]',
+      `${leftRef}scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2:black[bottom_left_v]`,
+      '[back_v]scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2:black[bottom_right_v]',
+      '[bottom_left_v][bottom_right_v]hstack=inputs=2[bottom_v]',
+      '[top_v][bottom_v]vstack=inputs=2[layout_v]'
+    ]
   }
   if (normalizedId === 'T3') {
     if (!hasBack) {
@@ -110,29 +159,70 @@ function buildTemplateLayoutNodes(templateId: string, hasBack: boolean): Array<s
     ]
   }
   if (normalizedId === 'T4') {
-    if (!hasBack) {
+    if (!hasBack && !hasSide) {
       return [
         'color=c=black:s=1080x1920[canvas_v]',
         '[front_v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black[single_v]',
         '[canvas_v][single_v]overlay=0:0[layout_v]'
       ]
     }
+    if (!hasBack) {
+      return [
+        'color=c=black:s=1080x1920[canvas_v]',
+        '[side_v]scale=1080:640:force_original_aspect_ratio=decrease,pad=1080:640:(ow-iw)/2:(oh-ih)/2:black[top_v]',
+        '[front_v]scale=1080:640:force_original_aspect_ratio=decrease,pad=1080:640:(ow-iw)/2:(oh-ih)/2:black[middle_v]',
+        '[front_v]scale=1080:640:force_original_aspect_ratio=decrease,pad=1080:640:(ow-iw)/2:(oh-ih)/2:black[bottom_v]',
+        '[canvas_v][top_v]overlay=0:0[layer1_v]',
+        '[layer1_v][middle_v]overlay=0:640[layer2_v]',
+        '[layer2_v][bottom_v]overlay=0:1280[layout_v]'
+      ]
+    }
+    const topRef = hasSide ? '[side_v]' : '[front_v]'
     return [
       'color=c=black:s=1080x1920[canvas_v]',
-      '[front_v]scale=1080:960:force_original_aspect_ratio=decrease,pad=1080:960:(ow-iw)/2:(oh-ih)/2:black[top_v]',
-      '[back_v]scale=1080:960:force_original_aspect_ratio=decrease,pad=1080:960:(ow-iw)/2:(oh-ih)/2:black[bottom_v]',
-      '[canvas_v][top_v]overlay=0:0[stack_v]',
-      '[stack_v][bottom_v]overlay=0:960[layout_v]'
+      `${topRef}scale=1080:640:force_original_aspect_ratio=decrease,pad=1080:640:(ow-iw)/2:(oh-ih)/2:black[top_v]`,
+      '[front_v]scale=1080:640:force_original_aspect_ratio=decrease,pad=1080:640:(ow-iw)/2:(oh-ih)/2:black[middle_v]',
+      '[back_v]scale=1080:640:force_original_aspect_ratio=decrease,pad=1080:640:(ow-iw)/2:(oh-ih)/2:black[bottom_v]',
+      '[canvas_v][top_v]overlay=0:0[layer1_v]',
+      '[layer1_v][middle_v]overlay=0:640[layer2_v]',
+      '[layer2_v][bottom_v]overlay=0:1280[layout_v]'
     ]
   }
-  if (!hasBack) {
-    return ['[front_v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[layout_v]']
+  return ['[front_v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[layout_v]']
+}
+
+function buildTemplateProfile(templateId: string, hasBack: boolean, hasSide: boolean): string {
+  if (templateId === 'T1') {
+    return hasBack ? 'pip(front+back)' : 'single(front)'
   }
-  return [
-    '[front_v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[base_v]',
-    '[back_v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:black[pip_v]',
-    '[base_v][pip_v]overlay=x=W-w-48:y=48[layout_v]'
-  ]
+  if (templateId === 'T2') {
+    if (hasBack && hasSide) {
+      return 'inverted-triangle(top-front,bottom-side+back)'
+    }
+    if (hasBack) {
+      return 'inverted-triangle(top-front,bottom-front+back)'
+    }
+    if (hasSide) {
+      return 'inverted-triangle(top-front,bottom-side+front)'
+    }
+    return 'single(front)'
+  }
+  if (templateId === 'T3') {
+    return hasBack ? 'split(left-front,right-back)' : 'single(front)'
+  }
+  if (templateId === 'T4') {
+    if (hasBack && hasSide) {
+      return 'portrait-stack(top-side,middle-front,bottom-back)'
+    }
+    if (hasBack) {
+      return 'portrait-stack(top-front,middle-front,bottom-back)'
+    }
+    if (hasSide) {
+      return 'portrait-stack(top-side,middle-front,bottom-front)'
+    }
+    return 'portrait-single(front)'
+  }
+  return 'fallback(front)'
 }
 
 function buildPostVideoNode(speed: number, watermarkEnabled: boolean): string {
@@ -223,6 +313,15 @@ export async function executeFfmpegComposeByService(
     }
     backPaths.push(stagedPath)
   }
+  const sidePaths: Array<string> = []
+  for (const uri of request.sideUris) {
+    const readablePath = await resolveInputForFfmpeg(uri)
+    const stagedPath = readablePath.startsWith('/data/') ? readablePath : await copyForFfmpeg(readablePath, inputIndex++, cacheDir)
+    if (stagedPath !== readablePath) {
+      stagedPaths.push(stagedPath)
+    }
+    sidePaths.push(stagedPath)
+  }
   const inputs: Array<string> = []
   frontPaths.forEach((path: string) => {
     inputs.push('-i')
@@ -232,11 +331,18 @@ export async function executeFfmpegComposeByService(
     inputs.push('-i')
     inputs.push(path)
   })
+  sidePaths.forEach((path: string) => {
+    inputs.push('-i')
+    inputs.push(path)
+  })
   const hasBack: boolean = backPaths.length > 0
+  const hasSide: boolean = sidePaths.length > 0
   const speed = parseSpeedValue(request.speedLabel)
-  const muted = request.muted || speed > 1
+  const muted = request.muted
+  const atempoChain = buildAtempoChain(speed)
   const frontRefs = frontPaths.map((_, index: number) => `[${index}:v]`).join('')
   const backRefs = hasBack ? backPaths.map((_, index: number) => `[${frontPaths.length + index}:v]`).join('') : ''
+  const sideRefs = hasSide ? sidePaths.map((_, index: number) => `[${frontPaths.length + backPaths.length + index}:v]`).join('') : ''
   const frontAudioRefs = frontPaths.map((_, index: number) => `[${index}:a]`).join('')
   const concatNodes: Array<string> = [
     `${frontRefs}concat=n=${frontPaths.length}:v=1:a=0[front_v]`
@@ -246,9 +352,16 @@ export async function executeFfmpegComposeByService(
   } else {
     concatNodes.push('[front_v]null[back_v]')
   }
-  const layoutNodes = buildTemplateLayoutNodes(request.templateId, hasBack)
+  if (hasSide) {
+    concatNodes.push(`${sideRefs}concat=n=${sidePaths.length}:v=1:a=0[side_v]`)
+  } else {
+    concatNodes.push('[front_v]null[side_v]')
+  }
+  const layoutNodes = buildTemplateLayoutNodes(request.templateId, hasBack, hasSide)
   const videoFilter = [...concatNodes, ...layoutNodes, buildPostVideoNode(speed, request.watermarkEnabled)].join(';')
-  const audioFilter = frontAudioRefs.length > 0 ? `${frontAudioRefs}concat=n=${frontPaths.length}:v=0:a=1[a]` : ''
+  const audioFilter = frontAudioRefs.length > 0
+    ? `${frontAudioRefs}concat=n=${frontPaths.length}:v=0:a=1,${atempoChain}[a]`
+    : ''
   const filter = audioFilter.length > 0 ? `${videoFilter};${audioFilter}` : videoFilter
   const outputPath = toFfmpegPath(request.outputPath)
   await ensureParentDirectory(outputPath)
@@ -283,9 +396,9 @@ export async function executeFfmpegComposeByService(
     coreArgs.splice(coreArgs.length - 1, 0, '-maxrate', `${targetBitrate}`)
     coreArgs.splice(coreArgs.length - 1, 0, '-bufsize', `${targetBitrate * 2}`)
   }
-  onLog(`FFmpeg模板参数 template=${request.templateId} speed=${request.speedLabel} muted=${muted} watermark=${request.watermarkEnabled}`)
+  onLog(`FFmpeg模板参数 template=${request.templateId} profile=${buildTemplateProfile(request.templateId, hasBack, hasSide)} speed=${request.speedLabel} speedValue=${speed} atempo=${atempoChain} muted=${muted} watermark=${request.watermarkEnabled}`)
   onLog(`FFmpeg目标码率=${targetBitrate}`)
-  onLog(`FFmpeg命令输入统计 Front=${frontPaths.length} Back=${backPaths.length} 输出=${outputPath}`)
+  onLog(`FFmpeg命令输入统计 Front=${frontPaths.length} Back=${backPaths.length} Side=${sidePaths.length} 输出=${outputPath}`)
   const parseProgressPercent = (msg: string): number => {
     const match = msg.match(/time=(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/)
     if (!match) {

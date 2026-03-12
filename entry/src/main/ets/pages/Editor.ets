@@ -11,9 +11,14 @@ struct Editor {
   private secondaryControllerB: VideoController = new VideoController()
   private secondaryControllerC: VideoController = new VideoController()
   private controlsTimer: number = -1
+  private speedEmulationTimer: number = -1
+  private speedEmulationFractionSec: number = 0
+  private manualSpeedMode: boolean = false
+  private lastSecondarySeekMs: number = 0
   private lastLoggedSecond: number = -1
   private previewLogged: boolean = false
   private timelineLogged: boolean = false
+  private speedProbeLogged: boolean = false
   @State private showPlayerControls: boolean = true
   @State private showPreviewCover: boolean = true
   @State private seamlessPendingPlay: boolean = false
@@ -84,6 +89,7 @@ struct Editor {
 
   aboutToDisappear(): void {
     this.clearHideControlsTimer()
+    this.clearSpeedEmulationTimer()
   }
 
   private clearHideControlsTimer(): void {
@@ -91,6 +97,14 @@ struct Editor {
       clearTimeout(this.controlsTimer)
       this.controlsTimer = -1
     }
+  }
+
+  private clearSpeedEmulationTimer(): void {
+    if (this.speedEmulationTimer >= 0) {
+      clearInterval(this.speedEmulationTimer)
+      this.speedEmulationTimer = -1
+    }
+    this.speedEmulationFractionSec = 0
   }
 
   private scheduleHideControls(): void {
@@ -150,6 +164,8 @@ struct Editor {
     this.secondaryControllerB.start()
     this.secondaryControllerC.start()
     this.previewPlaying = true
+    this.ensureSpeedEmulation()
+    debugLog('剪辑诊断', `触发统一播放，目标倍速=${this.getPlaybackRate()}X`)
   }
 
   private pauseAllPreview(): void {
@@ -158,6 +174,9 @@ struct Editor {
     this.secondaryControllerB.pause()
     this.secondaryControllerC.pause()
     this.previewPlaying = false
+    this.manualSpeedMode = false
+    this.clearSpeedEmulationTimer()
+    debugLog('剪辑诊断', `触发统一暂停，当前倍速=${this.getPlaybackRate()}X`)
   }
 
   private togglePreviewPlay(): void {
@@ -185,25 +204,110 @@ struct Editor {
   private getPlaybackRate(): number {
     const normalized = this.state.speedLabel.replace('X', '')
     const parsed = Number(normalized)
-    if (parsed >= 1.5 && parsed <= 4) {
+    if (parsed >= 1.0 && parsed <= 4) {
       return parsed
     }
-    return 1.5
+    return 1.0
+  }
+
+  private syncGlobalPlayhead(second: number, fromUser: boolean): void {
+    const clamped = Math.max(0, Math.min(second, this.state.totalDurationSec))
+    this.playheadSec = clamped
+    this.applyState(this.bridge.seekGlobalPlayhead(Math.floor(clamped)))
+    this.state.playheadText = this.bridge.updatePlayhead(Math.floor(this.playheadSec * 1000))
+    const localSecond = this.getLocalSecond(this.playheadSec)
+    this.seekAllControllers(localSecond, true)
+    if (fromUser && Math.floor(clamped) !== this.lastLoggedSecond) {
+      this.lastLoggedSecond = Math.floor(clamped)
+      debugLog('剪辑页', `拖动全局进度，秒=${Math.floor(clamped)}，片段=${this.state.currentClipIndex}/${this.state.currentClipTotal}，片内秒=${Math.floor(localSecond)}`)
+    }
+    if (fromUser) {
+      this.showControlsTemporarily()
+    }
+  }
+
+  private ensureSpeedEmulation(): void {
+    this.clearSpeedEmulationTimer()
+    if (!this.previewPlaying) {
+      return
+    }
+    const rate = this.getPlaybackRate()
+    if (rate <= 1) {
+      this.manualSpeedMode = false
+      return
+    }
+    this.manualSpeedMode = true
+    this.previewController.pause()
+    this.secondaryControllerA.pause()
+    this.secondaryControllerB.pause()
+    this.secondaryControllerC.pause()
+    this.lastSecondarySeekMs = 0
+    this.speedEmulationTimer = setInterval(() => {
+      if (!this.previewPlaying) {
+        return
+      }
+      this.speedEmulationFractionSec += rate * 0.32
+      const stepSec = this.speedEmulationFractionSec
+      this.speedEmulationFractionSec = 0
+      const nextSec = Math.min(this.state.totalDurationSec, this.playheadSec + stepSec)
+      const currentClipEnd = this.getCurrentClipStartSec() + this.getClipSpanSec()
+      if (nextSec >= currentClipEnd && this.state.canPlayNext) {
+        this.syncGlobalPlayhead(nextSec, false)
+      } else {
+        this.playheadSec = nextSec
+        this.state.playheadText = this.bridge.updatePlayhead(Math.floor(this.playheadSec * 1000))
+        const localSecond = this.getLocalSecond(this.playheadSec)
+        this.seekPrimaryController(localSecond)
+        this.seekSecondaryControllers(localSecond, false)
+      }
+      if (nextSec >= this.state.totalDurationSec) {
+        this.previewPlaying = false
+        this.manualSpeedMode = false
+        this.clearSpeedEmulationTimer()
+      }
+    }, 320)
+    debugLog('倍速诊断', `启用预览倍速仿真，rate=${rate}`)
   }
 
   private applyPlaybackRate(): void {
     const rate = this.getPlaybackRate()
-    const applyRate = (controller: VideoController): void => {
+    const applyRate = (controller: VideoController, name: string): void => {
       const controllerHost = controller as Object as Record<string, (value: number) => void>
-      const speedHandler = controllerHost['setSpeed']
-      if (speedHandler) {
-        speedHandler(rate)
+      const hasSetPlaybackSpeed = controllerHost['setPlaybackSpeed'] !== undefined
+      const hasSetSpeed = controllerHost['setSpeed'] !== undefined
+      const hasSetRate = controllerHost['setRate'] !== undefined
+      if (!this.speedProbeLogged) {
+        debugLog('倍速诊断', `控制器能力 ${name} setPlaybackSpeed=${hasSetPlaybackSpeed} setSpeed=${hasSetSpeed} setRate=${hasSetRate}`)
+      }
+      try {
+        if (hasSetPlaybackSpeed) {
+          controllerHost['setPlaybackSpeed'](rate)
+          debugLog('倍速诊断', `倍速应用成功 ${name} method=setPlaybackSpeed rate=${rate}`)
+          return
+        }
+        if (hasSetSpeed) {
+          controllerHost['setSpeed'](rate)
+          debugLog('倍速诊断', `倍速应用成功 ${name} method=setSpeed rate=${rate}`)
+          return
+        }
+        if (hasSetRate) {
+          controllerHost['setRate'](rate)
+          debugLog('倍速诊断', `倍速应用成功 ${name} method=setRate rate=${rate}`)
+          return
+        }
+        debugLog('倍速诊断', `倍速应用失败 ${name} 无可用方法 rate=${rate}`)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        debugLog('倍速诊断', `倍速应用异常 ${name} rate=${rate} message=${message}`)
       }
     }
-    applyRate(this.previewController)
-    applyRate(this.secondaryControllerA)
-    applyRate(this.secondaryControllerB)
-    applyRate(this.secondaryControllerC)
+    applyRate(this.previewController, 'primary')
+    applyRate(this.secondaryControllerA, 'secondaryA')
+    applyRate(this.secondaryControllerB, 'secondaryB')
+    applyRate(this.secondaryControllerC, 'secondaryC')
+    if (!this.speedProbeLogged) {
+      this.speedProbeLogged = true
+    }
   }
 
   private getClipSpanSec(): number {
@@ -222,14 +326,27 @@ struct Editor {
 
   private getLocalSecond(globalSecond: number): number {
     const clipStart = this.getCurrentClipStartSec()
-    return Math.max(0, Math.floor(globalSecond - clipStart))
+    return Math.max(0, globalSecond - clipStart)
   }
 
-  private seekAllControllers(localSecond: number): void {
+  private seekPrimaryController(localSecond: number): void {
     this.previewController.setCurrentTime(localSecond)
+  }
+
+  private seekSecondaryControllers(localSecond: number, force: boolean): void {
+    const now = Date.now()
+    if (!force && now - this.lastSecondarySeekMs < 1500) {
+      return
+    }
+    this.lastSecondarySeekMs = now
     this.secondaryControllerA.setCurrentTime(localSecond)
     this.secondaryControllerB.setCurrentTime(localSecond)
     this.secondaryControllerC.setCurrentTime(localSecond)
+  }
+
+  private seekAllControllers(localSecond: number, force: boolean): void {
+    this.seekPrimaryController(localSecond)
+    this.seekSecondaryControllers(localSecond, force)
   }
 
   private getRangeStartPercent(): string {
@@ -283,7 +400,7 @@ struct Editor {
     this.applyState(this.bridge.playPrevClip())
     this.playheadSec = this.getCurrentClipStartSec()
     this.state.playheadText = this.bridge.updatePlayhead(this.playheadSec * 1000)
-    this.seekAllControllers(0)
+    this.seekAllControllers(0, true)
     this.showPreviewCover = this.state.previewUri.length > 0
     this.seamlessPendingPlay = false
     debugLog('剪辑页', `切换上一片，当前=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
@@ -294,7 +411,7 @@ struct Editor {
     this.applyState(this.bridge.playNextClip())
     this.playheadSec = this.getCurrentClipStartSec()
     this.state.playheadText = this.bridge.updatePlayhead(this.playheadSec * 1000)
-    this.seekAllControllers(0)
+    this.seekAllControllers(0, true)
     this.showPreviewCover = this.state.previewUri.length > 0
     this.seamlessPendingPlay = false
     debugLog('剪辑页', `切换下一片，当前=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
@@ -302,17 +419,7 @@ struct Editor {
   }
 
   private updatePlayhead(second: number): void {
-    const clamped = Math.max(0, Math.min(Math.floor(second), this.state.totalDurationSec))
-    this.playheadSec = clamped
-    this.applyState(this.bridge.seekGlobalPlayhead(clamped))
-    this.state.playheadText = this.bridge.updatePlayhead(this.playheadSec * 1000)
-    const localSecond = this.getLocalSecond(this.playheadSec)
-    this.seekAllControllers(localSecond)
-    if (clamped !== this.lastLoggedSecond) {
-      this.lastLoggedSecond = clamped
-      debugLog('剪辑页', `拖动全局进度，秒=${clamped}，片段=${this.state.currentClipIndex}/${this.state.currentClipTotal}，片内秒=${localSecond}`)
-    }
-    this.showControlsTemporarily()
+    this.syncGlobalPlayhead(second, true)
   }
 
   private updateRangeStart(value: number): void {
@@ -346,6 +453,15 @@ struct Editor {
   private cycleSpeed(): void {
     this.applyState(this.bridge.cycleSpeed())
     this.applyPlaybackRate()
+    if (this.previewPlaying) {
+      if (this.getPlaybackRate() <= 1) {
+        this.manualSpeedMode = false
+        this.clearSpeedEmulationTimer()
+        this.startAllPreview()
+      } else {
+        this.ensureSpeedEmulation()
+      }
+    }
     debugLog('剪辑诊断', `切换整体倍速=${this.getPlaybackRate()}X`)
     this.showControlsTemporarily()
   }
@@ -390,7 +506,13 @@ struct Editor {
           .type(ButtonType.Capsule)
           .fontSize(12)
           .onClick(() => {
-            this.state.exportStatusText = this.bridge.startExport()
+            debugLog('剪辑页', `点击导出前快照，模板=${this.state.activeTemplateId}，倍速=${this.state.speedLabel}，静音=${this.state.muted}，尾标=${this.state.watermarkEnabled}`)
+            this.state.exportStatusText = this.bridge.startExport(
+              this.state.activeTemplateId,
+              this.state.speedLabel,
+              this.state.muted,
+              this.state.watermarkEnabled
+            )
             debugLog('剪辑页', `点击导出，状态=${this.state.exportStatusText}`)
             this.openExportPage(this.state.exportStatusText)
             this.showControlsTemporarily()
@@ -422,7 +544,8 @@ struct Editor {
                 .position({ x: this.toPercent(slot.x), y: this.toPercent(slot.y) })
                 .onPrepared(() => {
                   debugLog('剪辑诊断', `主轨视频准备完成，视角=${slot.camera}`)
-                  this.seekAllControllers(this.getLocalSecond(this.playheadSec))
+                  this.applyPlaybackRate()
+                  this.seekAllControllers(this.getLocalSecond(this.playheadSec), true)
                   if (this.seamlessPendingPlay) {
                     this.seamlessPendingPlay = false
                     this.startAllPreview()
@@ -445,11 +568,17 @@ struct Editor {
                 .onStart(() => {
                   this.showPreviewCover = false
                   this.previewPlaying = true
+                  this.ensureSpeedEmulation()
                   this.showControlsTemporarily()
                   debugLog('剪辑诊断', `主轨开始播放，视角=${slot.camera}`)
                 })
                 .onPause(() => {
+                  if (this.manualSpeedMode) {
+                    debugLog('剪辑诊断', '主轨暂停事件已忽略（倍速仿真模式）')
+                    return
+                  }
                   this.previewPlaying = false
+                  this.clearSpeedEmulationTimer()
                   this.showControlsTemporarily()
                   debugLog('剪辑诊断', '主轨视频暂停')
                 })
@@ -465,6 +594,7 @@ struct Editor {
                     return
                   }
                   this.showPreviewCover = true
+                  this.clearSpeedEmulationTimer()
                   this.showControlsTemporarily()
                   debugLog('剪辑诊断', '主轨播放结束')
                 })
@@ -486,6 +616,7 @@ struct Editor {
                 .muted(true)
                 .position({ x: this.toPercent(slot.x), y: this.toPercent(slot.y) })
                 .onPrepared(() => {
+                  this.applyPlaybackRate()
                   if (this.previewPlaying) {
                     this.getSecondaryController(slot.id).start()
                   } else {
