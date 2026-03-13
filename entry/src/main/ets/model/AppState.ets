@@ -55,6 +55,7 @@ export interface EditorStateModel {
   timeRange: string
   previewUri: string
   previewCamera: string
+  playheadSec: number
   canPlayPrev: boolean
   canPlayNext: boolean
   currentClipIndex: number

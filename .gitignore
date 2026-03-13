@@ -1,5 +1,6 @@
 AppScope/*.p12
 AppScope/*.cer
+AppScope/*.p7b
 AppScope/*.mobileprovision
 *.log
 t.log

@@ -63,7 +63,6 @@ async function probeVideoBitrate(inputPath: string): Promise<number> {
   let output = ''
   try {
     await FFmpeg.execute([
-      'ffprobe',
       '-v', 'error',
       '-select_streams', 'v:0',
       '-show_entries', 'stream=bit_rate',
@@ -273,7 +272,6 @@ export async function extractFirstFrameByService(sourceUri: string, cacheDir: st
   await ensureParentDirectory(outputPath)
   try {
     await FFmpeg.execute([
-      'ffmpeg',
       '-y',
       '-i', inputPath,
       '-frames:v', '1',
@@ -291,10 +289,11 @@ export async function executeFfmpegComposeByService(
   request: ExportComposeRequest,
   cacheDir: string,
   onLog: (message: string) => void,
-  onProgress: (percent: number) => void
+  onProgress: (percent: number) => void,
+  singleClipRetryUsed: boolean = false
 ): Promise<string> {
   const stagedPaths: Array<string> = []
-  const frontPaths: Array<string> = []
+  let frontPaths: Array<string> = []
   let inputIndex: number = 0
   for (const uri of request.frontUris) {
     const readablePath = await resolveInputForFfmpeg(uri)
@@ -304,7 +303,7 @@ export async function executeFfmpegComposeByService(
     }
     frontPaths.push(stagedPath)
   }
-  const backPaths: Array<string> = []
+  let backPaths: Array<string> = []
   for (const uri of request.backUris) {
     const readablePath = await resolveInputForFfmpeg(uri)
     const stagedPath = readablePath.startsWith('/data/') ? readablePath : await copyForFfmpeg(readablePath, inputIndex++, cacheDir)
@@ -313,7 +312,7 @@ export async function executeFfmpegComposeByService(
     }
     backPaths.push(stagedPath)
   }
-  const sidePaths: Array<string> = []
+  let sidePaths: Array<string> = []
   for (const uri of request.sideUris) {
     const readablePath = await resolveInputForFfmpeg(uri)
     const stagedPath = readablePath.startsWith('/data/') ? readablePath : await copyForFfmpeg(readablePath, inputIndex++, cacheDir)
@@ -321,6 +320,19 @@ export async function executeFfmpegComposeByService(
       stagedPaths.push(stagedPath)
     }
     sidePaths.push(stagedPath)
+  }
+  if (frontPaths.length === 0) {
+    if (backPaths.length > 0) {
+      onLog('未找到前路输入，回退使用后路作为主轨')
+      frontPaths = backPaths
+      backPaths = []
+    } else if (sidePaths.length > 0) {
+      onLog('未找到前路输入，回退使用侧路作为主轨')
+      frontPaths = sidePaths
+      sidePaths = []
+    } else {
+      throw new Error('导出失败：所有轨道都为空')
+    }
   }
   const inputs: Array<string> = []
   frontPaths.forEach((path: string) => {
@@ -369,7 +381,6 @@ export async function executeFfmpegComposeByService(
     ? ['-an']
     : ['-map', '[a]', '-c:a', 'aac']
   const coreArgs: Array<string> = [
-    'ffmpeg',
     '-y',
     ...inputs,
     '-filter_complex', filter,
@@ -380,7 +391,6 @@ export async function executeFfmpegComposeByService(
     outputPath
   ]
   const fallbackArgs: Array<string> = [
-    'ffmpeg',
     '-y',
     ...inputs,
     '-filter_complex', videoFilter,
@@ -447,9 +457,36 @@ export async function executeFfmpegComposeByService(
     await run(coreArgs)
   } catch (errorA) {
     const messageA = errorA instanceof Error ? errorA.message : String(errorA)
-    if (messageA.includes('Option not found')) {
-      onLog('FFmpeg参数不兼容，切换最小参数重试')
-      await run(fallbackArgs)
+    if (messageA.includes('Option not found') || messageA.includes('Invalid argument')) {
+      onLog(`FFmpeg主命令失败(${messageA})，切换最小参数重试`)
+      try {
+        await run(fallbackArgs)
+      } catch (errorB) {
+        const messageB = errorB instanceof Error ? errorB.message : String(errorB)
+        onLog(`FFmpeg最小参数重试失败：${messageB}`)
+        const shouldSingleClipRetry = !singleClipRetryUsed &&
+          (messageA.includes('Invalid argument') || messageB.includes('Invalid argument')) &&
+          (frontPaths.length > 1 || backPaths.length > 1 || sidePaths.length > 1)
+        if (shouldSingleClipRetry) {
+          onLog('FFmpeg切换单片段保底重试')
+          const degraded = new ExportComposeRequest()
+          degraded.fileName = request.fileName
+          degraded.outputPath = request.outputPath
+          degraded.expectedDurationSec = Math.max(1, Math.min(request.expectedDurationSec, 60))
+          degraded.hideSpeed = request.hideSpeed
+          degraded.hideGps = request.hideGps
+          degraded.hideVin = request.hideVin
+          degraded.templateId = request.templateId
+          degraded.speedLabel = request.speedLabel
+          degraded.muted = request.muted
+          degraded.watermarkEnabled = request.watermarkEnabled
+          degraded.frontUris = request.frontUris.length > 0 ? [request.frontUris[0]] : []
+          degraded.backUris = request.backUris.length > 0 ? [request.backUris[0]] : []
+          degraded.sideUris = request.sideUris.length > 0 ? [request.sideUris[0]] : []
+          return await executeFfmpegComposeByService(degraded, cacheDir, onLog, onProgress, true)
+        }
+        throw new Error(messageB)
+      }
     } else {
       onLog(`FFmpeg执行失败，原因=${messageA}`)
       throw new Error(messageA)

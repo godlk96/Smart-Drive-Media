@@ -1,0 +1,228 @@
+import common from '@ohos.app.ability.common'
+import fs from '@ohos.file.fs'
+import photoAccessHelper from '@ohos.file.photoAccessHelper'
+import { CameraPosition, ExportSnapshot } from '../model/Models'
+import { DvrMeta } from '../model/TripModels'
+import { buildComposeRequestByService } from './ExportService'
+import { executeFfmpegComposeByService } from './ExportRuntimeService'
+import { debugLog } from '../utils/Logger'
+
+export type ExportJobId = string
+
+export interface ExportJobEvent {
+  jobId: ExportJobId
+  status: string
+  progress: number
+}
+
+type ExportListener = (event: ExportJobEvent) => void
+
+interface ExportJobRecord {
+  id: ExportJobId
+  snapshot: ExportSnapshot
+  listeners: Array<ExportListener>
+  cancelled: boolean
+}
+
+function toLegacyCamera(camera: CameraPosition): string {
+  if (camera === CameraPosition.FRONT) {
+    return 'Front'
+  }
+  if (camera === CameraPosition.REAR) {
+    return 'Back'
+  }
+  if (camera === CameraPosition.LEFT) {
+    return 'Left'
+  }
+  if (camera === CameraPosition.RIGHT) {
+    return 'Right'
+  }
+  if (camera === CameraPosition.LEFT_FRONT) {
+    return 'LeftFront'
+  }
+  return 'RightFront'
+}
+
+function snapshotToLegacyClips(snapshot: ExportSnapshot): Array<DvrMeta> {
+  const clips: Array<DvrMeta> = []
+  const cameras: Array<CameraPosition> = [
+    CameraPosition.FRONT,
+    CameraPosition.REAR,
+    CameraPosition.LEFT,
+    CameraPosition.RIGHT,
+    CameraPosition.LEFT_FRONT,
+    CameraPosition.RIGHT_FRONT
+  ]
+  cameras.forEach((camera: CameraPosition) => {
+    const track = snapshot.trip.tracks[camera]
+    track.segments.forEach((segment) => {
+      const clip = new DvrMeta()
+      clip.fileName = `${segment.clipId}.mp4`
+      clip.uri = segment.uri
+      clip.camera = toLegacyCamera(camera)
+      clip.timestamp = segment.timestampMs
+      clip.date = ''
+      clip.time = ''
+      clips.push(clip)
+    })
+  })
+  clips.sort((a: DvrMeta, b: DvrMeta) => a.timestamp - b.timestamp)
+  return clips
+}
+
+function buildExportFileName(): string {
+  const now = new Date()
+  const yyyy = now.getFullYear().toString()
+  const mm = (now.getMonth() + 1).toString().padStart(2, '0')
+  const dd = now.getDate().toString().padStart(2, '0')
+  const hh = now.getHours().toString().padStart(2, '0')
+  const min = now.getMinutes().toString().padStart(2, '0')
+  const ss = now.getSeconds().toString().padStart(2, '0')
+  return `SmartDrive_Export_${yyyy}${mm}${dd}_${hh}${min}${ss}.mp4`
+}
+
+export class ExportManager {
+  private jobs: Map<ExportJobId, ExportJobRecord> = new Map()
+
+  private notify(record: ExportJobRecord, status: string, progress: number): void {
+    const event: ExportJobEvent = { jobId: record.id, status: status, progress: progress }
+    record.listeners.forEach((listener: ExportListener) => {
+      listener(event)
+    })
+  }
+
+  subscribe(jobId: ExportJobId, listener: ExportListener): void {
+    const record = this.jobs.get(jobId)
+    if (!record) {
+      return
+    }
+    record.listeners = [...record.listeners, listener]
+  }
+
+  cancel(jobId: ExportJobId): void {
+    const record = this.jobs.get(jobId)
+    if (!record) {
+      return
+    }
+    record.cancelled = true
+    this.notify(record, '已取消', 0)
+  }
+
+  async start(snapshot: ExportSnapshot, context: common.UIAbilityContext): Promise<ExportJobId> {
+    const jobId = `${snapshot.sessionId}_${Date.now()}`
+    const record: ExportJobRecord = {
+      id: jobId,
+      snapshot: snapshot,
+      listeners: [],
+      cancelled: false
+    }
+    this.jobs.set(jobId, record)
+    this.notify(record, '导出处理中 0%', 0)
+    void this.run(record, context)
+    return jobId
+  }
+
+  private async run(record: ExportJobRecord, context: common.UIAbilityContext): Promise<void> {
+    const fileName = buildExportFileName()
+    try {
+      const snapshot = record.snapshot
+      const clips = snapshotToLegacyClips(snapshot)
+      if (clips.length === 0) {
+        throw new Error('缺少可导出素材')
+      }
+      const cacheDir = context.cacheDir ?? context.filesDir ?? '/data/storage/el2/base/files'
+      const outputPath = `${cacheDir}/${fileName}`
+      const request = buildComposeRequestByService(
+        clips,
+        fileName,
+        outputPath,
+        Math.max(1, Math.floor((snapshot.playback.rangeEndMs - snapshot.playback.rangeStartMs) / 1000)),
+        snapshot.privacy.hideSpeed,
+        snapshot.privacy.hideGps,
+        snapshot.privacy.hideVin,
+        snapshot.selectedTemplateId,
+        snapshot.playback.speedLabel,
+        snapshot.playback.muted,
+        snapshot.brand.watermarkEnabled
+      )
+      if (record.cancelled) {
+        return
+      }
+      const sourceUri = await executeFfmpegComposeByService(
+        request,
+        cacheDir,
+        (message: string) => {
+          debugLog('导出', message)
+        },
+        (progress: number) => {
+          if (!record.cancelled) {
+            this.notify(record, `导出处理中 ${progress}%`, progress)
+          }
+        }
+      )
+      if (record.cancelled) {
+        return
+      }
+      const albumUri = await this.saveVideoToAlbum(fileName, sourceUri, context)
+      this.notify(record, `导出完成：${fileName}`, 100)
+      this.notify(record, `相册保存成功：${albumUri}`, 100)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('导出', `导出失败：${message}`)
+      this.notify(record, `导出失败：${message}`, 0)
+    } finally {
+      this.jobs.delete(record.id)
+    }
+  }
+
+  private async saveVideoToAlbum(fileName: string, sourceUri: string, context: common.UIAbilityContext): Promise<string> {
+    const helper = photoAccessHelper.getPhotoAccessHelper(context)
+    const srcFileUris: Array<string> = [sourceUri]
+    const dotIndex = fileName.lastIndexOf('.')
+    const title = dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName
+    const photoCreationConfigs: Array<photoAccessHelper.PhotoCreationConfig> = [{
+      title: title,
+      fileNameExtension: 'mp4',
+      photoType: photoAccessHelper.PhotoType.VIDEO,
+      subtype: photoAccessHelper.PhotoSubtype.DEFAULT
+    }]
+    const desFileUris = await helper.showAssetsCreationDialog(srcFileUris, photoCreationConfigs)
+    const albumUri = desFileUris[0]
+    if (!albumUri || albumUri.length === 0) {
+      throw new Error('未选择相册保存位置')
+    }
+    let srcFd: number = -1
+    let dstFd: number = -1
+    const chunkSize: number = 1024 * 1024
+    try {
+      const src = await fs.open(sourceUri, fs.OpenMode.READ_ONLY)
+      srcFd = src.fd
+      const dst = await fs.open(albumUri, fs.OpenMode.READ_WRITE)
+      dstFd = dst.fd
+      while (true) {
+        const buffer = new ArrayBuffer(chunkSize)
+        const readLen = await fs.read(srcFd, buffer)
+        if (readLen <= 0) {
+          break
+        }
+        await fs.write(dstFd, buffer.slice(0, readLen))
+      }
+    } finally {
+      if (srcFd >= 0) {
+        try {
+          await fs.close(srcFd)
+        } catch (_) {
+        }
+      }
+      if (dstFd >= 0) {
+        try {
+          await fs.close(dstFd)
+        } catch (_) {
+        }
+      }
+    }
+    return albumUri
+  }
+}
+
+export const sharedExportManager = new ExportManager()

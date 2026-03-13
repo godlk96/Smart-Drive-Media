@@ -1,11 +1,16 @@
 import { sharedCoreBridge } from '../bridge/CoreBridge'
 import { EditorStateModel, PreviewSlotModel, TemplateCardModel, TimelineMarkerModel, TimelineTrackModel } from '../model/AppState'
+import { createEditorStateFromSnapshot, deepCloneExportSnapshot, ExportSnapshot } from '../model/Models'
+import { sharedExportManager } from '../service/ExportManager'
 import { debugLog } from '../utils/Logger'
+import common from '@ohos.app.ability.common'
 
 @Entry
 @Component
 struct Editor {
   private bridge = sharedCoreBridge
+  private exportManager = sharedExportManager
+  private exportSessionSeed: string = ''
   private previewController: VideoController = new VideoController()
   private secondaryControllerA: VideoController = new VideoController()
   private secondaryControllerB: VideoController = new VideoController()
@@ -24,15 +29,13 @@ struct Editor {
   @State private seamlessPendingPlay: boolean = false
   @State private previewPlaying: boolean = true
   @State private showSlotLabels: boolean = false
-  @State private playheadSec: number = 0
-  @State private timelineStartSec: number = 0
-  @State private timelineEndSec: number = 60
   @State private state: EditorStateModel = {
     tripId: '',
     tripTitle: '剪辑工作台',
     timeRange: '',
     previewUri: '',
     previewCamera: '',
+    playheadSec: 0,
     canPlayPrev: false,
     canPlayNext: false,
     currentClipIndex: 0,
@@ -58,10 +61,22 @@ struct Editor {
   }
 
   private applyState(nextState: EditorStateModel): void {
+    const normalizedPlayhead = Math.max(0, Math.min(nextState.playheadSec, nextState.totalDurationSec))
+    nextState.playheadSec = normalizedPlayhead
     this.state = nextState
-    this.timelineStartSec = nextState.selectionStartSec
-    this.timelineEndSec = nextState.selectionEndSec
-    this.playheadSec = Math.max(0, Math.min(this.playheadSec, nextState.totalDurationSec))
+  }
+
+  private updatePlayheadText(text: string): void {
+    const nextState = this.state
+    nextState.playheadText = text
+    this.state = nextState
+  }
+
+  private updatePlayheadSec(sec: number): void {
+    const clamped = Math.max(0, Math.min(sec, this.state.totalDurationSec))
+    const nextState = this.state
+    nextState.playheadSec = clamped
+    this.state = nextState
   }
 
   aboutToAppear(): void {
@@ -76,6 +91,7 @@ struct Editor {
     const title = params.title ?? ''
     const subtitle = params.subtitle ?? ''
     debugLog('剪辑页', `进入页面，行程ID=${tripId}，标题提示=${title}，副标题提示=${subtitle}`)
+    this.exportSessionSeed = `${tripId}_${Date.now()}`
     this.applyState(this.bridge.createEditorState(tripId, title, subtitle))
     this.showPreviewCover = this.state.previewUri.length > 0
     this.seamlessPendingPlay = false
@@ -212,10 +228,10 @@ struct Editor {
 
   private syncGlobalPlayhead(second: number, fromUser: boolean): void {
     const clamped = Math.max(0, Math.min(second, this.state.totalDurationSec))
-    this.playheadSec = clamped
+    this.updatePlayheadSec(clamped)
     this.applyState(this.bridge.seekGlobalPlayhead(Math.floor(clamped)))
-    this.state.playheadText = this.bridge.updatePlayhead(Math.floor(this.playheadSec * 1000))
-    const localSecond = this.getLocalSecond(this.playheadSec)
+    this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.playheadSec * 1000)))
+    const localSecond = this.getLocalSecond(this.state.playheadSec)
     this.seekAllControllers(localSecond, true)
     if (fromUser && Math.floor(clamped) !== this.lastLoggedSecond) {
       this.lastLoggedSecond = Math.floor(clamped)
@@ -249,14 +265,14 @@ struct Editor {
       this.speedEmulationFractionSec += rate * 0.32
       const stepSec = this.speedEmulationFractionSec
       this.speedEmulationFractionSec = 0
-      const nextSec = Math.min(this.state.totalDurationSec, this.playheadSec + stepSec)
+      const nextSec = Math.min(this.state.totalDurationSec, this.state.playheadSec + stepSec)
       const currentClipEnd = this.getCurrentClipStartSec() + this.getClipSpanSec()
       if (nextSec >= currentClipEnd && this.state.canPlayNext) {
         this.syncGlobalPlayhead(nextSec, false)
       } else {
-        this.playheadSec = nextSec
-        this.state.playheadText = this.bridge.updatePlayhead(Math.floor(this.playheadSec * 1000))
-        const localSecond = this.getLocalSecond(this.playheadSec)
+        this.updatePlayheadSec(nextSec)
+        this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.playheadSec * 1000)))
+        const localSecond = this.getLocalSecond(this.state.playheadSec)
         this.seekPrimaryController(localSecond)
         this.seekSecondaryControllers(localSecond, false)
       }
@@ -351,19 +367,19 @@ struct Editor {
 
   private getRangeStartPercent(): string {
     const total = Math.max(1, this.state.totalDurationSec)
-    const percent = Math.max(0, Math.min(100, (this.timelineStartSec / total) * 100))
+    const percent = Math.max(0, Math.min(100, (this.state.selectionStartSec / total) * 100))
     return `${percent}%`
   }
 
   private getRangeEndPercent(): string {
     const total = Math.max(1, this.state.totalDurationSec)
-    const percent = Math.max(0, Math.min(100, (this.timelineEndSec / total) * 100))
+    const percent = Math.max(0, Math.min(100, (this.state.selectionEndSec / total) * 100))
     return `${percent}%`
   }
 
   private getRangeWidthPercent(): string {
     const total = Math.max(1, this.state.totalDurationSec)
-    const widthPercent = Math.max(0, Math.min(100, ((this.timelineEndSec - this.timelineStartSec) / total) * 100))
+    const widthPercent = Math.max(0, Math.min(100, ((this.state.selectionEndSec - this.state.selectionStartSec) / total) * 100))
     return `${widthPercent}%`
   }
 
@@ -382,6 +398,62 @@ struct Editor {
     }
   }
 
+  private updateExportStatus(statusText: string): void {
+    this.bridge.setExportStatusText(statusText)
+    const nextState = this.state
+    nextState.exportStatusText = statusText
+    this.state = nextState
+  }
+
+  private buildExportSnapshot(): ExportSnapshot | undefined {
+    const snapshot = this.bridge.getTripSnapshotClone(this.state.tripId)
+    if (!snapshot) {
+      return undefined
+    }
+    let draft = createEditorStateFromSnapshot(
+      snapshot,
+      this.exportSessionSeed,
+      this.state.activeTemplateId,
+      this.state.speedLabel,
+      this.state.muted,
+      this.state.watermarkEnabled,
+      this.state.hideSpeed,
+      this.state.hideGps,
+      this.state.hideVin,
+      this.state.drawerExpanded,
+      this.state.exportStatusText
+    )
+    const startMs = Math.floor(this.state.selectionStartSec * 1000)
+    const endMs = Math.floor(this.state.selectionEndSec * 1000)
+    const playheadMs = Math.floor(this.state.playheadSec * 1000)
+    draft.playback.rangeStartMs = startMs
+    draft.playback.rangeEndMs = endMs
+    draft.playback.playheadMs = Math.max(startMs, Math.min(playheadMs, endMs))
+    return deepCloneExportSnapshot(draft)
+  }
+
+  private async triggerExport(): Promise<void> {
+    const exportSnapshot = this.buildExportSnapshot()
+    if (!exportSnapshot) {
+      this.updateExportStatus('导出失败：缺少行程数据')
+      this.openExportPage(this.state.exportStatusText)
+      return
+    }
+    const host = this.getUIContext().getHostContext()
+    if (!host) {
+      this.updateExportStatus('导出失败：缺少页面上下文')
+      this.openExportPage(this.state.exportStatusText)
+      return
+    }
+    const context = host as common.UIAbilityContext
+    const jobId = await this.exportManager.start(exportSnapshot, context)
+    this.exportManager.subscribe(jobId, (event) => {
+      this.updateExportStatus(event.status)
+    })
+    this.updateExportStatus('导出处理中 0%')
+    this.openExportPage(this.state.exportStatusText)
+  }
+
   private togglePrivacy(type: string, enabled: boolean): void {
     debugLog('剪辑页', `切换隐私开关，类型=${type}，值=${enabled}`)
     this.applyState(this.bridge.updatePrivacy(type, enabled))
@@ -398,8 +470,8 @@ struct Editor {
 
   private playPrevClip(): void {
     this.applyState(this.bridge.playPrevClip())
-    this.playheadSec = this.getCurrentClipStartSec()
-    this.state.playheadText = this.bridge.updatePlayhead(this.playheadSec * 1000)
+    this.updatePlayheadSec(this.getCurrentClipStartSec())
+    this.updatePlayheadText(this.bridge.updatePlayhead(this.state.playheadSec * 1000))
     this.seekAllControllers(0, true)
     this.showPreviewCover = this.state.previewUri.length > 0
     this.seamlessPendingPlay = false
@@ -409,8 +481,8 @@ struct Editor {
 
   private playNextClip(): void {
     this.applyState(this.bridge.playNextClip())
-    this.playheadSec = this.getCurrentClipStartSec()
-    this.state.playheadText = this.bridge.updatePlayhead(this.playheadSec * 1000)
+    this.updatePlayheadSec(this.getCurrentClipStartSec())
+    this.updatePlayheadText(this.bridge.updatePlayhead(this.state.playheadSec * 1000))
     this.seekAllControllers(0, true)
     this.showPreviewCover = this.state.previewUri.length > 0
     this.seamlessPendingPlay = false
@@ -423,19 +495,19 @@ struct Editor {
   }
 
   private updateRangeStart(value: number): void {
-    const nextStart = Math.min(Math.floor(value), this.timelineEndSec)
-    this.applyState(this.bridge.updateSelectionRange(nextStart, this.timelineEndSec))
-    if (this.playheadSec < this.timelineStartSec) {
-      this.updatePlayhead(this.timelineStartSec)
+    const nextStart = Math.min(Math.floor(value), this.state.selectionEndSec)
+    this.applyState(this.bridge.updateSelectionRange(nextStart, this.state.selectionEndSec))
+    if (this.state.playheadSec < this.state.selectionStartSec) {
+      this.updatePlayhead(this.state.selectionStartSec)
     }
     this.showControlsTemporarily()
   }
 
   private updateRangeEnd(value: number): void {
-    const nextEnd = Math.max(Math.floor(value), this.timelineStartSec)
-    this.applyState(this.bridge.updateSelectionRange(this.timelineStartSec, nextEnd))
-    if (this.playheadSec > this.timelineEndSec) {
-      this.updatePlayhead(this.timelineEndSec)
+    const nextEnd = Math.max(Math.floor(value), this.state.selectionStartSec)
+    this.applyState(this.bridge.updateSelectionRange(this.state.selectionStartSec, nextEnd))
+    if (this.state.playheadSec > this.state.selectionEndSec) {
+      this.updatePlayhead(this.state.selectionEndSec)
     }
     this.showControlsTemporarily()
   }
@@ -507,14 +579,8 @@ struct Editor {
           .fontSize(12)
           .onClick(() => {
             debugLog('剪辑页', `点击导出前快照，模板=${this.state.activeTemplateId}，倍速=${this.state.speedLabel}，静音=${this.state.muted}，尾标=${this.state.watermarkEnabled}`)
-            this.state.exportStatusText = this.bridge.startExport(
-              this.state.activeTemplateId,
-              this.state.speedLabel,
-              this.state.muted,
-              this.state.watermarkEnabled
-            )
+            void this.triggerExport()
             debugLog('剪辑页', `点击导出，状态=${this.state.exportStatusText}`)
-            this.openExportPage(this.state.exportStatusText)
             this.showControlsTemporarily()
           })
       }
@@ -545,7 +611,7 @@ struct Editor {
                 .onPrepared(() => {
                   debugLog('剪辑诊断', `主轨视频准备完成，视角=${slot.camera}`)
                   this.applyPlaybackRate()
-                  this.seekAllControllers(this.getLocalSecond(this.playheadSec), true)
+                  this.seekAllControllers(this.getLocalSecond(this.state.playheadSec), true)
                   if (this.seamlessPendingPlay) {
                     this.seamlessPendingPlay = false
                     this.startAllPreview()
@@ -585,8 +651,8 @@ struct Editor {
                 .onFinish(() => {
                   if (this.state.canPlayNext) {
                     this.applyState(this.bridge.playNextClip())
-                    this.playheadSec = this.getCurrentClipStartSec()
-                    this.state.playheadText = this.bridge.updatePlayhead(this.playheadSec * 1000)
+                    this.updatePlayheadSec(this.getCurrentClipStartSec())
+                    this.updatePlayheadText(this.bridge.updatePlayhead(this.state.playheadSec * 1000))
                     this.showPreviewCover = false
                     this.seamlessPendingPlay = true
                     this.showControlsTemporarily()
@@ -733,11 +799,11 @@ struct Editor {
 
       Column({ space: 2 }) {
         Row() {
-          Text(`逻辑选区 ${this.timelineStartSec}s - ${this.timelineEndSec}s`)
+          Text(`逻辑选区 ${this.state.selectionStartSec}s - ${this.state.selectionEndSec}s`)
             .fontSize(11)
             .fontColor('#94A3B8')
           Blank()
-          Text(`全局进度 ${this.playheadSec}s / ${this.state.totalDurationSec}s`)
+          Text(`全局进度 ${this.state.playheadSec}s / ${this.state.totalDurationSec}s`)
             .fontSize(11)
             .fontColor('#64748B')
         }
@@ -776,7 +842,7 @@ struct Editor {
           .width('100%')
           .justifyContent(FlexAlign.SpaceBetween)
           Slider({
-            value: this.timelineStartSec,
+            value: this.state.selectionStartSec,
             min: 0,
             max: this.state.totalDurationSec,
             step: 1,
@@ -787,7 +853,7 @@ struct Editor {
             .onChange((value: number) => this.updateRangeStart(value))
             .width('100%')
           Slider({
-            value: this.timelineEndSec,
+            value: this.state.selectionEndSec,
             min: 0,
             max: this.state.totalDurationSec,
             step: 1,
@@ -798,7 +864,7 @@ struct Editor {
             .onChange((value: number) => this.updateRangeEnd(value))
             .width('100%')
           Slider({
-            value: this.playheadSec,
+            value: this.state.playheadSec,
             min: 0,
             max: this.state.totalDurationSec,
             step: 1,

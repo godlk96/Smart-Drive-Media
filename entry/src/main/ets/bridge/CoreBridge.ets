@@ -8,21 +8,18 @@ import {
   TimelineTrackModel,
   TripCardModel
 } from '../model/AppState'
-import { DvrMeta, ExportComposeRequest, TripSnapshot } from '../model/TripModels'
+import { DvrMeta, TripSnapshot } from '../model/TripModels'
 import { parseDvrFileName, pickPreviewSource } from '../service/DvrScannerService'
 import { buildTimeline, mergeTimeline } from '../service/TimelineService'
-import { buildComposeRequestByService } from '../service/ExportService'
-import { executeFfmpegComposeByService, extractFirstFrameByService } from '../service/ExportRuntimeService'
+import { extractFirstFrameByService } from '../service/ExportRuntimeService'
 import { debugLog } from '../utils/Logger'
 import photoAccessHelper from '@ohos.file.photoAccessHelper'
 import dataSharePredicates from '@ohos.data.dataSharePredicates'
 import common from '@ohos.app.ability.common'
-import fs from '@ohos.file.fs'
 
 const JS_BRIDGE_ENTRY: string = 'entry/src/main/js/harmonyBridge.mjs'
 const HUAWEI_SHARE_ALBUM_NAMES: Array<string> = ['华为分享', 'Huawei Share']
 const CLIP_DURATION_SEC: number = 60
-const EXPORT_PIPELINE_VERSION: string = 'native-stack-v6'
 const EDITOR_SPEEDS: Array<string> = ['1.0X', '1.5X', '2.0X', '3.0X', '4.0X']
 const DEFAULT_TEMPLATE_ID: string = 'T2'
 const DVR_FILE_PATTERN: RegExp = /^DVR_LoopRecording_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_.+_camera\.(mp4|mov|ts)$/i
@@ -108,9 +105,6 @@ export class CoreBridge {
   private muted: boolean = false
   private watermarkEnabled: boolean = true
   private exportStatusText: string = '待导出'
-  private exporting: boolean = false
-  private exportProgress: number = 0
-  private exportTimer: number = -1
   private lastContext?: common.UIAbilityContext = undefined
   private previewFrameCache: Map<string, string> = new Map()
 
@@ -279,18 +273,29 @@ export class CoreBridge {
     ]
   }
 
-  private pickSlotUri(snapshot: TripSnapshot, camera: string, clipIndex: number): string {
+  private pickSlotUri(snapshot: TripSnapshot, camera: string, anchorTimestamp: number): string {
     const clips = snapshot.clips
       .filter((item: DvrMeta) => item.camera === camera && item.uri.length > 0)
       .sort((a: DvrMeta, b: DvrMeta) => a.timestamp - b.timestamp)
     if (clips.length === 0) {
       return ''
     }
-    const index = Math.max(0, Math.min(clipIndex, clips.length - 1))
-    return clips[index].uri
+    if (anchorTimestamp <= 0) {
+      return clips[0].uri
+    }
+    let nearest = clips[0]
+    let nearestDelta = Math.abs(nearest.timestamp - anchorTimestamp)
+    clips.forEach((clip: DvrMeta) => {
+      const delta = Math.abs(clip.timestamp - anchorTimestamp)
+      if (delta < nearestDelta) {
+        nearest = clip
+        nearestDelta = delta
+      }
+    })
+    return nearest.uri
   }
 
-  private buildPreviewSlots(snapshot: TripSnapshot, clipIndex: number): Array<PreviewSlotModel> {
+  private buildPreviewSlots(snapshot: TripSnapshot, anchorTimestamp: number): Array<PreviewSlotModel> {
     const defs = this.getTemplateSlotDefs(this.activeTemplateId)
     const availableTracks = snapshot.timeline.map((item: TimelineTrackModel) => item.cameraPosition)
     return defs.map((slot: PreviewSlotModel) => {
@@ -298,7 +303,7 @@ export class CoreBridge {
       const previewSlot: PreviewSlotModel = {
         id: slot.id,
         camera: resolvedCamera,
-        uri: this.pickSlotUri(snapshot, resolvedCamera, clipIndex),
+        uri: this.pickSlotUri(snapshot, resolvedCamera, anchorTimestamp),
         x: slot.x,
         y: slot.y,
         width: slot.width,
@@ -485,6 +490,7 @@ export class CoreBridge {
 
   private buildEditorState(snapshot?: TripSnapshot, preferredCamera?: string, preferredIndex?: number): EditorStateModel {
     let activeSnapshot = snapshot
+    let anchorTimestamp: number = 0
     if (!activeSnapshot) {
       const cached = this.trips.get(this.tripId)
       if (cached) {
@@ -510,11 +516,14 @@ export class CoreBridge {
         const anyClip = activeSnapshot.clips.find((item: DvrMeta) => item.uri.length > 0)
         this.previewUri = anyClip?.uri ?? ''
         this.previewCamera = anyClip?.camera ?? camera
+        anchorTimestamp = anyClip?.timestamp ?? anchorTimestamp
         this.currentClipIndex = 0
         this.currentClipTotal = anyClip ? 1 : 0
       } else {
         index = Math.max(0, Math.min(index, cameraClips.length - 1))
-        this.previewUri = cameraClips[index].uri
+        const selectedClip = cameraClips[index]
+        this.previewUri = selectedClip.uri
+        anchorTimestamp = selectedClip.timestamp
         this.previewCamera = camera
         this.currentClipIndex = index
         this.currentClipTotal = cameraClips.length
@@ -548,13 +557,14 @@ export class CoreBridge {
       { name: 'timeline', heightRatio: 0.16 },
       { name: 'drawer', heightRatio: 0.20 }
     ]
-    const previewSlots = activeSnapshot ? this.buildPreviewSlots(activeSnapshot, this.currentClipIndex) : []
+    const previewSlots = activeSnapshot ? this.buildPreviewSlots(activeSnapshot, anchorTimestamp) : []
     return {
       tripId: this.tripId,
       tripTitle: this.tripTitle,
       timeRange: this.tripRange,
       previewUri: this.previewUri,
       previewCamera: this.previewCamera,
+      playheadSec: Math.floor(this.playheadMs / 1000),
       canPlayPrev: this.currentClipTotal > 0 && this.currentClipIndex > 0,
       canPlayNext: this.currentClipTotal > 0 && this.currentClipIndex < this.currentClipTotal - 1,
       currentClipIndex: this.currentClipTotal === 0 ? 0 : this.currentClipIndex + 1,
@@ -663,13 +673,6 @@ export class CoreBridge {
     return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
   }
 
-  private syncSpeedByLabel(speedLabel: string): void {
-    const index = EDITOR_SPEEDS.findIndex((item: string) => item === speedLabel)
-    if (index >= 0) {
-      this.speedIndex = index
-    }
-  }
-
   toggleMuted(): EditorStateModel {
     this.muted = !this.muted
     const snapshot = this.trips.get(this.tripId)
@@ -711,240 +714,50 @@ export class CoreBridge {
     return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex + 1)
   }
 
-  private clearExportTimer(): void {
-    if (this.exportTimer >= 0) {
-      clearInterval(this.exportTimer)
-      this.exportTimer = -1
-    }
-  }
-
-  private buildExportFileName(): string {
-    const now = new Date()
-    const yyyy = now.getFullYear().toString()
-    const mm = (now.getMonth() + 1).toString().padStart(2, '0')
-    const dd = now.getDate().toString().padStart(2, '0')
-    const hh = now.getHours().toString().padStart(2, '0')
-    const min = now.getMinutes().toString().padStart(2, '0')
-    const ss = now.getSeconds().toString().padStart(2, '0')
-    return `SmartDrive_Export_${yyyy}${mm}${dd}_${hh}${min}${ss}.mp4`
-  }
-
   getExportStatusText(): string {
     return this.exportStatusText
   }
 
-  private startExportPipeline(fileName: string): void {
-    this.exporting = true
-    this.exportProgress = 0
-    debugLog('导出', `开始执行导出，目标文件=${fileName}`)
-    this.updateExportProgress(fileName, 0)
-    void this.finishExport(fileName)
+  setExportStatusText(statusText: string): void {
+    this.exportStatusText = statusText
   }
 
-  private updateExportProgress(fileName: string, percent: number): void {
-    const normalized = Math.max(0, Math.min(100, Math.floor(percent)))
-    if (normalized === this.exportProgress) {
-      return
-    }
-    this.exportProgress = normalized
-    this.exportStatusText = `导出处理中 ${normalized}%（${fileName}）`
-    debugLog('导出', `导出进度=${normalized}% 文件=${fileName}`)
-  }
-
-  private async finishExport(fileName: string): Promise<void> {
-    try {
-      const snapshot = this.trips.get(this.tripId)
-      const sourceUri = await this.composeExportSourceUri(snapshot, fileName, (progress: number) => {
-        this.updateExportProgress(fileName, progress)
-      })
-      this.updateExportProgress(fileName, 100)
-      const albumUri = await this.saveVideoToAlbum(fileName, sourceUri)
-      this.exporting = false
-      this.exportStatusText = `导出完成：${fileName}（相册URI=${albumUri}）`
-      debugLog('导出', `导出任务完成，文件名=${fileName}，相册URI=${albumUri}`)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      this.exporting = false
-      this.exportStatusText = `导出失败：${message}`
-      debugLog('导出', `导出任务失败，原因=${message}`)
-    }
-  }
-
-  private buildComposeRequest(snapshot: TripSnapshot, fileName: string): ExportComposeRequest {
-    const baseDir = this.lastContext?.cacheDir ?? this.lastContext?.filesDir ?? '/data/storage/el2/base/files'
-    const outputPath = `${baseDir}/${fileName}`
-    const request = buildComposeRequestByService(
-      snapshot.clips,
-      fileName,
-      outputPath,
-      snapshot.durationSec,
-      this.hideSpeed,
-      this.hideGps,
-      this.hideVin,
-      this.activeTemplateId,
-      EDITOR_SPEEDS[this.speedIndex],
-      this.muted,
-      this.watermarkEnabled
-    )
-    debugLog('导出', `导出取源快照 模板=${request.templateId} Front=${request.frontUris.length} Back=${request.backUris.length} Side=${request.sideUris.length}`)
-    return request
-  }
-
-  private async composeExportSourceUri(
-    snapshot: TripSnapshot | undefined,
-    fileName: string,
-    onProgress: (percent: number) => void
-  ): Promise<string> {
-    if (!snapshot) {
-      throw new Error('缺少行程数据')
-    }
-    const request = this.buildComposeRequest(snapshot, fileName)
-    if (request.frontUris.length === 0 || request.backUris.length === 0) {
-      throw new Error(`方案A需要前后双轨输入，Front=${request.frontUris.length} Back=${request.backUris.length}`)
-    }
-    try {
-      const cacheDir = this.lastContext?.cacheDir ?? '/data/storage/el2/base/cache'
-      const composedUri = await executeFfmpegComposeByService(
-        request,
-        cacheDir,
-        (message: string) => {
-          debugLog('导出', message)
-        },
-        onProgress
-      )
-      if (composedUri.length === 0) {
-        throw new Error('FFmpeg返回空输出')
-      }
-      if (composedUri.startsWith('__ERROR__:')) {
-        throw new Error(`FFmpeg执行失败：${composedUri}`)
-      }
-      if (request.frontUris.includes(composedUri) || request.backUris.includes(composedUri)) {
-        throw new Error('FFmpeg返回输入源文件，尚未生成合成输出')
-      }
-      const stat = await fs.stat(composedUri)
-      debugLog('导出', `FFmpeg合成完成，版本=${EXPORT_PIPELINE_VERSION}，输出URI=${composedUri}，大小=${stat.size}`)
-      return composedUri
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`方案A导出失败：${message}`)
-    }
-  }
-
-  private async saveVideoToAlbum(fileName: string, sourceUri: string): Promise<string> {
-    if (!this.lastContext) {
-      throw new Error('缺少页面上下文')
-    }
-    const helper = photoAccessHelper.getPhotoAccessHelper(this.lastContext)
-    const srcFileUris: Array<string> = [sourceUri]
-    const dotIndex = fileName.lastIndexOf('.')
-    const title = dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName
-    const photoCreationConfigs: Array<photoAccessHelper.PhotoCreationConfig> = [{
-      title: title,
-      fileNameExtension: 'mp4',
-      photoType: photoAccessHelper.PhotoType.VIDEO,
-      subtype: photoAccessHelper.PhotoSubtype.DEFAULT
-    }]
-    let desFileUris: Array<string>
-    try {
-      desFileUris = await helper.showAssetsCreationDialog(srcFileUris, photoCreationConfigs)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`打开相册保存面板失败：${message}`)
-    }
-    const albumUri = desFileUris[0]
-    if (!albumUri || albumUri.length === 0) {
-      throw new Error('未选择相册保存位置')
-    }
-    let sourceStat: fs.Stat
-    try {
-      sourceStat = await fs.stat(sourceUri)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`读取源文件信息失败：${message}`)
-    }
-    let srcFd: number = -1
-    let dstFd: number = -1
-    const chunkSize: number = 1024 * 1024
-    let written: number = 0
-    try {
-      const src = await fs.open(sourceUri, fs.OpenMode.READ_ONLY)
-      srcFd = src.fd
-      const dst = await fs.open(albumUri, fs.OpenMode.READ_WRITE)
-      dstFd = dst.fd
-      while (true) {
-        const buffer = new ArrayBuffer(chunkSize)
-        const readLen = await fs.read(srcFd, buffer)
-        if (readLen <= 0) {
-          break
-        }
-        const payload = buffer.slice(0, readLen)
-        const writeLen = await fs.write(dstFd, payload)
-        written += writeLen
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`写入相册文件失败：${message}`)
-    } finally {
-      if (srcFd >= 0) {
-        try {
-          await fs.close(srcFd)
-        } catch (_) {
-        }
-      }
-      if (dstFd >= 0) {
-        try {
-          await fs.close(dstFd)
-        } catch (_) {
-        }
-      }
-    }
-    let targetStat: fs.Stat
-    try {
-      targetStat = await fs.stat(albumUri)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`读取目标文件信息失败：${message}`)
-    }
-    debugLog('导出', `写入相册完成，版本=${EXPORT_PIPELINE_VERSION}，源大小=${sourceStat.size}，目标大小=${targetStat.size}`)
-    debugLog('导出', `写入字节统计=${written}，源URI长度=${sourceUri.length}，目标URI长度=${albumUri.length}`)
-    return albumUri
-  }
-
-  startExport(templateId?: string, speedLabel?: string, muted?: boolean, watermarkEnabled?: boolean): string {
-    const snapshot = this.trips.get(this.tripId)
-    if (!snapshot) {
-      this.exportStatusText = '导出失败：缺少行程数据'
-      return this.exportStatusText
-    }
-    if (this.exporting) {
-      return this.exportStatusText
-    }
-    if (templateId && templateId.length > 0) {
-      this.activeTemplateId = templateId
-    }
-    if (speedLabel && speedLabel.length > 0) {
-      this.syncSpeedByLabel(speedLabel)
-    }
-    if (muted !== undefined) {
-      this.muted = muted
-    }
-    if (watermarkEnabled !== undefined) {
-      this.watermarkEnabled = watermarkEnabled
-    }
-    const exportCameras: Array<string> = ['Front', 'Back']
-    const details: Array<string> = []
-    exportCameras.forEach((camera: string) => {
-      const clips = snapshot.clips
-        .filter((item: DvrMeta) => item.camera === camera)
-        .sort((a: DvrMeta, b: DvrMeta) => a.timestamp - b.timestamp)
-      details.push(`${camera}:${clips.length}`)
+  private cloneTripSnapshot(snapshot: TripSnapshot): TripSnapshot {
+    const cloned = new TripSnapshot()
+    cloned.id = snapshot.id
+    cloned.title = snapshot.title
+    cloned.subtitle = snapshot.subtitle
+    cloned.durationSec = snapshot.durationSec
+    cloned.tripTitle = snapshot.tripTitle
+    cloned.tripRange = snapshot.tripRange
+    cloned.previewUri = snapshot.previewUri
+    cloned.previewFrameUri = snapshot.previewFrameUri
+    cloned.previewCamera = snapshot.previewCamera
+    cloned.startTs = snapshot.startTs
+    cloned.endTs = snapshot.endTs
+    cloned.timeline = snapshot.timeline.slice()
+    cloned.clips = snapshot.clips.map((item: DvrMeta) => {
+      const clip = new DvrMeta()
+      clip.fileName = item.fileName
+      clip.uri = item.uri
+      clip.date = item.date
+      clip.time = item.time
+      clip.camera = item.camera
+      clip.timestamp = item.timestamp
+      return clip
     })
-    debugLog('导出', `策略=前后分轨时间拼接后上下合成，版本=${EXPORT_PIPELINE_VERSION}，模板=${this.activeTemplateId}，倍速=${EDITOR_SPEEDS[this.speedIndex]}，静音=${this.muted}，尾标=${this.watermarkEnabled}，明细=${details.join(',')}`)
-    const fileName = this.buildExportFileName()
-    this.exportStatusText = `导出处理中 0%（${fileName}）`
-    this.startExportPipeline(fileName)
-    return this.exportStatusText
+    return cloned
   }
+
+  getTripSnapshotClone(tripId?: string): TripSnapshot | undefined {
+    const targetId = tripId && tripId.length > 0 ? tripId : this.tripId
+    const snapshot = this.trips.get(targetId)
+    if (!snapshot) {
+      return undefined
+    }
+    return this.cloneTripSnapshot(snapshot)
+  }
+
 }
 
 export const sharedCoreBridge: CoreBridge = new CoreBridge()
