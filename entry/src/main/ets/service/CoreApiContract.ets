@@ -17,3 +17,12 @@ export function ensureCoreApiContract(): void {
   }
   coreApiChecked = true
 }
+
+export function tryEnsureCoreApiContract(): boolean {
+  try {
+    ensureCoreApiContract()
+    return true
+  } catch (_) {
+    return false
+  }
+}

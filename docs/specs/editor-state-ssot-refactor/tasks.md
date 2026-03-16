@@ -10,16 +10,18 @@
 
 ## 阶段 A：模型统一（Models.ets）
 
-1. 新建 `Models.ets`，定义统一枚举与实体：
-- `CameraPosition`
-- `TemplateId`
-- `ClipSegment`
-- `CameraTrack`
-- `Trip`
-- `Template`
-- `EditorConfig`
-- `EditorState`
-- `ExportSnapshot`
+- [x] Task1：新建 `Models.ets`，定义统一枚举与实体
+  - [x] `CameraPosition`
+  - [x] `TemplateId`
+  - [x] `ClipSegment`
+  - [x] `CameraTrack`
+  - [x] `Trip`
+  - [x] `Template`
+  - [x] `EditorConfig`
+  - [x] `EditorState`
+  - [x] `ExportSnapshot`
+- [x] Task2：创建并运行 `build_ffmpeg.sh`，按指定 NDK 与 configure 参数编译 FFmpeg8.0.1，输出 `.so` 到 `entry/src/main/cpp/libs`
+- [x] Task3：修改 `CMakeLists.txt` 链接 FFmpeg `.so` 与 `native_media_venc/avmuxer`，新增 `export_engine.cpp` 实现 `avformat+avfilter -> OH_VideoEncoder+OH_AVMuxer` 管线并接入 NAPI
 
 2. 建立兼容适配层：
 - 将历史 `DvrMeta/TripSnapshot` 映射为新 `Trip`

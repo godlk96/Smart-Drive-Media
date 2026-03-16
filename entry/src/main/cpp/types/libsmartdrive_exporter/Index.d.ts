@@ -1,4 +1,5 @@
-export const composeFrontBackStack: (payload: string) => string
+export const runExportPipeline: (payload: string) => string
+export const runExportPipelineAsync: (payload: string) => Promise<string>
 
 export interface NativeDvrMeta {
   fileName: string

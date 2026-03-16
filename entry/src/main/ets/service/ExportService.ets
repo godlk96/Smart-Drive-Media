@@ -132,7 +132,7 @@ export function buildComposeRequestByService(
   request.speedLabel = speedLabel
   request.muted = muted
   request.watermarkEnabled = watermarkEnabled
-  const nativeBuild = smartdriveExporter.buildComposeRequest as ((
+  const nativeBuild = (smartdriveExporter as Record<string, Object | Function> | undefined)?.buildComposeRequest as ((
     clipsCsv: string,
     fileName: string,
     outputPath: string,
@@ -144,7 +144,9 @@ export function buildComposeRequestByService(
   const clipsCsv = clips.map((item: DvrMeta) => `${item.camera}@${item.timestamp}@${item.uri}`).join(',')
   const flags = `${hideSpeed ? 1 : 0},${hideGps ? 1 : 0},${hideVin ? 1 : 0}`
   const data = nativeBuild(clipsCsv, fileName, outputPath, flags)
-  const templateTracks = resolveTemplateTracks(clips, templateId, data.frontUris ?? [], data.backUris ?? [])
+  const nativeFrontUris = data.frontUris ?? []
+  const nativeBackUris = data.backUris ?? []
+  const templateTracks = resolveTemplateTracks(clips, templateId, nativeFrontUris, nativeBackUris)
   request.frontUris = templateTracks.frontUris
   request.backUris = templateTracks.backUris
   request.sideUris = templateTracks.sideUris

@@ -1,7 +1,7 @@
 import { sharedCoreBridge } from '../bridge/CoreBridge'
 import { EditorStateModel, PreviewSlotModel, TemplateCardModel, TimelineMarkerModel, TimelineTrackModel } from '../model/AppState'
 import { createEditorStateFromSnapshot, deepCloneExportSnapshot, ExportSnapshot } from '../model/Models'
-import { sharedExportManager } from '../service/ExportManager'
+import { startNativeExport } from '../NativeExportManager'
 import { debugLog } from '../utils/Logger'
 import common from '@ohos.app.ability.common'
 
@@ -9,7 +9,6 @@ import common from '@ohos.app.ability.common'
 @Component
 struct Editor {
   private bridge = sharedCoreBridge
-  private exportManager = sharedExportManager
   private exportSessionSeed: string = ''
   private previewController: VideoController = new VideoController()
   private secondaryControllerA: VideoController = new VideoController()
@@ -29,6 +28,8 @@ struct Editor {
   @State private seamlessPendingPlay: boolean = false
   @State private previewPlaying: boolean = true
   @State private showSlotLabels: boolean = false
+  @State private exportLoadingVisible: boolean = false
+  @State private exportLoadingText: string = '导出处理中...'
   @State private state: EditorStateModel = {
     tripId: '',
     tripTitle: '剪辑工作台',
@@ -383,21 +384,6 @@ struct Editor {
     return `${widthPercent}%`
   }
 
-  private openExportPage(statusText: string): void {
-    try {
-      this.getUIContext().getRouter().pushUrl({
-        url: 'pages/Export',
-        params: {
-          title: this.state.tripTitle,
-          statusText: statusText
-        }
-      })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      debugLog('剪辑页', `跳转导出页失败：${message}`)
-    }
-  }
-
   private updateExportStatus(statusText: string): void {
     this.bridge.setExportStatusText(statusText)
     const nextState = this.state
@@ -432,26 +418,37 @@ struct Editor {
     return deepCloneExportSnapshot(draft)
   }
 
-  private async triggerExport(): Promise<void> {
+  private async startNativeExportTask(): Promise<void> {
+    if (this.exportLoadingVisible) {
+      return
+    }
     const exportSnapshot = this.buildExportSnapshot()
     if (!exportSnapshot) {
       this.updateExportStatus('导出失败：缺少行程数据')
-      this.openExportPage(this.state.exportStatusText)
       return
     }
     const host = this.getUIContext().getHostContext()
     if (!host) {
       this.updateExportStatus('导出失败：缺少页面上下文')
-      this.openExportPage(this.state.exportStatusText)
       return
     }
     const context = host as common.UIAbilityContext
-    const jobId = await this.exportManager.start(exportSnapshot, context)
-    this.exportManager.subscribe(jobId, (event) => {
-      this.updateExportStatus(event.status)
-    })
-    this.updateExportStatus('导出处理中 0%')
-    this.openExportPage(this.state.exportStatusText)
+    this.exportLoadingVisible = true
+    this.exportLoadingText = '导出处理中...'
+    this.updateExportStatus('导出处理中...')
+    try {
+      const outputPath = await startNativeExport(exportSnapshot, context, (event) => {
+        this.updateExportStatus(event.status)
+        this.exportLoadingText = event.status
+        debugLog('导出', `导出事件 job=${event.jobId} status=${event.status} progress=${event.progress}`)
+      })
+      this.updateExportStatus(`导出完成：${outputPath}`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.updateExportStatus(`导出失败：${message}`)
+    } finally {
+      this.exportLoadingVisible = false
+    }
   }
 
   private togglePrivacy(type: string, enabled: boolean): void {
@@ -549,7 +546,8 @@ struct Editor {
   }
 
   build() {
-    Column({ space: 0 }) {
+    Stack({ alignContent: Alignment.Center }) {
+      Column({ space: 0 }) {
       Row() {
         Button('返回')
           .type(ButtonType.Capsule)
@@ -578,10 +576,7 @@ struct Editor {
           .type(ButtonType.Capsule)
           .fontSize(12)
           .onClick(() => {
-            debugLog('剪辑页', `点击导出前快照，模板=${this.state.activeTemplateId}，倍速=${this.state.speedLabel}，静音=${this.state.muted}，尾标=${this.state.watermarkEnabled}`)
-            void this.triggerExport()
-            debugLog('剪辑页', `点击导出，状态=${this.state.exportStatusText}`)
-            this.showControlsTemporarily()
+            this.startNativeExportTask()
           })
       }
       .width('100%')
@@ -987,9 +982,29 @@ struct Editor {
       .layoutWeight(this.state.layers[3]?.heightRatio ?? 0.22)
       .width('100%')
       .backgroundColor('#020617')
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor('#0F172A')
+
+      if (this.exportLoadingVisible) {
+        Column({ space: 10 }) {
+          LoadingProgress()
+            .color('#F97316')
+            .width(54)
+            .height(54)
+          Text(this.exportLoadingText)
+            .fontSize(13)
+            .fontColor('#F8FAFC')
+        }
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#00000088')
+      }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#0F172A')
   }
 }

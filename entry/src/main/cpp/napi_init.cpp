@@ -1,7 +1,5 @@
 #include "napi/native_api.h"
-#include <cstdio>
-#include <dlfcn.h>
-#include <fstream>
+#include "export_engine.h"
 #include <iomanip>
 #include <map>
 #include <regex>
@@ -101,152 +99,119 @@ static std::vector<std::string> extractArray(const std::string &payload, const s
     return values;
 }
 
-static std::string shellQuote(const std::string &value)
+static double extractNumber(const std::string &payload, const std::string &key)
 {
-    std::string escaped;
-    for (char ch : value) {
-        if (ch == '\'') {
-            escaped += "'\\''";
-        } else {
-            escaped.push_back(ch);
-        }
+    std::string marker = "\"" + key + "\":";
+    size_t start = payload.find(marker);
+    if (start == std::string::npos) {
+        return 0.0;
     }
-    return "'" + escaped + "'";
-}
-
-static std::string normalizeUriForFfmpeg(const std::string &uri)
-{
-    const std::string prefix = "file://";
-    if (uri.rfind(prefix, 0) == 0) {
-        return uri.substr(prefix.size());
-    }
-    return uri;
-}
-
-static bool writeConcatList(const std::string &filePath, const std::vector<std::string> &uris)
-{
-    std::ofstream stream(filePath.c_str(), std::ios::out | std::ios::trunc);
-    if (!stream.is_open()) {
-        return false;
-    }
-    for (const std::string &uri : uris) {
-        stream << "file " << shellQuote(normalizeUriForFfmpeg(uri)) << "\n";
-    }
-    stream.close();
-    return true;
-}
-
-static std::string joinCommand(const std::vector<std::string> &args)
-{
-    std::ostringstream stream;
-    for (size_t index = 0; index < args.size(); index++) {
-        if (index > 0) {
-            stream << " ";
-        }
-        stream << shellQuote(args[index]);
-    }
-    return stream.str();
-}
-
-static std::string runFfmpegSdk(const std::string &command)
-{
-    const std::vector<std::string> libs = {
-        "libsmartdrive_ffmpeg_sdk.so",
-        "libffmpegkit.so",
-        "libffmpegcmd.so",
-        "libffmpeg_api.so",
-    };
-    const std::vector<std::string> symbols = {
-        "smartdrive_ffmpeg_execute",
-        "ffmpegkit_execute",
-        "ffmpeg_execute",
-    };
-    using ExecuteFunc = int (*)(const char *);
-    bool opened = false;
-    for (const std::string &lib : libs) {
-        void *handle = dlopen(lib.c_str(), RTLD_NOW);
-        if (!handle) {
+    start += marker.size();
+    size_t end = start;
+    while (end < payload.size()) {
+        const char ch = payload[end];
+        if ((ch >= '0' && ch <= '9') || ch == '.' || ch == '-') {
+            end += 1;
             continue;
         }
-        opened = true;
-        for (const std::string &symbol : symbols) {
-            auto execute = reinterpret_cast<ExecuteFunc>(dlsym(handle, symbol.c_str()));
-            if (!execute) {
-                continue;
-            }
-            int code = execute(command.c_str());
-            dlclose(handle);
-            if (code != 0) {
-                return "__ERROR__:ffmpeg_sdk_exit_" + std::to_string(code);
-            }
-            return "";
-        }
-        dlclose(handle);
+        break;
     }
-    if (!opened) {
-        return "__ERROR__:ffmpeg_sdk_not_found";
+    if (end <= start) {
+        return 0.0;
     }
-    return "__ERROR__:ffmpeg_sdk_symbol_not_found";
+    return std::atof(payload.substr(start, end - start).c_str());
 }
 
-static std::string composeByFfmpeg(const std::vector<std::string> &frontUris,
-                                   const std::vector<std::string> &backUris,
-                                   const std::string &outputPath)
-{
-    if (frontUris.empty() || backUris.empty() || outputPath.empty()) {
-        return "__ERROR__:invalid_input";
-    }
-    std::string frontListPath = outputPath + ".front.concat.txt";
-    std::string backListPath = outputPath + ".back.concat.txt";
-    if (!writeConcatList(frontListPath, frontUris) || !writeConcatList(backListPath, backUris)) {
-        return "__ERROR__:write_concat_failed";
-    }
-    const std::vector<std::string> args = {
-        "ffmpeg",
-        "-y",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        frontListPath,
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        backListPath,
-        "-filter_complex",
-        "[0:v]setpts=PTS-STARTPTS[top];[1:v]setpts=PTS-STARTPTS[bottom];[top][bottom]vstack=inputs=2[v]",
-        "-map",
-        "[v]",
-        "-c:v",
-        "h264_avcodec",
-        "-b:v",
-        "20M",
-        "-preset",
-        "fast",
-        outputPath};
-    const std::string command = joinCommand(args);
-    const std::string ffmpegError = runFfmpegSdk(command);
-    std::remove(frontListPath.c_str());
-    std::remove(backListPath.c_str());
-    if (!ffmpegError.empty()) {
-        return ffmpegError;
-    }
-    return outputPath;
-}
-
-static napi_value ComposeFrontBackStack(napi_env env, napi_callback_info info)
+static napi_value RunExportPipeline(napi_env env, napi_callback_info info)
 {
     std::string payload = readPayload(env, info);
     std::vector<std::string> frontUris = extractArray(payload, "frontUris");
     std::vector<std::string> backUris = extractArray(payload, "backUris");
+    std::vector<std::string> sideUris = extractArray(payload, "sideUris");
+    std::string templateId = extractString(payload, "templateId");
+    double expectedDurationSec = extractNumber(payload, "expectedDurationSec");
     std::string outputPath = extractString(payload, "outputPath");
-    std::string result = composeByFfmpeg(frontUris, backUris, outputPath);
+    std::string result = runExportEnginePipeline(frontUris, backUris, sideUris, templateId, expectedDurationSec, outputPath);
     napi_value output = nullptr;
     napi_create_string_utf8(env, result.c_str(), result.length(), &output);
     return output;
+}
+
+struct ExportPipelineAsyncContext {
+    napi_env env = nullptr;
+    napi_async_work work = nullptr;
+    napi_deferred deferred = nullptr;
+    std::string payload;
+    std::string result;
+    std::string error;
+};
+
+static void ExecuteRunExportPipelineAsync(napi_env env, void *data)
+{
+    (void)env;
+    auto *ctx = static_cast<ExportPipelineAsyncContext *>(data);
+    if (ctx == nullptr) {
+        return;
+    }
+    std::vector<std::string> frontUris = extractArray(ctx->payload, "frontUris");
+    std::vector<std::string> backUris = extractArray(ctx->payload, "backUris");
+    std::vector<std::string> sideUris = extractArray(ctx->payload, "sideUris");
+    std::string templateId = extractString(ctx->payload, "templateId");
+    double expectedDurationSec = extractNumber(ctx->payload, "expectedDurationSec");
+    std::string outputPath = extractString(ctx->payload, "outputPath");
+    ctx->result = runExportEnginePipeline(frontUris, backUris, sideUris, templateId, expectedDurationSec, outputPath);
+    if (ctx->result.empty()) {
+        ctx->error = "native export returned empty";
+    } else if (ctx->result.rfind("__ERROR__", 0) == 0) {
+        ctx->error = ctx->result;
+    }
+}
+
+static void CompleteRunExportPipelineAsync(napi_env env, napi_status status, void *data)
+{
+    auto *ctx = static_cast<ExportPipelineAsyncContext *>(data);
+    if (ctx == nullptr) {
+        return;
+    }
+    if (status != napi_ok && ctx->error.empty()) {
+        ctx->error = "native async work failed";
+    }
+    if (!ctx->error.empty()) {
+        napi_value errorMessage = nullptr;
+        napi_create_string_utf8(env, ctx->error.c_str(), NAPI_AUTO_LENGTH, &errorMessage);
+        napi_value errorObj = nullptr;
+        napi_create_error(env, nullptr, errorMessage, &errorObj);
+        napi_reject_deferred(env, ctx->deferred, errorObj);
+    } else {
+        napi_value resultValue = nullptr;
+        napi_create_string_utf8(env, ctx->result.c_str(), NAPI_AUTO_LENGTH, &resultValue);
+        napi_resolve_deferred(env, ctx->deferred, resultValue);
+    }
+    if (ctx->work != nullptr) {
+        napi_delete_async_work(env, ctx->work);
+    }
+    delete ctx;
+}
+
+static napi_value RunExportPipelineAsync(napi_env env, napi_callback_info info)
+{
+    std::string payload = readPayload(env, info);
+    auto *ctx = new ExportPipelineAsyncContext();
+    ctx->env = env;
+    ctx->payload = payload;
+    napi_value promise = nullptr;
+    napi_create_promise(env, &ctx->deferred, &promise);
+    napi_value resourceName = nullptr;
+    napi_create_string_utf8(env, "RunExportPipelineAsync", NAPI_AUTO_LENGTH, &resourceName);
+    napi_create_async_work(env,
+                           nullptr,
+                           resourceName,
+                           ExecuteRunExportPipelineAsync,
+                           CompleteRunExportPipelineAsync,
+                           ctx,
+                           &ctx->work);
+    napi_queue_async_work(env, ctx->work);
+    return promise;
 }
 
 static std::string normalizeCamera(const std::string &cameraRaw)
@@ -515,7 +480,8 @@ EXTERN_C_START
 static napi_value Init(napi_env env, napi_value exports)
 {
     napi_property_descriptor desc[] = {
-        {"composeFrontBackStack", nullptr, ComposeFrontBackStack, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"runExportPipeline", nullptr, RunExportPipeline, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"runExportPipelineAsync", nullptr, RunExportPipelineAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"parseDvrFileName", nullptr, ParseDvrFileName, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"buildTimeline", nullptr, BuildTimeline, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"mergeTimeline", nullptr, MergeTimeline, nullptr, nullptr, nullptr, napi_default, nullptr},

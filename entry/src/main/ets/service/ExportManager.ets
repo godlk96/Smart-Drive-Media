@@ -4,7 +4,7 @@ import photoAccessHelper from '@ohos.file.photoAccessHelper'
 import { CameraPosition, ExportSnapshot } from '../model/Models'
 import { DvrMeta } from '../model/TripModels'
 import { buildComposeRequestByService } from './ExportService'
-import { executeFfmpegComposeByService } from './ExportRuntimeService'
+import { executeComposeByService } from './ExportNativeService'
 import { debugLog } from '../utils/Logger'
 
 export type ExportJobId = string
@@ -22,6 +22,7 @@ interface ExportJobRecord {
   snapshot: ExportSnapshot
   listeners: Array<ExportListener>
   cancelled: boolean
+  progress: number
 }
 
 function toLegacyCamera(camera: CameraPosition): string {
@@ -85,7 +86,9 @@ export class ExportManager {
   private jobs: Map<ExportJobId, ExportJobRecord> = new Map()
 
   private notify(record: ExportJobRecord, status: string, progress: number): void {
-    const event: ExportJobEvent = { jobId: record.id, status: status, progress: progress }
+    const normalizedProgress = Math.max(0, Math.min(100, Math.floor(progress)))
+    record.progress = normalizedProgress
+    const event: ExportJobEvent = { jobId: record.id, status: status, progress: normalizedProgress }
     record.listeners.forEach((listener: ExportListener) => {
       listener(event)
     })
@@ -114,7 +117,8 @@ export class ExportManager {
       id: jobId,
       snapshot: snapshot,
       listeners: [],
-      cancelled: false
+      cancelled: false,
+      progress: 0
     }
     this.jobs.set(jobId, record)
     this.notify(record, '导出处理中 0%', 0)
@@ -136,7 +140,7 @@ export class ExportManager {
         clips,
         fileName,
         outputPath,
-        Math.max(1, Math.floor((snapshot.playback.rangeEndMs - snapshot.playback.rangeStartMs) / 1000)),
+        Math.max(1, (snapshot.playback.rangeEndMs - snapshot.playback.rangeStartMs) / 1000),
         snapshot.privacy.hideSpeed,
         snapshot.privacy.hideGps,
         snapshot.privacy.hideVin,
@@ -148,9 +152,8 @@ export class ExportManager {
       if (record.cancelled) {
         return
       }
-      const sourceUri = await executeFfmpegComposeByService(
+      const sourceUri = await executeComposeByService(
         request,
-        cacheDir,
         (message: string) => {
           debugLog('导出', message)
         },
@@ -163,7 +166,13 @@ export class ExportManager {
       if (record.cancelled) {
         return
       }
-      const albumUri = await this.saveVideoToAlbum(fileName, sourceUri, context)
+      const saveStartProgress = Math.max(86, Math.min(99, record.progress))
+      this.notify(record, `导出处理中 ${saveStartProgress}%`, saveStartProgress)
+      const albumUri = await this.saveVideoToAlbum(fileName, sourceUri, context, saveStartProgress, (progress: number) => {
+        if (!record.cancelled) {
+          this.notify(record, `导出处理中 ${progress}%`, progress)
+        }
+      })
       this.notify(record, `导出完成：${fileName}`, 100)
       this.notify(record, `相册保存成功：${albumUri}`, 100)
     } catch (error) {
@@ -175,7 +184,13 @@ export class ExportManager {
     }
   }
 
-  private async saveVideoToAlbum(fileName: string, sourceUri: string, context: common.UIAbilityContext): Promise<string> {
+  private async saveVideoToAlbum(
+    fileName: string,
+    sourceUri: string,
+    context: common.UIAbilityContext,
+    startProgress: number,
+    onProgress: (percent: number) => void
+  ): Promise<string> {
     const helper = photoAccessHelper.getPhotoAccessHelper(context)
     const srcFileUris: Array<string> = [sourceUri]
     const dotIndex = fileName.lastIndexOf('.')
@@ -194,7 +209,17 @@ export class ExportManager {
     let srcFd: number = -1
     let dstFd: number = -1
     const chunkSize: number = 1024 * 1024
+    let totalSize: number = 0
+    let copiedSize: number = 0
+    const baseProgress: number = Math.max(86, Math.min(99, startProgress))
+    let reportedProgress: number = baseProgress
     try {
+      try {
+        const stat = await fs.stat(sourceUri)
+        totalSize = Number(stat.size ?? 0)
+      } catch (_) {
+        totalSize = 0
+      }
       const src = await fs.open(sourceUri, fs.OpenMode.READ_ONLY)
       srcFd = src.fd
       const dst = await fs.open(albumUri, fs.OpenMode.READ_WRITE)
@@ -206,6 +231,22 @@ export class ExportManager {
           break
         }
         await fs.write(dstFd, buffer.slice(0, readLen))
+        copiedSize += readLen
+        if (totalSize > 0) {
+          const progressSpan = Math.max(0, 99 - baseProgress)
+          const targetProgress = baseProgress + Math.min(progressSpan, Math.floor((copiedSize * progressSpan) / totalSize))
+          while (reportedProgress < targetProgress) {
+            reportedProgress += 1
+            onProgress(reportedProgress)
+          }
+        } else if (reportedProgress < 99) {
+          reportedProgress += 1
+          onProgress(reportedProgress)
+        }
+      }
+      while (reportedProgress < 99) {
+        reportedProgress += 1
+        onProgress(reportedProgress)
       }
     } finally {
       if (srcFd >= 0) {

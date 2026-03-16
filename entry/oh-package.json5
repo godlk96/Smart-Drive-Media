@@ -6,7 +6,6 @@
   "author": "",
   "license": "",
   "dependencies": {
-    "libsmartdrive_exporter.so": "file:./src/main/cpp/types/libsmartdrive_exporter",
-    "@sj/ffmpeg": "2.0.2"
+    "libsmartdrive_exporter.so": "file:./src/main/cpp/types/libsmartdrive_exporter"
   }
 }

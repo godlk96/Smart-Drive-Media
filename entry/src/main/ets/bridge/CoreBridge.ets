@@ -11,7 +11,7 @@ import {
 import { DvrMeta, TripSnapshot } from '../model/TripModels'
 import { parseDvrFileName, pickPreviewSource } from '../service/DvrScannerService'
 import { buildTimeline, mergeTimeline } from '../service/TimelineService'
-import { extractFirstFrameByService } from '../service/ExportRuntimeService'
+import { extractFirstFrameByService } from '../service/ExportNativeService'
 import { debugLog } from '../utils/Logger'
 import photoAccessHelper from '@ohos.file.photoAccessHelper'
 import dataSharePredicates from '@ohos.data.dataSharePredicates'
