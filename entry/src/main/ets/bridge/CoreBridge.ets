@@ -279,6 +279,21 @@ export class CoreBridge {
     })
   }
 
+  private resolveAnchorCamera(snapshot: TripSnapshot, preferredCamera?: string): string {
+    const availableTracks = snapshot.timeline.map((item: TimelineTrackModel) => item.cameraPosition)
+    const templatePrimaryCamera = this.getTemplateSlotDefs(this.activeTemplateId)[0]?.camera ?? ''
+    if (preferredCamera && availableTracks.some((item: string) => item === preferredCamera)) {
+      return preferredCamera
+    }
+    if (templatePrimaryCamera.length > 0) {
+      return resolvePreviewTrack(templatePrimaryCamera, availableTracks)
+    }
+    if (snapshot.previewCamera.length > 0) {
+      return resolvePreviewTrack(snapshot.previewCamera, availableTracks)
+    }
+    return availableTracks[0] ?? 'Front'
+  }
+
   private pickSlotUri(snapshot: TripSnapshot, camera: string, anchorTimestamp: number): SlotUriResult {
     const clips = snapshot.clips
       .filter((item: DvrMeta) => item.camera === camera && item.uri.length > 0)
@@ -521,7 +536,7 @@ export class CoreBridge {
       this.tripDurationSec = activeSnapshot.durationSec
       this.tripTimeline = activeSnapshot.timeline
       const timelineCameraSet = new Set(this.tripTimeline.map((item: TimelineTrackModel) => item.cameraPosition))
-      let camera = preferredCamera ?? activeSnapshot.previewCamera
+      let camera = this.resolveAnchorCamera(activeSnapshot, preferredCamera)
       if (camera.length === 0 || !timelineCameraSet.has(camera)) {
         camera = this.tripTimeline[0]?.cameraPosition ?? activeSnapshot.previewCamera
       }

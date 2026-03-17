@@ -1,4 +1,5 @@
 import { SeamlessVideoPlayer, SeamlessVideoController } from '../components/SeamlessVideoPlayer'
+import { SeamlessPreviewController, SeamlessPreviewView } from '../components/SeamlessPreviewView'
 import { sharedCoreBridge } from '../bridge/CoreBridge'
 import { EditorStateModel, PreviewSlotModel, TemplateCardModel, TimelineMarkerModel, TimelineTrackModel } from '../model/AppState'
 import { createEditorStateFromSnapshot, deepCloneExportSnapshot, ExportSnapshot, resolveTemplateDefinition } from '../model/Models'
@@ -11,8 +12,7 @@ import common from '@ohos.app.ability.common'
 struct Editor {
   private bridge = sharedCoreBridge
   private exportSessionSeed: string = ''
-  private primaryControllerA: SeamlessVideoController = new SeamlessVideoController()
-  private primaryControllerB: SeamlessVideoController = new SeamlessVideoController()
+  private primaryControllerA: SeamlessPreviewController = new SeamlessPreviewController()
   private secondaryControllerA: SeamlessVideoController = new SeamlessVideoController()
   private secondaryControllerB: SeamlessVideoController = new SeamlessVideoController()
   private secondaryControllerC: SeamlessVideoController = new SeamlessVideoController()
@@ -23,23 +23,12 @@ struct Editor {
   private manualSpeedMode: boolean = false
   private lastSecondarySeekMs: number = 0
   private lastLoggedSecond: number = -1
-  private playheadMs: number = 0
-  private previewLogged: boolean = false
-  private timelineLogged: boolean = false
-  private speedProbeLogged: boolean = false
-  private ignorePrimaryPauseUntilMs: number = 0
   @State private showPlayerControls: boolean = true
   @State private showPreviewCover: boolean = true
-  @State private seamlessPendingPlay: boolean = false
   @State private previewPlaying: boolean = true
-  @State private primaryUseA: boolean = true
   @State private primarySrcA: string = ''
   @State private primarySrcB: string = ''
   @State private primaryMutedA: boolean = true
-  @State private primaryMutedB: boolean = true
-  @State private primaryReadyA: boolean = false
-  @State private primaryReadyB: boolean = false
-  private standbyWarmUri: string = ''
   @State private previewRenderVersion: number = 0
   @State private showSlotLabels: boolean = false
   @State private exportLoadingVisible: boolean = false
@@ -50,7 +39,6 @@ struct Editor {
   @State private toastVisible: boolean = false
   @State private clipMarks: Array<number> = []
   @State private mosaicEnabledUi: boolean = true
-  @State private isSwitchingClip: boolean = false // Add flag for smooth visual transition
   private toastTimer: number = -1
   @State private state: EditorStateModel = {
     tripId: '',
@@ -100,7 +88,6 @@ struct Editor {
     const nextState = this.state
     nextState.playheadSec = clamped
     this.state = nextState
-    this.playheadMs = clamped * 1000
   }
 
   aboutToAppear(): void {
@@ -117,12 +104,10 @@ struct Editor {
     debugLog('剪辑页', `进入页面，行程ID=${tripId}，标题提示=${title}，副标题提示=${subtitle}`)
     this.exportSessionSeed = `${tripId}_${Date.now()}`
     this.applyState(this.bridge.createEditorState(tripId, title, subtitle))
-    this.primaryUseA = true
     this.syncPrimarySourcesByState()
     this.syncPrimaryMuteByState()
     this.showPreviewCover = this.state.previewUri.length > 0
-    this.seamlessPendingPlay = false
-    this.previewPlaying = true
+    this.previewPlaying = !this.showPreviewCover
     this.showPlayerControls = true
     this.applyPlaybackRate()
     this.scheduleHideControls()
@@ -172,10 +157,6 @@ struct Editor {
     this.scheduleHideControls()
   }
 
-  private previewRotationAngle(camera: string): number {
-    return 0
-  }
-
   private getPreviewAspectRatio(): number {
     const template = resolveTemplateDefinition(this.state.activeTemplateId)
     if (template.templateId === 'T1') {
@@ -215,207 +196,55 @@ struct Editor {
     return this.state.previewSlots.some((slot: PreviewSlotModel) => slot.uri.length > 0)
   }
 
-  private getActivePrimaryController(): SeamlessVideoController {
-    return this.primaryUseA ? this.primaryControllerA : this.primaryControllerB
-  }
-
-  private getStandbyPrimaryController(): SeamlessVideoController {
-    return this.primaryUseA ? this.primaryControllerB : this.primaryControllerA
-  }
-
-  private getActivePrimarySrc(): string {
-    return this.primaryUseA ? this.primarySrcA : this.primarySrcB
-  }
-
-  private getStandbyPrimarySrc(): string {
-    return this.primaryUseA ? this.primarySrcB : this.primarySrcA
-  }
-
-  private setActivePrimarySrc(uri: string): void {
-    if (this.primaryUseA) {
-      this.primarySrcA = uri
-      this.primaryReadyA = false
-      return
-    }
-    this.primarySrcB = uri
-    this.primaryReadyB = false
-  }
-
-  private setStandbyPrimarySrc(uri: string): void {
-    this.standbyWarmUri = ''
-    if (this.primaryUseA) {
-      this.primarySrcB = uri
-      this.primaryReadyB = false
-      return
-    }
-    this.primarySrcA = uri
-    this.primaryReadyA = false
-  }
-
-  private isStandbyReadyFor(uri: string): boolean {
-    if (uri.length === 0) {
-      return false
-    }
-    if (this.primaryUseA) {
-      return this.primarySrcB === uri && this.primaryReadyB
-    }
-    return this.primarySrcA === uri && this.primaryReadyA
-  }
-
-  private getPrimaryPlayerVisible(useA: boolean): number {
-    return this.primaryUseA === useA ? 1 : 0.001
-  }
-
-  private markPrimaryPrepared(useA: boolean): void {
-    if (useA) {
-      this.primaryReadyA = true
-      return
-    }
-    this.primaryReadyB = true
-  }
-
   private syncPrimarySourcesByState(): void {
     const primary = this.getPrimaryPreviewSlot()
     if (!primary || primary.uri.length === 0) {
       this.primarySrcA = ''
       this.primarySrcB = ''
-      this.primaryReadyA = false
-      this.primaryReadyB = false
-      this.standbyWarmUri = ''
+      this.primaryControllerA.reloadWindow('', '', 0)
       return
     }
-    if (this.getActivePrimarySrc() !== primary.uri) {
-      this.setActivePrimarySrc(primary.uri)
-    }
+    this.primarySrcA = primary.uri
     const preloadUri = primary.nextUri ?? ''
-    if (preloadUri.length === 0 || preloadUri === primary.uri) {
-      if (this.getStandbyPrimarySrc().length > 0) {
-        this.setStandbyPrimarySrc('')
-      }
-      return
-    }
-    if (this.getStandbyPrimarySrc() !== preloadUri) {
-      this.setStandbyPrimarySrc(preloadUri)
-    }
+    this.primarySrcB = preloadUri.length > 0 && preloadUri !== primary.uri ? preloadUri : ''
+    this.primaryControllerA.reloadWindow(this.primarySrcA, this.primarySrcB, this.getLocalSecond(this.state.playheadSec))
   }
 
   private syncPrimaryMuteByState(): void {
     const primary = this.getPrimaryPreviewSlot()
     const allowAudio = primary ? this.getAudioSlotId() === primary.id : false
     const activeMuted = allowAudio ? this.state.muted : true
-    if (this.primaryUseA) {
-      this.primaryMutedA = activeMuted
-      this.primaryMutedB = true
-      return
-    }
-    this.primaryMutedA = true
-    this.primaryMutedB = activeMuted
+    this.primaryMutedA = activeMuted
+    this.primaryControllerA.setMuted(activeMuted)
   }
 
-  private warmStandbyIfNeeded(nextSec: number, currentClipEnd: number): void {
-    const currentPrimary = this.getPrimaryPreviewSlot()
-    const preloadUri = currentPrimary?.nextUri ?? ''
-    if (preloadUri.length === 0 || nextSec < currentClipEnd - 0.45) {
+  private handleSeamlessSwap(): void {
+    if (!this.state.canPlayNext) {
       return
     }
-    if (!this.isStandbyReadyFor(preloadUri) || this.standbyWarmUri === preloadUri) {
-      return
-    }
-    const standby = this.getStandbyPrimaryController()
-    standby.setCurrentTime(0)
-    standby.start()
-    setTimeout(() => {
-      standby.pause()
-    }, 60)
-    this.standbyWarmUri = preloadUri
-    debugLog('剪辑诊断', `预热命中，待切段URI=${preloadUri}`)
-  }
-
-  private isPrimaryPlayerActive(useA: boolean): boolean {
-    return this.primaryUseA === useA
-  }
-
-  private handlePrimaryPrepared(useA: boolean): void {
-    this.markPrimaryPrepared(useA)
-    if (!this.isPrimaryPlayerActive(useA)) {
-      return
-    }
-    this.isSwitchingClip = false
-    this.ignorePrimaryPauseUntilMs = Date.now() + 500
-    this.applyPlaybackRate()
-    this.seekAllControllers(this.getLocalSecond(this.state.playheadSec), true)
-    if (this.seamlessPendingPlay) {
-      this.seamlessPendingPlay = false
-      this.startAllPreview()
-      this.showPreviewCover = false
-      this.showControlsTemporarily()
-      return
-    }
-    if (this.showPreviewCover) {
-      this.showPreviewCover = false
-      this.showControlsTemporarily()
-    }
-    if (this.previewPlaying) {
-      this.startAllPreview()
-    } else {
-      this.pauseAllPreview()
-    }
-  }
-
-  private handlePrimaryStart(useA: boolean): void {
-    if (!this.isPrimaryPlayerActive(useA)) {
-      return
-    }
+    this.applyState(this.bridge.playNextClip())
+    this.syncPrimarySourcesByState()
+    this.syncPrimaryMuteByState()
+    this.updatePlayheadSec(this.getCurrentClipStartSec())
+    this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.playheadSec * 1000)))
+    this.seekSecondaryControllers(0, true)
     this.showPreviewCover = false
-    this.previewPlaying = true
-    this.ensureSpeedEmulation()
     this.showControlsTemporarily()
   }
 
-  private handlePrimaryPause(useA: boolean): void {
-    if (!this.isPrimaryPlayerActive(useA)) {
-      return
-    }
-    if (this.shouldIgnorePrimaryPause()) {
-      debugLog('剪辑诊断', `忽略主画面暂停回写，manual=${this.manualSpeedMode}，pending=${this.seamlessPendingPlay}，switching=${this.isSwitchingClip}`)
-      return
-    }
+  private handleSeamlessEnded(): void {
     this.previewPlaying = false
+    this.showPreviewCover = true
     this.clearSpeedEmulationTimer()
+    this.updatePlayheadSec(this.state.totalDurationSec)
+    this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.totalDurationSec * 1000)))
+    this.pauseAllPreview()
     this.showControlsTemporarily()
   }
 
-  private handlePrimaryFinish(useA: boolean): void {
-    if (!this.isPrimaryPlayerActive(useA)) {
-      return
-    }
-    if (this.state.canPlayNext) {
-      if (this.isSwitchingClip || this.seamlessPendingPlay) {
-        debugLog('剪辑诊断', `忽略重复finish切段，switching=${this.isSwitchingClip}，pending=${this.seamlessPendingPlay}`)
-        return
-      }
-      this.playNextClipForSeamless()
-      return
-    }
-    if (this.state.playheadSec >= this.state.totalDurationSec - 1) {
-      this.showPreviewCover = true
-      this.clearSpeedEmulationTimer()
-      this.showControlsTemporarily()
-      this.pauseAllPreview()
-      this.updatePlayheadSec(this.state.totalDurationSec)
-      this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.playheadSec * 1000)))
-    }
-  }
-
-  private handlePrimaryError(useA: boolean): void {
-    if (!this.isPrimaryPlayerActive(useA)) {
-      return
-    }
+  private handleSeamlessError(message: string): void {
+    debugLog('剪辑诊断', `无缝管理器错误：${message}`)
     this.showPreviewCover = true
-  }
-
-  private isMergedTrip(): boolean {
-    return this.state.tripId.startsWith('trip-merged-')
   }
 
   private getSecondaryController(slotId: string): SeamlessVideoController {
@@ -432,19 +261,22 @@ struct Editor {
   }
 
   private getAudioSlotId(): string {
-    const frontSlot = this.state.previewSlots.find((slot: PreviewSlotModel) => slot.camera === 'Front')
+    const frontSlot = this.state.previewSlots.find((slot: PreviewSlotModel) => slot.camera === 'Front' && slot.uri.length > 0)
     if (frontSlot) {
       return frontSlot.id
     }
     const primary = this.getPrimaryPreviewSlot()
-    return primary ? primary.id : ''
+    if (primary && primary.uri.length > 0) {
+      return primary.id
+    }
+    const fallback = this.state.previewSlots.find((slot: PreviewSlotModel) => slot.uri.length > 0)
+    return fallback ? fallback.id : ''
   }
 
   private startAllPreview(): void {
-    this.ignorePrimaryPauseUntilMs = Date.now() + 600
     this.lastPlayheadTickAt = Date.now()
     this.syncPrimaryMuteByState()
-    this.getActivePrimaryController().start()
+    this.primaryControllerA.start()
     this.secondaryControllerA.start()
     this.secondaryControllerB.start()
     this.secondaryControllerC.start()
@@ -454,9 +286,7 @@ struct Editor {
   }
 
   private pauseAllPreview(): void {
-    this.ignorePrimaryPauseUntilMs = 0
-    this.getActivePrimaryController().pause()
-    this.getStandbyPrimaryController().pause()
+    this.primaryControllerA.pause()
     this.secondaryControllerA.pause()
     this.secondaryControllerB.pause()
     this.secondaryControllerC.pause()
@@ -502,9 +332,6 @@ struct Editor {
 
   private syncGlobalPlayhead(second: number, fromUser: boolean): void {
     const clamped = Math.max(0, Math.min(second, this.state.totalDurationSec))
-    if (fromUser) {
-      this.ignorePrimaryPauseUntilMs = Date.now() + 900
-    }
     this.updatePlayheadSec(clamped)
     this.applyState(this.bridge.seekGlobalPlayhead(Math.floor(clamped)))
     this.syncPrimarySourcesByState()
@@ -800,10 +627,6 @@ struct Editor {
         if (!this.previewPlaying) {
           return
         }
-        if (this.isSwitchingClip) {
-          this.lastPlayheadTickAt = Date.now()
-          return
-        }
         const now = Date.now()
         const elapsedSec = Math.max(0, (now - this.lastPlayheadTickAt) / 1000)
         this.lastPlayheadTickAt = now
@@ -812,14 +635,6 @@ struct Editor {
         }
         
         const nextSec = Math.min(this.state.totalDurationSec, this.state.playheadSec + elapsedSec)
-        const currentClipEnd = this.getCurrentClipStartSec() + this.getClipSpanSec()
-        this.warmStandbyIfNeeded(nextSec, currentClipEnd)
-        if (nextSec >= currentClipEnd - 0.18 && this.state.canPlayNext) {
-          debugLog('剪辑诊断', `提前触发切段，nextSec=${nextSec.toFixed(3)}，clipEnd=${currentClipEnd.toFixed(3)}`)
-          this.playNextClipForSeamless()
-          return
-        }
-
         this.updatePlayheadSec(nextSec)
         this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.playheadSec * 1000)))
         if (nextSec >= this.state.totalDurationSec) {
@@ -830,8 +645,7 @@ struct Editor {
       return
     }
     this.manualSpeedMode = true
-    this.getActivePrimaryController().pause()
-    this.getStandbyPrimaryController().pause()
+    this.primaryControllerA.pause()
     this.secondaryControllerA.pause()
     this.secondaryControllerB.pause()
     this.secondaryControllerC.pause()
@@ -866,7 +680,6 @@ struct Editor {
   private applyPlaybackRate(): void {
     const rate = this.getPlaybackRate()
     this.primaryControllerA.setPlaybackSpeed(rate)
-    this.primaryControllerB.setPlaybackSpeed(rate)
     this.secondaryControllerA.setPlaybackSpeed(rate)
     this.secondaryControllerB.setPlaybackSpeed(rate)
     this.secondaryControllerC.setPlaybackSpeed(rate)
@@ -892,7 +705,7 @@ struct Editor {
   }
 
   private seekPrimaryController(localSecond: number): void {
-    this.getActivePrimaryController().setCurrentTime(localSecond)
+    this.primaryControllerA.setCurrentTime(localSecond)
   }
 
   private seekSecondaryControllers(localSecond: number, force: boolean): void {
@@ -1022,106 +835,36 @@ struct Editor {
     this.syncPrimarySourcesByState()
     this.syncPrimaryMuteByState()
     this.showPreviewCover = this.state.previewUri.length > 0
-    const angle = this.previewRotationAngle(this.state.previewCamera)
-    debugLog('剪辑页', `切换播放器视角=${camera}，片段=${this.state.currentClipIndex}/${this.state.currentClipTotal}，旋转角=${angle}`)
+    debugLog('剪辑页', `切换播放器视角=${camera}，片段=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
     this.showControlsTemporarily()
   }
 
   private playPrevClip(): void {
-    const prevPrimaryUri = this.getPrimaryPreviewSlot()?.uri ?? ''
-    this.isSwitchingClip = true
     this.applyState(this.bridge.playPrevClip())
     this.syncPrimarySourcesByState()
     this.syncPrimaryMuteByState()
-    const nextPrimaryUri = this.getPrimaryPreviewSlot()?.uri ?? ''
     this.updatePlayheadSec(this.getCurrentClipStartSec())
     this.updatePlayheadText(this.bridge.updatePlayhead(this.state.playheadSec * 1000))
     this.seekAllControllers(0, true)
-    if (prevPrimaryUri === nextPrimaryUri) {
-      this.isSwitchingClip = false
-      debugLog('剪辑诊断', `上一片切换URI未变化，直接解除切换态，uri=${nextPrimaryUri}`)
-    }
     this.showPreviewCover = this.state.previewUri.length > 0
-    this.seamlessPendingPlay = false
     debugLog('剪辑页', `切换上一片，当前=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
     this.showControlsTemporarily()
   }
 
   private playNextClip(): void {
-    const prevPrimaryUri = this.getPrimaryPreviewSlot()?.uri ?? ''
-    this.isSwitchingClip = true
     this.applyState(this.bridge.playNextClip())
     this.syncPrimarySourcesByState()
     this.syncPrimaryMuteByState()
-    const nextPrimaryUri = this.getPrimaryPreviewSlot()?.uri ?? ''
     this.updatePlayheadSec(this.getCurrentClipStartSec())
     this.updatePlayheadText(this.bridge.updatePlayhead(this.state.playheadSec * 1000))
     this.seekAllControllers(0, true)
-    if (prevPrimaryUri === nextPrimaryUri) {
-      this.isSwitchingClip = false
-      debugLog('剪辑诊断', `下一片切换URI未变化，直接解除切换态，uri=${nextPrimaryUri}`)
-    }
     this.showPreviewCover = this.state.previewUri.length > 0
-    this.seamlessPendingPlay = false
     debugLog('剪辑页', `切换下一片，当前=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
     this.showControlsTemporarily()
   }
 
-  private playNextClipForSeamless(): void {
-    const currentPrimary = this.getPrimaryPreviewSlot()
-    const prevPrimaryUri = currentPrimary?.uri ?? ''
-    const preloadUri = currentPrimary?.nextUri ?? ''
-    this.isSwitchingClip = true
-    this.ignorePrimaryPauseUntilMs = Date.now() + 1400
-    this.applyState(this.bridge.playNextClip())
-    this.syncPrimarySourcesByState()
-    this.syncPrimaryMuteByState()
-    const nextPrimaryUri = this.getPrimaryPreviewSlot()?.uri ?? ''
-    debugLog('剪辑诊断', `自动切段主URI变化，changed=${prevPrimaryUri !== nextPrimaryUri}，from=${prevPrimaryUri}，to=${nextPrimaryUri}`)
-    if (preloadUri.length > 0 && nextPrimaryUri === preloadUri && this.isStandbyReadyFor(preloadUri)) {
-      this.primaryUseA = !this.primaryUseA
-      this.syncPrimaryMuteByState()
-      this.isSwitchingClip = false
-      this.seamlessPendingPlay = false
-      this.updatePlayheadSec(this.getCurrentClipStartSec())
-      this.updatePlayheadText(this.bridge.updatePlayhead(this.state.playheadSec * 1000))
-      this.getActivePrimaryController().setCurrentTime(0)
-      this.getActivePrimaryController().start()
-      this.getStandbyPrimaryController().pause()
-      this.syncPrimarySourcesByState()
-      this.standbyWarmUri = ''
-      this.showPreviewCover = false
-      this.showControlsTemporarily()
-      debugLog('剪辑诊断', `命中双实例预热切段，切换到${this.primaryUseA ? 'A' : 'B'}，uri=${nextPrimaryUri}`)
-      return
-    }
-    this.updatePlayheadSec(this.getCurrentClipStartSec())
-    this.updatePlayheadText(this.bridge.updatePlayhead(this.state.playheadSec * 1000))
-    this.showPreviewCover = false
-    this.seamlessPendingPlay = prevPrimaryUri !== nextPrimaryUri
-    this.standbyWarmUri = ''
-    if (prevPrimaryUri === nextPrimaryUri) {
-      this.isSwitchingClip = false
-      this.seekAllControllers(0, true)
-      this.startAllPreview()
-      debugLog('剪辑诊断', `自动切段URI未变化，直接续播，uri=${nextPrimaryUri}`)
-    }
-    this.showControlsTemporarily()
-    debugLog('剪辑页', `自动切换下一片，当前=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
-  }
-
   private updatePlayhead(second: number): void {
     this.syncGlobalPlayhead(second, true)
-  }
-
-  private shouldIgnorePrimaryPause(): boolean {
-    if (this.manualSpeedMode) {
-      return true
-    }
-    if (this.seamlessPendingPlay || this.isSwitchingClip) {
-      return true
-    }
-    return Date.now() < this.ignorePrimaryPauseUntilMs
   }
 
   private updateRangeStart(value: number): void {
@@ -1146,7 +889,6 @@ struct Editor {
 
   private selectTemplate(card: TemplateCardModel): void {
     const wasPlaying = this.previewPlaying
-    this.seamlessPendingPlay = wasPlaying
     this.pauseAllPreview()
     this.applyState(this.bridge.selectTemplate(card.id))
     
@@ -1283,15 +1025,14 @@ struct Editor {
               Stack({ alignContent: Alignment.Center }) {
                 if (this.hasPreviewSource()) {
                   if (this.getPrimaryPreviewSlot() && (this.getPrimaryPreviewSlot()?.uri.length ?? 0) > 0) {
-                    SeamlessVideoPlayer({
-                      src: this.primarySrcA,
+                    SeamlessPreviewView({
+                      currentUri: this.primarySrcA,
+                      nextUri: this.primarySrcB,
                       controller: this.primaryControllerA,
                       muted: this.primaryMutedA,
-                      onPreparedCallback: () => this.handlePrimaryPrepared(true),
-                      onStartCallback: () => this.handlePrimaryStart(true),
-                      onPauseCallback: () => this.handlePrimaryPause(true),
-                      onFinishCallback: () => this.handlePrimaryFinish(true),
-                      onErrorCallback: () => this.handlePrimaryError(true)
+                      onSwapCallback: () => this.handleSeamlessSwap(),
+                      onEndedCallback: () => this.handleSeamlessEnded(),
+                      onErrorCallback: (message: string) => this.handleSeamlessError(message)
                     })
                       .width(this.toPercent(this.getPrimaryPreviewSlot()?.width ?? 0))
                       .height(this.toPercent(this.getPrimaryPreviewSlot()?.height ?? 0))
@@ -1299,24 +1040,7 @@ struct Editor {
                         x: this.toPercent(this.getPrimaryPreviewSlot()?.x ?? 0),
                         y: this.toPercent(this.getPrimaryPreviewSlot()?.y ?? 0)
                       })
-                      .opacity(this.getPrimaryPlayerVisible(true))
-                    SeamlessVideoPlayer({
-                      src: this.primarySrcB,
-                      controller: this.primaryControllerB,
-                      muted: this.primaryMutedB,
-                      onPreparedCallback: () => this.handlePrimaryPrepared(false),
-                      onStartCallback: () => this.handlePrimaryStart(false),
-                      onPauseCallback: () => this.handlePrimaryPause(false),
-                      onFinishCallback: () => this.handlePrimaryFinish(false),
-                      onErrorCallback: () => this.handlePrimaryError(false)
-                    })
-                      .width(this.toPercent(this.getPrimaryPreviewSlot()?.width ?? 0))
-                      .height(this.toPercent(this.getPrimaryPreviewSlot()?.height ?? 0))
-                      .position({
-                        x: this.toPercent(this.getPrimaryPreviewSlot()?.x ?? 0),
-                        y: this.toPercent(this.getPrimaryPreviewSlot()?.y ?? 0)
-                      })
-                      .opacity(this.getPrimaryPlayerVisible(false))
+                      .opacity(1)
                   }
                   ForEach(this.state.previewSlots, (slot: PreviewSlotModel) => {
                     if (slot.uri.length === 0) {
@@ -1333,7 +1057,7 @@ struct Editor {
                         muted: this.getAudioSlotId() === slot.id ? this.state.muted : true,
                         onPreparedCallback: () => {
                           this.applyPlaybackRate()
-                          if (this.previewPlaying) {
+                          if (this.previewPlaying && !this.showPreviewCover) {
                             this.getSecondaryController(slot.id).start()
                           } else {
                             this.getSecondaryController(slot.id).pause()
