@@ -4,7 +4,7 @@
 import path from 'node:path'
 import { normalizeCameraPosition } from '../model/types.js'
 
-const DVR_REGEX = /^DVR_LoopRecording_(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})_(.+)\.(mp4|ts|mov)$/i
+const DVR_REGEX = /^(?:.+_)?DVR_LoopRecording_(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})_(.+?)(?:_camera)?\.(mp4|ts|mov)$/i
 
 export function parseDvrFile(filePath, durationSec = 60) {
   const fileName = path.basename(filePath)

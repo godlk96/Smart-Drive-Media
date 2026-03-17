@@ -4,6 +4,9 @@
 #include <string>
 #include <vector>
 
+bool isSupportedTemplateId(const std::string &templateId);
+std::string normalizeTemplateId(const std::string &templateId);
+
 std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
                                     const std::vector<std::string> &backUris,
                                     const std::vector<std::string> &sideUris,

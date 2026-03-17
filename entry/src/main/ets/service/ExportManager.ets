@@ -1,7 +1,7 @@
 import common from '@ohos.app.ability.common'
 import fs from '@ohos.file.fs'
 import photoAccessHelper from '@ohos.file.photoAccessHelper'
-import { CameraPosition, ExportSnapshot } from '../model/Models'
+import { CameraPosition, ExportSnapshot, toLegacyCamera } from '../model/Models'
 import { DvrMeta } from '../model/TripModels'
 import { buildComposeRequestByService } from './ExportService'
 import { executeComposeByService } from './ExportNativeService'
@@ -23,25 +23,6 @@ interface ExportJobRecord {
   listeners: Array<ExportListener>
   cancelled: boolean
   progress: number
-}
-
-function toLegacyCamera(camera: CameraPosition): string {
-  if (camera === CameraPosition.FRONT) {
-    return 'Front'
-  }
-  if (camera === CameraPosition.REAR) {
-    return 'Back'
-  }
-  if (camera === CameraPosition.LEFT) {
-    return 'Left'
-  }
-  if (camera === CameraPosition.RIGHT) {
-    return 'Right'
-  }
-  if (camera === CameraPosition.LEFT_FRONT) {
-    return 'LeftFront'
-  }
-  return 'RightFront'
 }
 
 function snapshotToLegacyClips(snapshot: ExportSnapshot): Array<DvrMeta> {

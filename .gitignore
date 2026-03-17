@@ -25,7 +25,6 @@ coverage/
 *.pem
 *.key
 skills-lock.json
-logs/
 *.tmp
 *.temp
 *.hprof

@@ -1,6 +1,6 @@
 import smartdriveExporter from 'libsmartdrive_exporter.so'
 
-const REQUIRED_CORE_API_VERSION: string = 'core-api-v1'
+const REQUIRED_CORE_API_VERSION: string = 'core-api-v2'
 let coreApiChecked: boolean = false
 
 export function ensureCoreApiContract(): void {

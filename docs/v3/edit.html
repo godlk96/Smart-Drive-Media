@@ -1,0 +1,1146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>视频剪辑</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'HarmonyOS Sans SC', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            background-color: #181818;
+            color: #FFFFFF;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 414px;
+            margin: 0 auto;
+            padding: 0 16px;
+        }
+
+        .navbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 0;
+            position: sticky;
+            top: 0;
+            background-color: #181818;
+            z-index: 100;
+        }
+
+        .nav-btn {
+            background: none;
+            border: none;
+            color: #FFFFFF;
+            font-size: 16px;
+            cursor: pointer;
+            padding: 8px;
+        }
+
+        .nav-export {
+            padding: 8px 16px;
+            background-color: #FF7A00;
+            border: none;
+            border-radius: 8px;
+            color: #FFFFFF;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .nav-export:active {
+            background-color: #E06A00;
+            transform: scale(0.98);
+        }
+
+        .nav-title {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .card {
+            background-color: #282828;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        .section-title {
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 12px;
+            color: #999999;
+        }
+
+        .template-scroll {
+            display: flex;
+            overflow-x: auto;
+            gap: 12px;
+            padding-bottom: 4px;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .template-scroll::-webkit-scrollbar {
+            display: none;
+        }
+
+        .template-btn {
+            flex-shrink: 0;
+            width: 100px;
+            padding: 12px 8px;
+            background-color: #333333;
+            border-radius: 8px;
+            border: 2px solid transparent;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
+
+        .template-btn:active {
+            transform: scale(0.98);
+        }
+
+        .template-btn.active {
+            background-color: #FF7A00;
+            border-color: #FF7A00;
+        }
+
+        .template-btn.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .template-icon {
+            font-size: 24px;
+            margin-bottom: 4px;
+        }
+
+        .template-name {
+            font-size: 12px;
+            margin-bottom: 2px;
+        }
+
+        .template-resolution {
+            font-size: 10px;
+            color: #999999;
+        }
+
+        .template-btn.active .template-resolution {
+            color: #FFFFFF;
+        }
+
+        /* ========== 播放剪辑器 - 开始 ========== */
+        .player-editor {
+            background-color: #222222;
+            border: 1px solid #333333;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 24px;
+        }
+
+        .player-editor .section-title {
+            padding: 12px 16px 0;
+            margin-bottom: 8px;
+        }
+
+        .preview-container {
+            position: relative;
+            width: 100%;
+            background-color: #000000;
+            transition: padding-top 0.3s ease;
+        }
+
+        .preview-content {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .preview-row {
+            display: flex;
+            flex: 1;
+        }
+
+        .preview-view {
+            flex: 1;
+            background-color: #444444;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #333333;
+            position: relative;
+        }
+
+        .view-label {
+            position: absolute;
+            top: 4px;
+            left: 4px;
+            font-size: 10px;
+            color: #999999;
+            z-index: 5;
+        }
+
+        .mosaic-box {
+            position: absolute;
+            bottom: 20%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 30%;
+            height: 15%;
+            background-color: rgba(0, 0, 0, 0.7);
+            border-radius: 4px;
+        }
+
+        .play-btn {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 56px;
+            height: 56px;
+            background-color: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            color: #FFFFFF;
+            z-index: 10;
+        }
+
+        .speed-badge {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 10;
+        }
+
+        .mute-badge {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            background-color: rgba(255, 0, 0, 0.7);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 10;
+        }
+
+        .status-badge {
+            position: absolute;
+            bottom: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #FFFFFF;
+            z-index: 10;
+        }
+
+        .timeline-container {
+            display: flex;
+            align-items: stretch;
+            background-color: #121212;
+            height: 80px;
+        }
+
+        .timeline {
+            position: relative;
+            flex: 1;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .timeline-track {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 24px;
+            cursor: pointer;
+        }
+
+        .timeline-ticks {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 24px;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 8px;
+            align-items: center;
+            font-size: 10px;
+            color: #666666;
+        }
+
+        .clip-segments {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 24px;
+            pointer-events: none;
+        }
+
+        .clip-segment-area {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            background-color: rgba(255, 122, 0, 0.2);
+            pointer-events: auto;
+        }
+
+        .clip-mark {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background-color: #FF7A00;
+            cursor: ew-resize;
+            z-index: 15;
+        }
+
+        .clip-mark::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-top: 6px solid #FF7A00;
+        }
+
+        .playhead {
+            position: absolute;
+            top: 0;
+            bottom: 24px;
+            width: 2px;
+            background-color: #0A59F7;
+            pointer-events: none;
+            z-index: 20;
+        }
+
+
+
+        .playhead-time {
+            position: absolute;
+            top: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #0A59F7;
+            color: #FFFFFF;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            white-space: nowrap;
+        }
+
+        .timeline-actions {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 4px;
+            padding: 8px;
+            background-color: #1a1a1a;
+        }
+
+        .action-btn {
+            width: 28px;
+            height: 28px;
+            border: none;
+            border-radius: 4px;
+            background-color: #333333;
+            color: #FFFFFF;
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+
+        .action-btn:active {
+            background-color: #444444;
+            transform: scale(0.95);
+        }
+
+        .action-btn.delete {
+            color: #FF4444;
+        }
+
+        .segment-info {
+            font-size: 12px;
+            color: #999999;
+            text-align: center;
+            padding: 8px 16px;
+            background-color: #1a1a1a;
+        }
+        /* ========== 播放剪辑器 - 结束 ========== */
+
+        .function-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .function-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .function-label {
+            font-size: 14px;
+        }
+
+        .switch {
+            position: relative;
+            width: 48px;
+            height: 28px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .switch-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #444444;
+            transition: 0.3s;
+            border-radius: 28px;
+        }
+
+        .switch-slider:before {
+            position: absolute;
+            content: "";
+            height: 22px;
+            width: 22px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        .switch input:checked + .switch-slider {
+            background-color: #FF7A00;
+        }
+
+        .switch input:checked + .switch-slider:before {
+            transform: translateX(20px);
+        }
+
+        select {
+            padding: 8px 16px;
+            background-color: #333333;
+            border: none;
+            border-radius: 8px;
+            color: #FFFFFF;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
+        }
+
+        .btn:active {
+            transform: scale(0.98);
+        }
+
+        .btn-primary {
+            background-color: #0A59F7;
+            color: #FFFFFF;
+        }
+
+        .btn-primary:active {
+            background-color: #0849C7;
+        }
+
+        .btn-secondary {
+            background-color: #333333;
+            color: #FFFFFF;
+        }
+
+        .btn-secondary:active {
+            background-color: #444444;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background-color: rgba(0, 0, 0, 0.9);
+            color: #FFFFFF;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 1000;
+        }
+
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 200;
+            padding: 20px;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background-color: #282828;
+            border-radius: 16px;
+            padding: 24px;
+            width: 100%;
+            max-width: 340px;
+        }
+
+        .modal-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+
+        .modal-content {
+            font-size: 14px;
+            color: #999999;
+            text-align: center;
+            margin-bottom: 24px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+        }
+
+        .modal-actions .btn {
+            flex: 1;
+        }
+
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <nav class="navbar">
+            <button class="nav-btn" onclick="goBack()">← 返回</button>
+            <span class="nav-title" id="pageTitle">剪辑视频</span>
+            <button class="nav-export" onclick="goExport()">导出剪辑</button>
+        </nav>
+
+        <div class="card">
+            <div class="section-title">剪辑模板（点击查看比例）</div>
+            <div class="template-scroll" id="templateScroll">
+            </div>
+        </div>
+
+        <!-- ========== 播放剪辑器 - HTML结构 - 开始 ========== -->
+        <div class="player-editor">
+            <div class="section-title">播放剪辑器</div>
+            <div class="preview-container" id="previewContainer">
+                <div class="preview-content" id="previewContent">
+                </div>
+                <button class="play-btn" id="playBtn" onclick="togglePlay()">▶</button>
+                <span class="speed-badge" id="speedBadge">1.0x</span>
+                <span class="mute-badge" id="muteBadge" style="display: none;">🔇 全局静音</span>
+                <span class="status-badge" id="statusBadge">点击时间轴跳转播放</span>
+            </div>
+            <div class="timeline-container">
+                <div class="timeline" id="timeline">
+                    <div class="timeline-track" id="timelineTrack" onclick="seekToPosition(event)">
+                    </div>
+                    <div class="clip-segments" id="clipSegments">
+                    </div>
+                    <div class="playhead" id="playhead" style="left: 0%;">
+                        <div class="playhead-time" id="playheadTime">0:00</div>
+                    </div>
+                    <div class="timeline-ticks" id="timelineTicks">
+                    </div>
+                </div>
+                <div class="timeline-actions">
+                    <button class="action-btn" onclick="addClipMark()" title="添加剪辑点">+</button>
+                    <button class="action-btn delete" onclick="undoClipMark()" title="撤回上次">✕</button>
+                </div>
+            </div>
+            <div class="segment-info" id="segmentInfo">已添加 0 个剪辑点</div>
+        </div>
+        <!-- ========== 播放剪辑器 - HTML结构 - 结束 ========== -->
+
+        <div class="card">
+            <div class="section-title">功能设置</div>
+            <div class="function-row" id="mosaicRow">
+                <span class="function-label">前视角固定打码</span>
+                <label class="switch">
+                    <input type="checkbox" id="mosaicSwitch" checked onchange="toggleMosaic()">
+                    <span class="switch-slider"></span>
+                </label>
+            </div>
+            <div class="function-row">
+                <span class="function-label">倍速</span>
+                <select id="speedSelect" onchange="changeSpeed()">
+                    <option value="0.5">0.5x</option>
+                    <option value="1" selected>1.0x</option>
+                    <option value="1.5">1.5x</option>
+                    <option value="2">2.0x</option>
+                </select>
+            </div>
+
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <div class="modal-overlay" id="backModal">
+        <div class="modal">
+            <div class="modal-title">确认放弃修改？</div>
+            <div class="modal-content">返回将丢失未保存的修改</div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeBackModal()">继续编辑</button>
+                <button class="btn btn-primary" onclick="confirmBack()">放弃</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const templates = [
+            {
+                id: 0,
+                name: '单视角',
+                resolution: '1920×1080',
+                icon: '📹',
+                paddingTop: '56.25%',
+                requiredViews: ['前'],
+                hasMosaic: true,
+                hasAudio: true
+            },
+            {
+                id: 1,
+                name: '防追尾双录',
+                resolution: '1920×2160',
+                icon: '📹📹',
+                paddingTop: '112.5%',
+                requiredViews: ['前', '后'],
+                hasMosaic: true,
+                hasAudio: true
+            },
+            {
+                id: 2,
+                name: '避险防加塞',
+                resolution: '1920×1620',
+                icon: '👁️👁️👁️',
+                paddingTop: '84.375%',
+                requiredViews: ['前', '左后', '右后'],
+                hasMosaic: true,
+                hasAudio: true
+            },
+            {
+                id: 3,
+                name: '左右盲区',
+                resolution: '3840×1080',
+                icon: '⬅️➡️',
+                paddingTop: '28.125%',
+                requiredViews: ['左后', '右后'],
+                hasMosaic: false,
+                hasAudio: false
+            },
+            {
+                id: 4,
+                name: '沉浸式旅拍',
+                resolution: '3840×1080',
+                icon: '🎬',
+                paddingTop: '28.125%',
+                requiredViews: ['左前', '前', '右前'],
+                hasMosaic: false,
+                hasAudio: true
+            }
+        ];
+
+        const videoGroups = [
+            {
+                id: 1,
+                time: '03-15 14:35-14:36',
+                views: ['前', '左前', '右前', '左后', '右后', '后']
+            },
+            {
+                id: 2,
+                time: '03-15 14:36-14:37',
+                views: ['前', '左前', '右前', '左后', '右后', '后']
+            },
+            {
+                id: 3,
+                time: '03-15 14:37-14:38',
+                views: ['前', '左前', '右前', '左后', '右后']
+            },
+            {
+                id: 4,
+                time: '03-15 14:38-14:39',
+                views: ['前', '左后', '右后', '后']
+            }
+        ];
+
+        let currentTemplate = 0;
+        let isPlaying = false;
+        let currentSpeed = 1;
+        let mosaicEnabled = true;
+        let hasUnsavedChanges = false;
+        let availableViews = [];
+        let clipMarks = [];
+        let currentTime = 0;
+        let playInterval = null;
+        let isDraggingPlayhead = false;
+        let totalDuration = 60;
+        let videoCount = 1;
+        let selectedViews = {};
+        let viewSelectors = [];
+
+        function getUrlParams() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+                type: params.get('type'),
+                groupId: params.get('groupId'),
+                groupIds: params.get('groupIds'),
+                template: params.get('template'),
+                speed: params.get('speed'),
+                mosaicEnabled: params.get('mosaicEnabled'),
+                clipSegments: params.get('clipSegments')
+            };
+        }
+
+        function initPage() {
+            const params = getUrlParams();
+            
+            if (params.type === 'single') {
+                const group = videoGroups.find(g => g.id === parseInt(params.groupId));
+                if (group) {
+                    document.getElementById('pageTitle').textContent = group.time;
+                    availableViews = group.views;
+                    videoCount = 1;
+                }
+            } else if (params.type === 'merge') {
+                const ids = params.groupIds.split(',').map(id => parseInt(id));
+                const groups = videoGroups.filter(g => ids.includes(g.id));
+                document.getElementById('pageTitle').textContent = `${groups.length}组合并剪辑`;
+                availableViews = [...new Set(groups.flatMap(g => g.views))];
+                videoCount = groups.length;
+            }
+
+            totalDuration = videoCount * 60;
+
+            availableViews.forEach(view => {
+                selectedViews[view] = view;
+            });
+
+            if (params.template) {
+                currentTemplate = parseInt(params.template);
+            }
+
+            if (params.speed) {
+                currentSpeed = parseFloat(params.speed);
+                document.getElementById('speedSelect').value = currentSpeed;
+                document.getElementById('speedBadge').textContent = currentSpeed.toFixed(1) + 'x';
+            }
+
+            if (params.mosaicEnabled) {
+                mosaicEnabled = params.mosaicEnabled === 'true';
+                document.getElementById('mosaicSwitch').checked = mosaicEnabled;
+            }
+
+            renderTemplates();
+            selectTemplate(currentTemplate);
+            renderTimelineTicks();
+            renderClipMarks();
+            updatePreview();
+            initTimelineDrag();
+        }
+
+        function renderTimelineTicks() {
+            const container = document.getElementById('timelineTicks');
+            let html = '';
+            const interval = totalDuration <= 60 ? 10 : 30;
+            for (let t = 0; t <= totalDuration; t += interval) {
+                html += `<span>${formatTime(t)}</span>`;
+            }
+            container.innerHTML = html;
+        }
+
+        function renderTemplates() {
+            const scroll = document.getElementById('templateScroll');
+            scroll.innerHTML = templates.map(template => {
+                const hasRequiredViews = template.requiredViews.every(view => availableViews.includes(view));
+                const isDisabled = !hasRequiredViews;
+                const missingViews = template.requiredViews.filter(view => !availableViews.includes(view));
+                
+                return `
+                    <div class="template-btn ${template.id === currentTemplate ? 'active' : ''} ${isDisabled ? 'disabled' : ''}"
+                         onclick="${isDisabled ? '' : `selectTemplate(${template.id})`}"
+                         title="${isDisabled ? `缺少${missingViews.join('、')}视角，无法使用该模板` : ''}">
+                        <div class="template-icon">${template.icon}</div>
+                        <div class="template-name">${template.name}</div>
+                        <div class="template-resolution">${template.resolution}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function selectTemplate(templateId) {
+            currentTemplate = templateId;
+            hasUnsavedChanges = true;
+            renderTemplates();
+            
+            const template = templates.find(t => t.id === templateId);
+            document.getElementById('previewContainer').style.paddingTop = template.paddingTop;
+            
+            document.getElementById('mosaicRow').style.display = template.hasMosaic ? 'flex' : 'none';
+            document.getElementById('muteBadge').style.display = template.hasAudio ? 'none' : 'block';
+            
+            updatePreview();
+        }
+
+        function updatePreview() {
+            const content = document.getElementById('previewContent');
+            const template = templates.find(t => t.id === currentTemplate);
+            
+            let html = '';
+            
+            switch (template.id) {
+                case 0:
+                    html = `
+                        <div class="preview-view">
+                            <span class="view-label">${selectedViews['前'] || '前'}</span>
+                            ${mosaicEnabled ? '<div class="mosaic-box"></div>' : ''}
+                        </div>
+                    `;
+                    break;
+                case 1:
+                    html = `
+                        <div class="preview-row">
+                            <div class="preview-view">
+                                <span class="view-label">${selectedViews['前'] || '前'}</span>
+                                ${mosaicEnabled ? '<div class="mosaic-box"></div>' : ''}
+                            </div>
+                        </div>
+                        <div class="preview-row">
+                            <div class="preview-view">
+                                <span class="view-label">${selectedViews['后'] || '后'}</span>
+                            </div>
+                        </div>
+                    `;
+                    break;
+                case 2:
+                    html = `
+                        <div class="preview-row" style="flex: 1.5;">
+                            <div class="preview-view">
+                                <span class="view-label">${selectedViews['前'] || '前'}</span>
+                                ${mosaicEnabled ? '<div class="mosaic-box"></div>' : ''}
+                            </div>
+                        </div>
+                        <div class="preview-row" style="flex: 1;">
+                            <div class="preview-view">
+                                <span class="view-label">${selectedViews['左后'] || '左后'}</span>
+                            </div>
+                            <div class="preview-view">
+                                <span class="view-label">${selectedViews['右后'] || '右后'}</span>
+                            </div>
+                        </div>
+                    `;
+                    break;
+                case 3:
+                    html = `
+                        <div class="preview-row">
+                            <div class="preview-view">
+                                <span class="view-label">${selectedViews['左后'] || '左后'}</span>
+                            </div>
+                            <div class="preview-view">
+                                <span class="view-label">${selectedViews['右后'] || '右后'}</span>
+                            </div>
+                        </div>
+                    `;
+                    break;
+                case 4:
+                    html = `
+                        <div class="preview-row">
+                            <div class="preview-view">
+                                <span class="view-label">${selectedViews['左前'] || '左前'}</span>
+                            </div>
+                            <div class="preview-view">
+                                <span class="view-label">${selectedViews['前'] || '前'}</span>
+                                ${mosaicEnabled ? '<div class="mosaic-box"></div>' : ''}
+                            </div>
+                            <div class="preview-view">
+                                <span class="view-label">${selectedViews['右前'] || '右前'}</span>
+                            </div>
+                        </div>
+                    `;
+                    break;
+            }
+            
+            content.innerHTML = html;
+        }
+
+
+
+        /* ========== 播放控制 - 开始 ========== */
+        function togglePlay() {
+            isPlaying = !isPlaying;
+            document.getElementById('playBtn').textContent = isPlaying ? '⏸' : '▶';
+            document.getElementById('statusBadge').textContent = isPlaying ? '播放中...' : '已暂停';
+            
+            if (isPlaying) {
+                startPlayback();
+            } else {
+                stopPlayback();
+            }
+        }
+
+        function startPlayback() {
+            if (playInterval) clearInterval(playInterval);
+            playInterval = setInterval(() => {
+                currentTime += 0.1 * currentSpeed;
+                if (currentTime >= totalDuration) {
+                    currentTime = 0;
+                }
+                updatePlayhead();
+            }, 100);
+        }
+
+        function stopPlayback() {
+            if (playInterval) {
+                clearInterval(playInterval);
+                playInterval = null;
+            }
+        }
+
+        function updatePlayhead() {
+            const percent = (currentTime / totalDuration) * 100;
+            document.getElementById('playhead').style.left = `${percent}%`;
+            document.getElementById('playheadTime').textContent = formatTime(currentTime);
+        }
+
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        /* ========== 时间轴点击跳转 - 开始 ========== */
+        function seekToPosition(event) {
+            const timeline = document.getElementById('timeline');
+            const rect = timeline.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+            currentTime = (percent / 100) * totalDuration;
+            updatePlayhead();
+            hasUnsavedChanges = true;
+        }
+
+        /* ========== 时间轴拖动功能 - 开始 ========== */
+        function initTimelineDrag() {
+            const timeline = document.getElementById('timeline');
+            
+            timeline.addEventListener('mousedown', (e) => {
+                if (e.target.classList.contains('clip-mark')) {
+                    return;
+                }
+                if (e.target.closest('.playhead')) {
+                    isDraggingPlayhead = true;
+                    e.preventDefault();
+                }
+            });
+            
+            document.addEventListener('mousemove', (e) => {
+                if (isDraggingPlayhead) {
+                    const timeline = document.getElementById('timeline');
+                    const rect = timeline.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+                    currentTime = (percent / 100) * totalDuration;
+                    updatePlayhead();
+                }
+            });
+            
+            document.addEventListener('mouseup', () => {
+                isDraggingPlayhead = false;
+            });
+        }
+        /* ========== 时间轴拖动功能 - 结束 ========== */
+
+        function changeSpeed() {
+            currentSpeed = parseFloat(document.getElementById('speedSelect').value);
+            hasUnsavedChanges = true;
+            document.getElementById('speedBadge').textContent = currentSpeed.toFixed(1) + 'x';
+        }
+
+        function toggleMosaic() {
+            mosaicEnabled = document.getElementById('mosaicSwitch').checked;
+            hasUnsavedChanges = true;
+            updatePreview();
+        }
+
+        /* ========== 剪辑点渲染 - 开始 ========== */
+        function renderClipMarks() {
+            const container = document.getElementById('clipSegments');
+            let html = '';
+            
+            if (clipMarks.length >= 2) {
+                for (let i = 0; i < clipMarks.length - 1; i += 2) {
+                    if (i + 1 < clipMarks.length) {
+                        const start = clipMarks[i];
+                        const end = clipMarks[i + 1];
+                        const left = (start / totalDuration) * 100;
+                        const width = ((end - start) / totalDuration) * 100;
+                        
+                        html += `
+                            <div class="clip-segment-area" 
+                                 style="left: ${left}%; width: ${width}%;">
+                            </div>
+                        `;
+                    }
+                }
+            }
+            
+            clipMarks.forEach((time, index) => {
+                const left = (time / totalDuration) * 100;
+                html += `
+                    <div class="clip-mark"
+                         style="left: ${left}%;">
+                    </div>
+                `;
+            });
+            
+            container.innerHTML = html;
+            updateSegmentInfo();
+        }
+
+        function updateSegmentInfo() {
+            document.getElementById('segmentInfo').textContent = 
+                `已添加 ${clipMarks.length} 个剪辑点 | 总时长 ${totalDuration} 秒`;
+        }
+        /* ========== 剪辑点渲染 - 结束 ========== */
+
+        function addClipMark() {
+            if (clipMarks.length >= 2) {
+                showToast('最多只能添加2个剪辑点');
+                return;
+            }
+            clipMarks.push(currentTime);
+            hasUnsavedChanges = true;
+            renderClipMarks();
+            showToast('已添加剪辑点');
+        }
+
+        function undoClipMark() {
+            if (clipMarks.length === 0) {
+                showToast('没有可撤回的剪辑点');
+                return;
+            }
+            clipMarks.pop();
+            hasUnsavedChanges = true;
+            renderClipMarks();
+            showToast('已撤回上次剪辑点');
+        }
+
+        function goBack() {
+            if (hasUnsavedChanges) {
+                document.getElementById('backModal').classList.add('active');
+            } else {
+                window.location.href = 'index.html';
+            }
+        }
+
+        function closeBackModal() {
+            document.getElementById('backModal').classList.remove('active');
+        }
+
+        function confirmBack() {
+            window.location.href = 'index.html';
+        }
+
+        function goExport() {
+            const params = getUrlParams();
+            const template = templates.find(t => t.id === currentTemplate);
+            const urlParams = new URLSearchParams();
+            if (params.type) urlParams.set('type', params.type);
+            if (params.groupId) urlParams.set('groupId', params.groupId);
+            if (params.groupIds) urlParams.set('groupIds', params.groupIds);
+            urlParams.set('template', currentTemplate);
+            urlParams.set('templateName', encodeURIComponent(template.name));
+            urlParams.set('resolution', encodeURIComponent(template.resolution));
+            urlParams.set('speed', currentSpeed);
+            urlParams.set('mosaicEnabled', mosaicEnabled);
+            urlParams.set('clipMarks', encodeURIComponent(JSON.stringify(clipMarks)));
+            urlParams.set('selectedViews', encodeURIComponent(JSON.stringify(selectedViews)));
+            window.location.href = `export.html?${urlParams.toString()}`;
+        }
+
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 2000);
+        }
+
+        initPage();
+
+        const templateScroll = document.getElementById('templateScroll');
+        templateScroll.addEventListener('wheel', function(event) {
+            if (event.deltaY !== 0) {
+                event.preventDefault();
+                templateScroll.scrollLeft += event.deltaY;
+            }
+        }, { passive: false });
+    </script>
+</body>
+</html>

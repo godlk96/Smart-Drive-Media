@@ -8,6 +8,13 @@ import {
   TimelineTrackModel,
   TripCardModel
 } from '../model/AppState'
+import {
+  DEFAULT_TEMPLATE_ID,
+  listTemplateDefinitions,
+  normalizeTemplateIdValue,
+  resolveTemplateDefinition,
+  toLegacyCamera
+} from '../model/Models'
 import { DvrMeta, TripSnapshot } from '../model/TripModels'
 import { parseDvrFileName, pickPreviewSource } from '../service/DvrScannerService'
 import { buildTimeline, mergeTimeline } from '../service/TimelineService'
@@ -21,15 +28,8 @@ const JS_BRIDGE_ENTRY: string = 'entry/src/main/js/harmonyBridge.mjs'
 const HUAWEI_SHARE_ALBUM_NAMES: Array<string> = ['华为分享', 'Huawei Share']
 const CLIP_DURATION_SEC: number = 60
 const EDITOR_SPEEDS: Array<string> = ['1.0X', '1.5X', '2.0X', '3.0X', '4.0X']
-const DEFAULT_TEMPLATE_ID: string = 'T2'
-const DVR_FILE_PATTERN: RegExp = /^DVR_LoopRecording_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_.+_camera\.(mp4|mov|ts)$/i
+const DVR_FILE_PATTERN: RegExp = /^(?:.+_)?DVR_LoopRecording_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_.+_camera\.(mp4|mov|ts)$/i
 const LOCAL_FILE_VIDEO_PATTERN: RegExp = /^(file:\/\/\/data\/storage\/.+|\/data\/storage\/.+)\.(mp4|mov|ts)(\?.*)?$/i
-const TEMPLATE_CARDS: Array<TemplateCardModel> = [
-  { id: 'T1', title: '防追尾双录', subtitle: '画中画' },
-  { id: 'T2', title: '避险防加塞', subtitle: '倒品字' },
-  { id: 'T3', title: '侧向防开门杀', subtitle: '左右分屏' },
-  { id: 'T4', title: '沉浸式旅拍', subtitle: '三段堆叠' }
-]
 
 function toTimeText(date: Date): string {
   const hh = date.getHours().toString().padStart(2, '0')
@@ -57,17 +57,17 @@ function canExtractPreviewFrame(uri: string): boolean {
 function resolvePreviewTrack(track: string, availableTracks: Array<string>): string {
   let preferred: Array<string>
   if (track === 'Front') {
-    preferred = ['Front', 'LeftFront', 'RightFront', 'Back', 'Left', 'Right']
+    preferred = ['Front', 'LeftFront', 'RightFront', 'Left', 'Right']
   } else if (track === 'Back') {
     preferred = ['Back', 'Front', 'Right', 'Left', 'LeftFront', 'RightFront']
   } else if (track === 'Left') {
-    preferred = ['Left', 'LeftFront', 'Front', 'Right', 'Back', 'RightFront']
+    preferred = ['Left', 'LeftFront', 'Front', 'Right', 'RightFront']
   } else if (track === 'Right') {
-    preferred = ['Right', 'RightFront', 'Front', 'Left', 'Back', 'LeftFront']
+    preferred = ['Right', 'RightFront', 'Front', 'Left', 'LeftFront']
   } else if (track === 'LeftFront') {
-    preferred = ['LeftFront', 'Front', 'Left', 'RightFront', 'Back', 'Right']
+    preferred = ['LeftFront', 'Front', 'Left', 'RightFront', 'Right']
   } else if (track === 'RightFront') {
-    preferred = ['RightFront', 'Front', 'Right', 'LeftFront', 'Back', 'Left']
+    preferred = ['RightFront', 'Front', 'Right', 'LeftFront', 'Left']
   } else {
     preferred = [track]
   }
@@ -75,6 +75,14 @@ function resolvePreviewTrack(track: string, availableTracks: Array<string>): str
     if (availableTracks.some((item: string) => item === candidate)) {
       return candidate
     }
+  }
+  if (track !== 'Back') {
+    for (const candidate of availableTracks) {
+      if (candidate !== 'Back') {
+        return candidate
+      }
+    }
+    return track
   }
   return availableTracks[0] ?? track
 }
@@ -247,30 +255,23 @@ export class CoreBridge {
   }
 
   private getTemplateSlotDefs(templateId: string): Array<PreviewSlotModel> {
-    if (templateId === 'T1') {
-      return [
-        { id: 'main', camera: 'Front', uri: '', x: 0, y: 0, width: 1, height: 1 },
-        { id: 'pip', camera: 'Back', uri: '', x: 0.68, y: 0.06, width: 0.28, height: 0.26 }
-      ]
-    }
-    if (templateId === 'T3') {
-      return [
-        { id: 'left', camera: 'Left', uri: '', x: 0, y: 0, width: 0.5, height: 1 },
-        { id: 'right', camera: 'Right', uri: '', x: 0.5, y: 0, width: 0.5, height: 1 }
-      ]
-    }
-    if (templateId === 'T4') {
-      return [
-        { id: 'top', camera: 'LeftFront', uri: '', x: 0, y: 0, width: 1, height: 0.3333 },
-        { id: 'middle', camera: 'Front', uri: '', x: 0, y: 0.3333, width: 1, height: 0.3334 },
-        { id: 'bottom', camera: 'RightFront', uri: '', x: 0, y: 0.6667, width: 1, height: 0.3333 }
-      ]
-    }
-    return [
-      { id: 'top', camera: 'Front', uri: '', x: 0, y: 0, width: 1, height: 0.5 },
-      { id: 'bottomLeft', camera: 'Right', uri: '', x: 0, y: 0.5, width: 0.5, height: 0.5 },
-      { id: 'bottomRight', camera: 'Back', uri: '', x: 0.5, y: 0.5, width: 0.5, height: 0.5 }
-    ]
+    const definition = resolveTemplateDefinition(templateId)
+    const slotCameraMap: Record<string, string> = {}
+    definition.slotBindings.forEach((binding) => {
+      slotCameraMap[binding.slotId] = toLegacyCamera(binding.camera)
+    })
+    return definition.previewSlots.map((slot) => {
+      const previewSlot: PreviewSlotModel = {
+        id: slot.slotId,
+        camera: slotCameraMap[slot.slotId] ?? 'Front',
+        uri: '',
+        x: slot.x,
+        y: slot.y,
+        width: slot.width,
+        height: slot.height
+      }
+      return previewSlot
+    })
   }
 
   private pickSlotUri(snapshot: TripSnapshot, camera: string, anchorTimestamp: number): string {
@@ -479,6 +480,10 @@ export class CoreBridge {
       }
     }
 
+    const templateCards: Array<TemplateCardModel> = listTemplateDefinitions().map((item) => {
+      const card: TemplateCardModel = { id: item.templateId, title: item.title, subtitle: item.subtitle }
+      return card
+    })
     return {
       title: '行程库',
       cards: [...this.cards],
@@ -557,6 +562,10 @@ export class CoreBridge {
       { name: 'timeline', heightRatio: 0.16 },
       { name: 'drawer', heightRatio: 0.20 }
     ]
+    const templateCards: Array<TemplateCardModel> = listTemplateDefinitions().map((item) => {
+      const card: TemplateCardModel = { id: item.templateId, title: item.title, subtitle: item.subtitle }
+      return card
+    })
     const previewSlots = activeSnapshot ? this.buildPreviewSlots(activeSnapshot, anchorTimestamp) : []
     return {
       tripId: this.tripId,
@@ -576,7 +585,7 @@ export class CoreBridge {
       selectionStartSec: this.selectionStartSec,
       selectionEndSec: this.selectionEndSec,
       boundaryMarkers: markers,
-      templateCards: [...TEMPLATE_CARDS],
+      templateCards: templateCards,
       previewSlots: previewSlots,
       activeTemplateId: this.activeTemplateId,
       drawerExpanded: this.drawerExpanded,
@@ -654,8 +663,7 @@ export class CoreBridge {
   }
 
   selectTemplate(templateId: string): EditorStateModel {
-    const exists = TEMPLATE_CARDS.some((item: TemplateCardModel) => item.id === templateId)
-    this.activeTemplateId = exists ? templateId : DEFAULT_TEMPLATE_ID
+    this.activeTemplateId = normalizeTemplateIdValue(templateId)
     debugLog('剪辑', `选择模板，模板ID=${this.activeTemplateId}`)
     const snapshot = this.trips.get(this.tripId)
     return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)

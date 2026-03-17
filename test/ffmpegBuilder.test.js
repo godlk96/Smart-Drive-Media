@@ -83,7 +83,7 @@ test('buildTranscodeCommand creates scenario template filter_complex args', () =
   assert.equal(command.type, 'transcode')
   assert.equal(command.args.includes('-filter_complex'), true)
   assert.equal(command.args.includes('[v_out]'), true)
-  assert.equal(command.args.some(item => String(item).includes('color=c=black:s=1080x1920')), true)
+  assert.equal(command.args.some(item => String(item).includes('color=c=black:s=1920x1080')), true)
   assert.equal(command.args.some(item => String(item).includes('drawbox=x=')), true)
   assert.equal(command.args.includes('-an'), true)
 })

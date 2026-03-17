@@ -1,5 +1,20 @@
-export const runExportPipeline: (payload: string) => string
-export const runExportPipelineAsync: (payload: string) => Promise<string>
+export interface NativeExportPipelineRequest {
+  frontUris: Array<string>
+  backUris: Array<string>
+  sideUris: Array<string>
+  templateId: string
+  expectedDurationSec: number
+  outputPath: string
+}
+
+export interface NativeExportPipelineResult {
+  code: number
+  message: string
+  outputPath: string
+}
+
+export const runExportPipeline: (payload: NativeExportPipelineRequest) => NativeExportPipelineResult
+export const runExportPipelineAsync: (payload: NativeExportPipelineRequest) => Promise<NativeExportPipelineResult>
 
 export interface NativeDvrMeta {
   fileName: string
@@ -19,6 +34,7 @@ export interface NativeTimelineTrack {
 export interface NativeComposeRequest {
   frontUris: Array<string>
   backUris: Array<string>
+  frontIndexes: Array<number>
 }
 
 export const getCoreApiVersion: () => string

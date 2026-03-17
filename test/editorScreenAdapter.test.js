@@ -60,12 +60,15 @@ test('EditorScreenAdapter supports task3 timeline range and task4 template previ
 
   adapter.updateSelectionRange(10000, 70000)
   assert.deepEqual(adapter.getState().selectionRangeMs, { start: 10000, end: 70000 })
+  assert.deepEqual(adapter.getState().templateDrawer.cards.map(item => item.id), ['T1', 'T2', 'T3', 'T4', 'T5'])
+  assert.equal(adapter.getState().previewTemplate.aspectRatio, '32:27')
 
   adapter.selectTemplate('T4')
   assert.equal(adapter.getState().templateDrawer.activeTemplateId, 'T4')
-  assert.equal(adapter.getState().previewTemplate.aspectRatio, '9:16')
+  assert.equal(adapter.getState().previewTemplate.aspectRatio, '16:9')
   assert.equal(adapter.getState().previewTemplate.slots.length, 3)
   assert.equal(adapter.getState().previewTemplate.slots[0].track, CameraPosition.LEFT_FRONT)
+  assert.equal(adapter.getState().previewTemplate.slots[2].track, CameraPosition.RIGHT_FRONT)
   assert.equal(adapter.getState().previewTemplate.guides.length, 2)
 
   adapter.setDrawerExpanded(false)
@@ -77,6 +80,13 @@ test('EditorScreenAdapter supports task3 timeline range and task4 template previ
 
   adapter.toggleMuted()
   assert.equal(adapter.getState().controlDeck.muted, true)
+
+  adapter.selectTemplate('T5')
+  assert.equal(adapter.getState().templateDrawer.activeTemplateId, 'T5')
+  assert.equal(adapter.getState().previewTemplate.slots.length, 1)
+  assert.equal(adapter.getState().previewTemplate.slots[0].id, 'top')
+  assert.equal(adapter.getState().previewTemplate.slots[0].track, CameraPosition.FRONT)
+  assert.equal(adapter.getState().previewTemplate.guides.length, 0)
 })
 
 test('EditorScreenAdapter supports task6 privacy switches cinematic crop and forced mute', () => {

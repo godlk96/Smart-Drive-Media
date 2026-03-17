@@ -1,7 +1,9 @@
 #include "export_engine.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <dlfcn.h>
 #include <future>
@@ -25,6 +27,7 @@ struct ProbeResult {
     int width = 0;
     int height = 0;
     int pixFmt = AV_PIX_FMT_YUV420P;
+    int codecId = AV_CODEC_ID_NONE;
     AVRational frameRate = {30, 1};
     int64_t bitRate = 0;
 };
@@ -42,7 +45,14 @@ struct OhosPipeBridge {
     std::string error;
 };
 
+struct PacketTimestampState {
+    int64_t nextPts = 0;
+    int64_t nextDts = 0;
+    bool initialized = false;
+};
+
 std::string normalizeUri(const std::string &uri);
+void logPipeline(const std::string &stage, const std::string &message);
 
 int resolveThreadCount()
 {
@@ -62,12 +72,87 @@ int evenValue(int value)
     return normalized > 0 ? normalized : 1280;
 }
 
-std::string normalizeTemplateId(const std::string &templateId)
+struct NativeTemplateContract {
+    const char *templateId = "T2";
+    int targetWidth = 1920;
+    int targetHeight = 1620;
+    bool needSideTrack = true;
+    bool disableFrontAudio = false;
+};
+
+const std::array<NativeTemplateContract, 5> kNativeTemplateContracts = {{
+    {"T1", 1920, 2160, false, false},
+    {"T2", 1920, 1620, true, false},
+    {"T3", 3840, 1080, false, true},
+    {"T4", 3840, 1080, true, false},
+    {"T5", 1920, 1080, false, false},
+}};
+
+const NativeTemplateContract *findTemplateContract(const std::string &templateId)
 {
-    if (templateId == "T1" || templateId == "T2" || templateId == "T3" || templateId == "T4") {
-        return templateId;
+    for (const auto &contract : kNativeTemplateContracts) {
+        if (templateId == contract.templateId) {
+            return &contract;
+        }
     }
-    return "T2";
+    return nullptr;
+}
+
+const NativeTemplateContract &resolveTemplateContract(const std::string &templateId)
+{
+    const NativeTemplateContract *matched = findTemplateContract(templateId);
+    if (matched != nullptr) {
+        return *matched;
+    }
+    return kNativeTemplateContracts[1];
+}
+
+std::pair<int, int> resolveTemplateTargetResolution(const NativeTemplateContract &contract)
+{
+    return {contract.targetWidth, contract.targetHeight};
+}
+
+void applyPacketTimestampFallback(int64_t &pts,
+                                  int64_t &dts,
+                                  int64_t duration,
+                                  PacketTimestampState &state)
+{
+    const int64_t step = duration > 0 ? duration : 1;
+    if (!state.initialized) {
+        if (pts == AV_NOPTS_VALUE && dts != AV_NOPTS_VALUE) {
+            pts = dts;
+        }
+        if (dts == AV_NOPTS_VALUE && pts != AV_NOPTS_VALUE) {
+            dts = pts;
+        }
+        if (pts == AV_NOPTS_VALUE) {
+            pts = 0;
+        }
+        if (dts == AV_NOPTS_VALUE || dts > pts) {
+            dts = pts;
+        }
+        state.nextPts = pts + step;
+        state.nextDts = dts + step;
+        state.initialized = true;
+        return;
+    }
+    if (pts == AV_NOPTS_VALUE) {
+        pts = dts != AV_NOPTS_VALUE ? dts : state.nextPts;
+    }
+    if (dts == AV_NOPTS_VALUE) {
+        dts = pts;
+    }
+    if (pts < state.nextPts) {
+        pts = state.nextPts;
+    }
+    if (dts < state.nextDts) {
+        dts = state.nextDts;
+    }
+    if (dts > pts) {
+        dts = pts;
+    }
+    state.nextPts = pts + step;
+    state.nextDts = dts + step;
 }
 
 std::string escapeFilterPath(const std::string &path)
@@ -90,43 +175,48 @@ std::string buildTemplateFilterDesc(const std::string &templateId,
                                     int width,
                                     int height)
 {
-    const int pipWidth = evenValue(width / 3);
-    const int pipHeight = evenValue(height / 3);
-    const int halfWidth = evenValue(width / 2);
-    const int halfHeight = evenValue(height / 2);
-    const int thirdHeight = evenValue(height / 3);
+    (void)width;
+    (void)height;
     const std::string front = escapeFilterPath(frontPath);
     const std::string back = escapeFilterPath(backPath);
     const std::string side = escapeFilterPath(sidePath);
     if (templateId == "T1") {
         std::ostringstream oss;
-        oss << "movie='" << front << "',scale=" << width << ":" << height << "[main];"
-            << "movie='" << back << "',scale=" << pipWidth << ":" << pipHeight << "[pip];"
-            << "[main][pip]overlay=W-w-32:32,format=pix_fmts=yuv420p[outv]";
+        oss << "movie='" << front << "',scale=1920:1080[top];"
+            << "movie='" << back << "',scale=1920:1080[bottom];"
+            << "[top][bottom]vstack=inputs=2,format=pix_fmts=yuv420p[outv]";
         return oss.str();
     }
     if (templateId == "T3") {
         std::ostringstream oss;
-        oss << "movie='" << front << "',scale=" << halfWidth << ":" << height << "[left];"
-            << "movie='" << back << "',scale=" << halfWidth << ":" << height << "[right];"
+        oss << "movie='" << front << "',scale=1920:1080[left];"
+            << "movie='" << back << "',scale=1920:1080[right];"
             << "[left][right]hstack=inputs=2,format=pix_fmts=yuv420p[outv]";
         return oss.str();
     }
     if (templateId == "T4") {
         std::ostringstream oss;
-        oss << "movie='" << side << "',scale=" << width << ":" << thirdHeight << "[top];"
-            << "movie='" << front << "',scale=" << width << ":" << thirdHeight << "[middle];"
-            << "movie='" << back << "',scale=" << width << ":" << thirdHeight << "[bottom];"
-            << "[top][middle][bottom]vstack=inputs=3,format=pix_fmts=yuv420p[outv]";
+        oss << "movie='" << side << "',crop=960:1080:960:0[left];"
+            << "movie='" << front << "',scale=1920:1080[middle];"
+            << "movie='" << back << "',crop=960:1080:0:0[right];"
+            << "[left][middle][right]hstack=inputs=3,format=pix_fmts=yuv420p[outv]";
         return oss.str();
     }
-    std::ostringstream oss;
-    oss << "movie='" << front << "',scale=" << width << ":" << halfHeight << "[top];"
-        << "movie='" << side << "',scale=" << halfWidth << ":" << halfHeight << "[bottom_left];"
-        << "movie='" << back << "',scale=" << halfWidth << ":" << halfHeight << "[bottom_right];"
-        << "[bottom_left][bottom_right]hstack=inputs=2[bottom];"
-        << "[top][bottom]vstack=inputs=2,format=pix_fmts=yuv420p[outv]";
-    return oss.str();
+    if (templateId == "T2") {
+        std::ostringstream oss;
+        oss << "movie='" << front << "',scale=1920:1080[top];"
+            << "movie='" << side << "',scale=960:540[bottom_left];"
+            << "movie='" << back << "',scale=960:540[bottom_right];"
+            << "[bottom_left][bottom_right]hstack=inputs=2[bottom];"
+            << "[top][bottom]vstack=inputs=2,format=pix_fmts=yuv420p[outv]";
+        return oss.str();
+    }
+    if (templateId == "T5") {
+        std::ostringstream oss;
+        oss << "movie='" << front << "',scale=1920:1080,format=pix_fmts=yuv420p[outv]";
+        return oss.str();
+    }
+    return "";
 }
 
 bool composeTemplateToMp4(const std::string &templateId,
@@ -140,13 +230,31 @@ bool composeTemplateToMp4(const std::string &templateId,
                           const std::string &outputPath,
                           std::string &error)
 {
-    const AVCodec *encoder = avcodec_find_encoder(AV_CODEC_ID_MPEG4);
+    AVCodecID selectedCodecId = AV_CODEC_ID_HEVC;
+    const AVCodec *encoder = avcodec_find_encoder(selectedCodecId);
     if (encoder == nullptr) {
-        error = "encoder_mpeg4_not_found";
+        selectedCodecId = AV_CODEC_ID_H264;
+        encoder = avcodec_find_encoder(selectedCodecId);
+    }
+    if (encoder == nullptr) {
+        selectedCodecId = AV_CODEC_ID_MPEG4;
+        encoder = avcodec_find_encoder(selectedCodecId);
+    }
+    if (encoder == nullptr) {
+        error = "encoder_not_found";
         return false;
     }
-    const int width = evenValue(probe.width > 0 ? probe.width : 1280);
-    const int height = evenValue(probe.height > 0 ? probe.height : 720);
+    const char *encoderName = encoder->name != nullptr ? encoder->name : "unknown";
+    std::ostringstream encoderLog;
+    encoderLog << "selected encoder=" << encoderName << " codec_id=" << static_cast<int>(selectedCodecId);
+    if (selectedCodecId != AV_CODEC_ID_HEVC) {
+        encoderLog << " fallback_from_hevc=1";
+    }
+    logPipeline("mux", encoderLog.str());
+    const NativeTemplateContract &templateContract = resolveTemplateContract(templateId);
+    const std::pair<int, int> targetResolution = resolveTemplateTargetResolution(templateContract);
+    const int width = evenValue(targetResolution.first);
+    const int height = evenValue(targetResolution.second);
     AVRational frameRate = probe.frameRate.num > 0 && probe.frameRate.den > 0 ? probe.frameRate : AVRational{30, 1};
     AVFormatContext *outputFmt = nullptr;
     if (avformat_alloc_output_context2(&outputFmt, nullptr, "mp4", outputPath.c_str()) < 0 || outputFmt == nullptr) {
@@ -159,7 +267,7 @@ bool composeTemplateToMp4(const std::string &templateId,
         error = "compose_alloc_encoder_ctx_failed";
         return false;
     }
-    encoderCtx->codec_id = encoder->id;
+    encoderCtx->codec_id = selectedCodecId;
     encoderCtx->codec_type = AVMEDIA_TYPE_VIDEO;
     encoderCtx->pix_fmt = AV_PIX_FMT_YUV420P;
     encoderCtx->width = width;
@@ -179,12 +287,19 @@ bool composeTemplateToMp4(const std::string &templateId,
     if (outputFmt->oformat->flags & AVFMT_GLOBALHEADER) {
         encoderCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
     }
-    if (avcodec_open2(encoderCtx, encoder, nullptr) < 0) {
+    AVDictionary *encoderOptions = nullptr;
+    if (selectedCodecId == AV_CODEC_ID_HEVC || selectedCodecId == AV_CODEC_ID_H264) {
+        av_dict_set(&encoderOptions, "preset", "veryfast", 0);
+        av_dict_set(&encoderOptions, "crf", "24", 0);
+    }
+    if (avcodec_open2(encoderCtx, encoder, &encoderOptions) < 0) {
+        av_dict_free(&encoderOptions);
         avcodec_free_context(&encoderCtx);
         avformat_free_context(outputFmt);
         error = "compose_open_encoder_failed";
         return false;
     }
+    av_dict_free(&encoderOptions);
     AVStream *outVideoStream = avformat_new_stream(outputFmt, nullptr);
     if (outVideoStream == nullptr) {
         avcodec_free_context(&encoderCtx);
@@ -315,6 +430,20 @@ bool composeTemplateToMp4(const std::string &templateId,
     inputs->pad_idx = 0;
     inputs->next = nullptr;
     const std::string filterDesc = buildTemplateFilterDesc(templateId, frontPath, backPath, sidePath, width, height);
+    if (filterDesc.empty()) {
+        avfilter_inout_free(&inputs);
+        avfilter_graph_free(&graph);
+        if (audioFmt != nullptr) {
+            avformat_close_input(&audioFmt);
+        }
+        if (!(outputFmt->oformat->flags & AVFMT_NOFILE) && outputFmt->pb != nullptr) {
+            avio_closep(&outputFmt->pb);
+        }
+        avcodec_free_context(&encoderCtx);
+        avformat_free_context(outputFmt);
+        error = "compose_invalid_template_filter";
+        return false;
+    }
     if (avfilter_graph_parse_ptr(graph, filterDesc.c_str(), &inputs, nullptr, nullptr) < 0) {
         avfilter_inout_free(&inputs);
         avfilter_graph_free(&graph);
@@ -645,6 +774,8 @@ bool concatTrackToMp4(const std::vector<std::string> &inputs,
         int64_t maxAudioPts = audioPtsOffset;
         int64_t firstVideoPts = AV_NOPTS_VALUE;
         int64_t firstAudioPts = AV_NOPTS_VALUE;
+        PacketTimestampState videoTsState;
+        PacketTimestampState audioTsState;
         while (av_read_frame(inputFmt, &packet) >= 0) {
             if (packet.stream_index == videoIndex) {
                 AVStream *inStream = inputFmt->streams[videoIndex];
@@ -665,6 +796,7 @@ bool concatTrackToMp4(const std::vector<std::string> &inputs,
                 packet.pts = mappedPts == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : mappedPts + videoPtsOffset;
                 packet.dts = mappedDts == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : mappedDts + videoPtsOffset;
                 packet.duration = av_rescale_q(packet.duration, inStream->time_base, outVideo->time_base);
+                applyPacketTimestampFallback(packet.pts, packet.dts, packet.duration, videoTsState);
                 if (packet.pts != AV_NOPTS_VALUE) {
                     int64_t endPts = packet.pts + (packet.duration > 0 ? packet.duration : 1);
                     if (endPts > maxVideoPts) {
@@ -700,6 +832,7 @@ bool concatTrackToMp4(const std::vector<std::string> &inputs,
                 packet.pts = mappedPts == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : mappedPts + audioPtsOffset;
                 packet.dts = mappedDts == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : mappedDts + audioPtsOffset;
                 packet.duration = av_rescale_q(packet.duration, inStream->time_base, outAudio->time_base);
+                applyPacketTimestampFallback(packet.pts, packet.dts, packet.duration, audioTsState);
                 if (packet.pts != AV_NOPTS_VALUE) {
                     int64_t endPts = packet.pts + (packet.duration > 0 ? packet.duration : 1);
                     if (endPts > maxAudioPts) {
@@ -819,6 +952,8 @@ bool muxVideoWithFrontAudio(const std::string &videoPath,
     }
     AVPacket packet;
     av_init_packet(&packet);
+    PacketTimestampState videoTsState;
+    PacketTimestampState audioTsState;
     while (av_read_frame(videoFmt, &packet) >= 0) {
         if (packet.stream_index != videoIndex) {
             av_packet_unref(&packet);
@@ -827,6 +962,8 @@ bool muxVideoWithFrontAudio(const std::string &videoPath,
         AVStream *inStream = videoFmt->streams[videoIndex];
         packet.stream_index = videoOut->index;
         av_packet_rescale_ts(&packet, inStream->time_base, videoOut->time_base);
+        packet.duration = av_rescale_q(packet.duration, inStream->time_base, videoOut->time_base);
+        applyPacketTimestampFallback(packet.pts, packet.dts, packet.duration, videoTsState);
         if (av_interleaved_write_frame(outputFmt, &packet) < 0) {
             av_packet_unref(&packet);
             avformat_close_input(&videoFmt);
@@ -848,6 +985,8 @@ bool muxVideoWithFrontAudio(const std::string &videoPath,
         AVStream *inStream = frontFmt->streams[audioIndex];
         packet.stream_index = audioOut->index;
         av_packet_rescale_ts(&packet, inStream->time_base, audioOut->time_base);
+        packet.duration = av_rescale_q(packet.duration, inStream->time_base, audioOut->time_base);
+        applyPacketTimestampFallback(packet.pts, packet.dts, packet.duration, audioTsState);
         if (av_interleaved_write_frame(outputFmt, &packet) < 0) {
             av_packet_unref(&packet);
             avformat_close_input(&videoFmt);
@@ -907,6 +1046,7 @@ bool probeVideoStream(const std::string &uri, ProbeResult &result, std::string &
     AVCodecParameters *codecPar = stream->codecpar;
     result.width = codecPar->width;
     result.height = codecPar->height;
+    result.codecId = codecPar->codec_id;
     if (codecPar->format >= 0) {
         result.pixFmt = codecPar->format;
     }
@@ -916,6 +1056,85 @@ bool probeVideoStream(const std::string &uri, ProbeResult &result, std::string &
     AVRational frameRate = av_guess_frame_rate(fmt, stream, nullptr);
     if (frameRate.num > 0 && frameRate.den > 0) {
         result.frameRate = frameRate;
+    }
+    avformat_close_input(&fmt);
+    return true;
+}
+
+bool isVideoSpecCompatible(const ProbeResult &probe)
+{
+    if (probe.width != 1920 || probe.height != 1080) {
+        return false;
+    }
+    if (probe.codecId != AV_CODEC_ID_HEVC) {
+        return false;
+    }
+    return probe.frameRate.num > 0 && probe.frameRate.den > 0;
+}
+
+bool isNominalThirtyFps(const ProbeResult &probe)
+{
+    if (probe.frameRate.num <= 0 || probe.frameRate.den <= 0) {
+        return false;
+    }
+    const int64_t delta = std::llabs(static_cast<int64_t>(probe.frameRate.num) - static_cast<int64_t>(probe.frameRate.den) * 30LL);
+    return delta <= 1;
+}
+
+bool validateTrackSpecs(const std::vector<std::string> &uris,
+                        const std::string &trackName,
+                        std::string &error)
+{
+    for (size_t index = 0; index < uris.size(); ++index) {
+        ProbeResult trackProbe;
+        const std::string normalizedUri = normalizeUri(uris[index]);
+        std::string probeError;
+        if (!probeVideoStream(normalizedUri, trackProbe, probeError)) {
+            error = trackName + "_probe_failed_" + probeError;
+            return false;
+        }
+        if (!isVideoSpecCompatible(trackProbe)) {
+            std::ostringstream oss;
+            oss << trackName << "_spec_mismatch_index_" << index << "_"
+                << trackProbe.width << "x" << trackProbe.height << "_"
+                << trackProbe.frameRate.num << "over" << trackProbe.frameRate.den << "_codec_" << trackProbe.codecId;
+            error = oss.str();
+            return false;
+        }
+        if (!isNominalThirtyFps(trackProbe)) {
+            std::ostringstream fpsInfo;
+            fpsInfo << "track=" << trackName << " index=" << index
+                    << " non_30fps_input=" << trackProbe.frameRate.num << "/" << trackProbe.frameRate.den
+                    << " normalize_to_30fps_in_filter=1";
+            logPipeline("validate", fpsInfo.str());
+        }
+    }
+    return true;
+}
+
+bool detectFrontAacAudio(const std::string &uri,
+                         bool &hasAac,
+                         std::string &error)
+{
+    AVFormatContext *fmt = nullptr;
+    hasAac = false;
+    if (avformat_open_input(&fmt, uri.c_str(), nullptr, nullptr) < 0) {
+        error = "front_audio_open_failed";
+        return false;
+    }
+    if (avformat_find_stream_info(fmt, nullptr) < 0) {
+        avformat_close_input(&fmt);
+        error = "front_audio_stream_info_failed";
+        return false;
+    }
+    const int audioIndex = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+    if (audioIndex < 0) {
+        avformat_close_input(&fmt);
+        return true;
+    }
+    AVStream *audioStream = fmt->streams[audioIndex];
+    if (audioStream != nullptr && audioStream->codecpar != nullptr) {
+        hasAac = audioStream->codecpar->codec_id == AV_CODEC_ID_AAC;
     }
     avformat_close_input(&fmt);
     return true;
@@ -1163,7 +1382,44 @@ void releaseOhosPipeBridge(OhosPipeBridge &bridge)
     bridge.ready = false;
 }
 
+bool tryWarmupOhosBridge(const std::string &frontUri, const ProbeResult &probe, std::string &error)
+{
+    OhosPipeBridge bridge = initOhosPipeBridge();
+    if (!bridge.ready) {
+        error = bridge.error;
+        releaseOhosPipeBridge(bridge);
+        return false;
+    }
+    FilterPipeline pipeline;
+    std::string bridgeError;
+    if (!buildFilterPipeline(probe, pipeline, bridgeError)) {
+        releaseFilterPipeline(pipeline);
+        releaseOhosPipeBridge(bridge);
+        error = "bridge_filter_" + bridgeError;
+        return false;
+    }
+    if (!warmupDemuxDecodeFilter(frontUri, pipeline, bridgeError)) {
+        releaseFilterPipeline(pipeline);
+        releaseOhosPipeBridge(bridge);
+        error = "bridge_warmup_" + bridgeError;
+        return false;
+    }
+    releaseFilterPipeline(pipeline);
+    releaseOhosPipeBridge(bridge);
+    return true;
+}
+
 } // namespace
+
+bool isSupportedTemplateId(const std::string &templateId)
+{
+    return findTemplateContract(templateId) != nullptr;
+}
+
+std::string normalizeTemplateId(const std::string &templateId)
+{
+    return resolveTemplateContract(templateId).templateId;
+}
 
 std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
                                     const std::vector<std::string> &backUris,
@@ -1195,13 +1451,34 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
               << " pixFmt=" << probe.pixFmt << " fps=" << probe.frameRate.num << "/" << probe.frameRate.den;
     logPipeline("probe", probeInfo.str());
 
-    const std::string backPrimary = normalizeUri(backUris[0]);
-
-    const std::string normalizedTemplate = normalizeTemplateId(templateId);
+    const NativeTemplateContract &templateContract = resolveTemplateContract(templateId);
+    const std::string normalizedTemplate = templateContract.templateId;
+    const std::pair<int, int> targetResolution = resolveTemplateTargetResolution(templateContract);
+    logPipeline("template", "apply " + normalizedTemplate + " target=" + std::to_string(targetResolution.first) +
+        "x" + std::to_string(targetResolution.second));
+    const bool needSideTrack = templateContract.needSideTrack;
+    const std::vector<std::string> sideSource = !sideUris.empty() ? sideUris : backUris;
+    if (!validateTrackSpecs(frontUris, "front", error)) {
+        logPipeline("validate", "front track spec invalid: " + error);
+        return "__ERROR__:pipeline_spec_" + error;
+    }
+    if (!validateTrackSpecs(backUris, "back", error)) {
+        logPipeline("validate", "back track spec invalid: " + error);
+        return "__ERROR__:pipeline_spec_" + error;
+    }
+    if (needSideTrack && !validateTrackSpecs(sideSource, "side", error)) {
+        logPipeline("validate", "side track spec invalid: " + error);
+        return "__ERROR__:pipeline_spec_" + error;
+    }
+    std::string bridgeWarmupError;
+    if (!tryWarmupOhosBridge(frontPrimary, probe, bridgeWarmupError)) {
+        logPipeline("bridge", "oh_bridge_unavailable_fallback_ffmpeg_only reason=" + bridgeWarmupError);
+    } else {
+        logPipeline("bridge", "oh_bridge_ready");
+    }
     const std::string frontConcatPath = outputPath + ".front.concat.mp4";
     const std::string backConcatPath = outputPath + ".back.concat.mp4";
     const std::string sideConcatPath = outputPath + ".side.concat.mp4";
-    const bool needSideTrack = normalizedTemplate == "T2" || normalizedTemplate == "T4";
     const int threadCount = resolveThreadCount();
     logPipeline("perf", "ffmpeg thread_count=" + std::to_string(threadCount));
     auto concatFrontFuture = std::async(std::launch::async, [&]() {
@@ -1216,7 +1493,6 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
     });
     std::future<std::pair<bool, std::string>> concatSideFuture;
     if (needSideTrack) {
-        const std::vector<std::string> sideSource = !sideUris.empty() ? sideUris : backUris;
         concatSideFuture = std::async(std::launch::async, [&, sideSource]() {
             std::string localError;
             bool ok = concatTrackToMp4(sideSource, false, sideConcatPath, localError);
@@ -1248,9 +1524,22 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
         }
         sideTrackPath = sideConcatPath;
     }
-    const bool templateContainsFront = normalizedTemplate != "T3";
+    bool includeFrontAudio = false;
+    if (!templateContract.disableFrontAudio) {
+        std::string audioError;
+        bool hasFrontAacAudio = false;
+        if (!detectFrontAacAudio(frontConcatPath, hasFrontAacAudio, audioError)) {
+            logPipeline("audio", "detect front audio failed: " + audioError);
+        } else if (hasFrontAacAudio) {
+            includeFrontAudio = true;
+        } else {
+            logPipeline("audio", "front audio missing aac stream, fallback to mute");
+        }
+    } else {
+        logPipeline("audio", "template " + normalizedTemplate + " disables front audio");
+    }
     logPipeline("mux", "emit mp4 by ffmpeg template compose, template=" + normalizedTemplate + ", full-track concat");
-    if (!composeTemplateToMp4(normalizedTemplate, frontConcatPath, backConcatPath, sideTrackPath, templateContainsFront, frontConcatPath, expectedDurationSec, probe, outputPath, error)) {
+    if (!composeTemplateToMp4(normalizedTemplate, frontConcatPath, backConcatPath, sideTrackPath, includeFrontAudio, frontConcatPath, expectedDurationSec, probe, outputPath, error)) {
         logPipeline("mux", "emit failed: " + error);
         std::remove(frontConcatPath.c_str());
         std::remove(backConcatPath.c_str());

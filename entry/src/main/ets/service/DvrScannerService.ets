@@ -1,6 +1,7 @@
 import { DvrMeta, PreviewSource } from '../model/TripModels'
 import smartdriveExporter from 'libsmartdrive_exporter.so'
 import { tryEnsureCoreApiContract } from './CoreApiContract'
+import { debugLog } from '../utils/Logger'
 
 class NativeDvrMetaResult {
   fileName: string = ''
@@ -22,7 +23,13 @@ function normalizeCamera(cameraRaw: string): string {
   if (normalized === 'left') {
     return 'Left'
   }
+  if (normalized === 'left_rear') {
+    return 'Left'
+  }
   if (normalized === 'right') {
+    return 'Right'
+  }
+  if (normalized === 'right_rear') {
     return 'Right'
   }
   if (normalized === 'left_front') {
@@ -35,7 +42,7 @@ function normalizeCamera(cameraRaw: string): string {
 }
 
 function parseDvrFileNameByJs(name: string, uri: string): DvrMeta | null {
-  const pattern: RegExp = /^DVR_LoopRecording_(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})_([a-z_]+)_camera\.(mp4|mov|ts)$/i
+  const pattern: RegExp = /^(?:.+_)?DVR_LoopRecording_(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})_([a-z_]+)_camera\.(mp4|mov|ts)$/i
   const match = name.match(pattern)
   if (!match) {
     return null
@@ -66,15 +73,23 @@ export function parseDvrFileName(name: string, uri: string): DvrMeta | null {
     return null
   }
   if (!tryEnsureCoreApiContract()) {
+    debugLog('扫描诊断', `解析降级：CoreApiContract不可用，使用JS解析，文件=${name}`)
     return parseDvrFileNameByJs(name, uri)
   }
   const parse = smartdriveExporter.parseDvrFileName as ((name: string, uri: string) => NativeDvrMetaResult | null) | undefined
   if (typeof parse !== 'function') {
+    debugLog('扫描诊断', `解析降级：Native parseDvrFileName缺失，使用JS解析，文件=${name}`)
     return parseDvrFileNameByJs(name, uri)
   }
   const raw = parse(name, uri)
   if (!raw) {
-    return null
+    const fallbackMeta = parseDvrFileNameByJs(name, uri)
+    if (fallbackMeta !== null) {
+      debugLog('扫描诊断', `解析降级：Native解析失败，JS解析兜底成功，文件=${name}`)
+    } else {
+      debugLog('扫描诊断', `解析失败：Native与JS均无法解析，文件=${name}`)
+    }
+    return fallbackMeta
   }
   const meta = new DvrMeta()
   meta.fileName = String(raw.fileName ?? '')

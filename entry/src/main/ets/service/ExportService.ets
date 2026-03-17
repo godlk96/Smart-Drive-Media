@@ -1,10 +1,12 @@
 import { DvrMeta, ExportComposeRequest } from '../model/TripModels'
 import smartdriveExporter from 'libsmartdrive_exporter.so'
 import { ensureCoreApiContract } from './CoreApiContract'
+import { resolveTemplateDefinition, toLegacyCamera } from '../model/Models'
 
 class NativeComposeRequestResult {
   frontUris: Array<string> = []
   backUris: Array<string> = []
+  frontIndexes: Array<number> = []
 }
 
 class TemplateTrackSelection {
@@ -42,22 +44,36 @@ function pickTrackMetas(clips: Array<DvrMeta>, preferredCameras: Array<string>):
   return []
 }
 
-function alignSideUrisByFront(clips: Array<DvrMeta>, frontUris: Array<string>, preferredCameras: Array<string>): Array<string> {
+function alignSideUrisByFront(
+  clips: Array<DvrMeta>,
+  frontUris: Array<string>,
+  frontIndexes: Array<number>,
+  preferredCameras: Array<string>
+): Array<string> {
   const sideMetas = pickTrackMetas(clips, preferredCameras)
   if (sideMetas.length === 0 || frontUris.length === 0) {
     return []
   }
   const uris: Array<string> = []
-  for (const frontUri of frontUris) {
-    const frontMeta = findMetaByUri(clips, frontUri)
+  for (let i = 0; i < frontUris.length; i++) {
+    const frontUri = frontUris[i]
+    let frontMeta: DvrMeta | undefined = undefined
+    const frontIndex = Math.floor(Number(frontIndexes[i] ?? -1))
+    if (frontIndex >= 0 && frontIndex < clips.length) {
+      frontMeta = clips[frontIndex]
+    }
+    if (!frontMeta) {
+      frontMeta = findMetaByUri(clips, frontUri)
+    }
     if (!frontMeta) {
       uris.push(sideMetas[0].uri)
       continue
     }
+    const frontTimestamp = frontMeta.timestamp
     let best = sideMetas[0]
-    let bestDelta = Math.abs(best.timestamp - frontMeta.timestamp)
+    let bestDelta = Math.abs(best.timestamp - frontTimestamp)
     sideMetas.forEach((meta: DvrMeta) => {
-      const delta = Math.abs(meta.timestamp - frontMeta.timestamp)
+      const delta = Math.abs(meta.timestamp - frontTimestamp)
       if (delta < bestDelta) {
         best = meta
         bestDelta = delta
@@ -68,42 +84,39 @@ function alignSideUrisByFront(clips: Array<DvrMeta>, frontUris: Array<string>, p
   return uris
 }
 
-function resolveTemplateTracks(clips: Array<DvrMeta>, templateId: string, nativeFrontUris: Array<string>, nativeBackUris: Array<string>): TemplateTrackSelection {
+function resolveTemplateTracks(
+  clips: Array<DvrMeta>,
+  templateId: string,
+  nativeFrontUris: Array<string>,
+  nativeBackUris: Array<string>,
+  nativeFrontIndexes: Array<number>
+): TemplateTrackSelection {
   const selection = new TemplateTrackSelection()
-  const normalized = templateId === 'T1' || templateId === 'T2' || templateId === 'T3' || templateId === 'T4' ? templateId : 'T2'
-  selection.frontUris = nativeFrontUris
-  selection.backUris = nativeBackUris
-  if (normalized === 'T1') {
-    if (selection.frontUris.length === 0) {
-      selection.frontUris = pickTrackUris(clips, ['Front', 'LeftFront', 'RightFront'])
+  const definition = resolveTemplateDefinition(templateId)
+  const ffmpegPolicy = definition.ffmpegPolicy
+  const isT2Template = definition.templateId === 'T2'
+  const frontCandidates = ffmpegPolicy.frontTrackCandidates.map((camera) => toLegacyCamera(camera))
+  const backCandidates = ffmpegPolicy.backTrackCandidates.map((camera) => toLegacyCamera(camera))
+  const sideCandidates = ffmpegPolicy.sideTrackCandidates.map((camera) => toLegacyCamera(camera))
+  if (!ffmpegPolicy.ignoreNativeTrackSelection && nativeFrontUris.length > 0) {
+    selection.frontUris = nativeFrontUris
+  } else {
+    selection.frontUris = pickTrackUris(clips, frontCandidates)
+  }
+  if (!ffmpegPolicy.ignoreNativeTrackSelection && !isT2Template && nativeBackUris.length > 0) {
+    selection.backUris = nativeBackUris
+  } else {
+    selection.backUris = pickTrackUris(clips, backCandidates)
+  }
+  if (ffmpegPolicy.needSideTrack) {
+    if (ffmpegPolicy.alignSideByFrontTimeline) {
+      selection.sideUris = alignSideUrisByFront(clips, selection.frontUris, nativeFrontIndexes, sideCandidates)
+    } else {
+      selection.sideUris = pickTrackUris(clips, sideCandidates)
     }
-    if (selection.backUris.length === 0) {
-      selection.backUris = pickTrackUris(clips, ['Back', 'Right', 'Left'])
-    }
-    return selection
+  } else {
+    selection.sideUris = []
   }
-  if (normalized === 'T2') {
-    if (selection.frontUris.length === 0) {
-      selection.frontUris = pickTrackUris(clips, ['Front', 'LeftFront', 'RightFront'])
-    }
-    if (selection.backUris.length === 0) {
-      selection.backUris = pickTrackUris(clips, ['Back', 'Right', 'Left'])
-    }
-    selection.sideUris = alignSideUrisByFront(clips, selection.frontUris, ['Left', 'Right', 'LeftFront', 'RightFront'])
-    return selection
-  }
-  if (normalized === 'T3') {
-    selection.frontUris = pickTrackUris(clips, ['Left', 'LeftFront', 'Front'])
-    selection.backUris = pickTrackUris(clips, ['Right', 'RightFront', 'Back'])
-    return selection
-  }
-  if (selection.frontUris.length === 0) {
-    selection.frontUris = pickTrackUris(clips, ['Front', 'LeftFront', 'RightFront'])
-  }
-  if (selection.backUris.length === 0) {
-    selection.backUris = pickTrackUris(clips, ['RightFront', 'Right', 'Back'])
-  }
-  selection.sideUris = alignSideUrisByFront(clips, selection.frontUris, ['LeftFront', 'Left', 'Front'])
   return selection
 }
 
@@ -146,7 +159,8 @@ export function buildComposeRequestByService(
   const data = nativeBuild(clipsCsv, fileName, outputPath, flags)
   const nativeFrontUris = data.frontUris ?? []
   const nativeBackUris = data.backUris ?? []
-  const templateTracks = resolveTemplateTracks(clips, templateId, nativeFrontUris, nativeBackUris)
+  const nativeFrontIndexes = data.frontIndexes ?? []
+  const templateTracks = resolveTemplateTracks(clips, templateId, nativeFrontUris, nativeBackUris, nativeFrontIndexes)
   request.frontUris = templateTracks.frontUris
   request.backUris = templateTracks.backUris
   request.sideUris = templateTracks.sideUris

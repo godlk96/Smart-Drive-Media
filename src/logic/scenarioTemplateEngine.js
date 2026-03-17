@@ -7,25 +7,20 @@ const TEMPLATE_REGISTRY = Object.freeze({
     aspectRatio: '16:9',
     outputSize: Object.freeze({ width: 1920, height: 1080 }),
     slots: Object.freeze([
-      Object.freeze({ id: 'main', track: 'Front', rect: Object.freeze({ x: 0, y: 0, width: 1, height: 1 }), radius: 0 }),
-      Object.freeze({
-        id: 'pip',
-        track: 'Back',
-        rect: Object.freeze({ x: 0.68, y: 0.06, width: 0.28, height: 0.26 }),
-        radius: 16
-      })
+      Object.freeze({ id: 'top', track: 'Front', rect: Object.freeze({ x: 0, y: 0, width: 1, height: 0.5 }), radius: 0 }),
+      Object.freeze({ id: 'bottom', track: 'Back', rect: Object.freeze({ x: 0, y: 0.5, width: 1, height: 0.5 }), radius: 0 })
     ]),
     guides: Object.freeze([])
   }),
   T2: Object.freeze({
     id: 'T2',
     title: '避险防加塞',
-    aspectRatio: '16:9',
-    outputSize: Object.freeze({ width: 1920, height: 1080 }),
+    aspectRatio: '32:27',
+    outputSize: Object.freeze({ width: 1920, height: 1620 }),
     slots: Object.freeze([
-      Object.freeze({ id: 'top', track: 'Front', rect: Object.freeze({ x: 0, y: 0, width: 1, height: 0.5 }), radius: 0 }),
-      Object.freeze({ id: 'bottomLeft', track: 'Right', rect: Object.freeze({ x: 0, y: 0.5, width: 0.5, height: 0.5 }), radius: 0 }),
-      Object.freeze({ id: 'bottomRight', track: 'Back', rect: Object.freeze({ x: 0.5, y: 0.5, width: 0.5, height: 0.5 }), radius: 0 })
+      Object.freeze({ id: 'top', track: 'Front', rect: Object.freeze({ x: 0, y: 0, width: 1, height: 0.6667 }), radius: 0 }),
+      Object.freeze({ id: 'bottomLeft', track: 'Left', rect: Object.freeze({ x: 0, y: 0.6667, width: 0.5, height: 0.3333 }), radius: 0 }),
+      Object.freeze({ id: 'bottomRight', track: 'Right', rect: Object.freeze({ x: 0.5, y: 0.6667, width: 0.5, height: 0.3333 }), radius: 0 })
     ]),
     guides: Object.freeze([])
   }),
@@ -49,35 +44,45 @@ const TEMPLATE_REGISTRY = Object.freeze({
   T4: Object.freeze({
     id: 'T4',
     title: '沉浸式旅拍',
-    aspectRatio: '9:16',
-    outputSize: Object.freeze({ width: 1080, height: 1920 }),
+    aspectRatio: '16:9',
+    outputSize: Object.freeze({ width: 1920, height: 1080 }),
     slots: Object.freeze([
-      Object.freeze({ id: 'top', track: 'LeftFront', rect: Object.freeze({ x: 0, y: 0, width: 1, height: 0.3333 }), radius: 0 }),
-      Object.freeze({ id: 'middle', track: 'Front', rect: Object.freeze({ x: 0, y: 0.3333, width: 1, height: 0.3334 }), radius: 0 }),
-      Object.freeze({ id: 'bottom', track: 'RightFront', rect: Object.freeze({ x: 0, y: 0.6667, width: 1, height: 0.3333 }), radius: 0 })
+      Object.freeze({ id: 'left', track: 'LeftFront', rect: Object.freeze({ x: 0, y: 0, width: 0.3333, height: 1 }), radius: 0 }),
+      Object.freeze({ id: 'center', track: 'Front', rect: Object.freeze({ x: 0.3333, y: 0, width: 0.3334, height: 1 }), radius: 0 }),
+      Object.freeze({ id: 'right', track: 'RightFront', rect: Object.freeze({ x: 0.6667, y: 0, width: 0.3333, height: 1 }), radius: 0 })
     ]),
     guides: Object.freeze([
       Object.freeze({
-        id: 'dividerTop',
-        rect: Object.freeze({ x: 0, y: 0.332, width: 1, height: 0.0026 }),
+        id: 'dividerLeft',
+        rect: Object.freeze({ x: 0.332, y: 0, width: 0.0026, height: 1 }),
         color: 'white'
       }),
       Object.freeze({
-        id: 'dividerBottom',
-        rect: Object.freeze({ x: 0, y: 0.6654, width: 1, height: 0.0026 }),
+        id: 'dividerRight',
+        rect: Object.freeze({ x: 0.6654, y: 0, width: 0.0026, height: 1 }),
         color: 'white'
       })
     ])
+  }),
+  T5: Object.freeze({
+    id: 'T5',
+    title: '单前视',
+    aspectRatio: '16:9',
+    outputSize: Object.freeze({ width: 1920, height: 1080 }),
+    slots: Object.freeze([
+      Object.freeze({ id: 'top', track: 'Front', rect: Object.freeze({ x: 0, y: 0, width: 1, height: 1 }), radius: 0 })
+    ]),
+    guides: Object.freeze([])
   })
 })
 
 const TRACK_FALLBACK = Object.freeze({
-  Front: ['Front', 'LeftFront', 'RightFront', 'Back', 'Left', 'Right'],
-  Back: ['Back', 'Front', 'Right', 'Left', 'LeftFront', 'RightFront'],
-  Left: ['Left', 'LeftFront', 'Front', 'Right', 'Back', 'RightFront'],
-  Right: ['Right', 'RightFront', 'Front', 'Left', 'Back', 'LeftFront'],
-  LeftFront: ['LeftFront', 'Front', 'Left', 'RightFront', 'Back', 'Right'],
-  RightFront: ['RightFront', 'Front', 'Right', 'LeftFront', 'Back', 'Left']
+  Front: ['Front', 'LeftFront', 'RightFront', 'Left', 'Right'],
+  Back: ['Back', 'Right', 'Left', 'RightFront', 'LeftFront', 'Front'],
+  Left: ['Left', 'Right', 'LeftFront', 'RightFront', 'Front'],
+  Right: ['Right', 'Left', 'RightFront', 'LeftFront', 'Front'],
+  LeftFront: ['LeftFront', 'Left', 'Front', 'RightFront', 'Right'],
+  RightFront: ['RightFront', 'Right', 'Front', 'LeftFront', 'Left']
 })
 
 function toEven(value) {
@@ -97,7 +102,17 @@ function rectToPixels(rect, outputSize) {
 function resolveTrack(track, availableTracks) {
   const preferred = TRACK_FALLBACK[track] ?? [track]
   const found = preferred.find(item => availableTracks.includes(item))
-  return found ?? availableTracks[0] ?? track
+  if (found) {
+    return found
+  }
+  if (track !== 'Back') {
+    const nonBack = availableTracks.find(item => item !== 'Back')
+    if (nonBack) {
+      return nonBack
+    }
+    return track
+  }
+  return availableTracks[0] ?? track
 }
 
 export function getScenarioTemplate(templateId) {
@@ -146,11 +161,18 @@ export function buildTemplateFilterComplex({
   const overlayNodes = []
   const guideNodes = []
   const streamRefs = []
+  const strictTrackBinding = template.id === 'T5'
 
   template.slots.forEach((slot, index) => {
     const rect = rectToPixels(slot.rect, outputSize)
     const sourceTrack = resolveTrack(slot.track, availableTracks)
-    const streamLabel = streamLabelByTrack[sourceTrack] ?? streamLabelByTrack[availableTracks[0]] ?? '[0:v]'
+    const fallbackTrack =
+      sourceTrack !== 'Back'
+        ? availableTracks.find(item => item !== 'Back') ?? availableTracks[0]
+        : availableTracks[0]
+    const streamLabel = strictTrackBinding
+      ? streamLabelByTrack[sourceTrack] ?? '[0:v]'
+      : streamLabelByTrack[sourceTrack] ?? streamLabelByTrack[fallbackTrack] ?? '[0:v]'
     const slotLabel = `[slot_${index}]`
     const prepared = `${streamLabel}setpts=PTS-STARTPTS,scale=${rect.width}:${rect.height}:force_original_aspect_ratio=increase,crop=${rect.width}:${rect.height}${slotLabel}`
     slotNodes.push(prepared)

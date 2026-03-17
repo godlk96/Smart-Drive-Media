@@ -142,8 +142,8 @@ struct Editor {
   }
 
   private getPreviewAspectRatio(): number {
-    if (this.state.activeTemplateId === 'T4') {
-      return 9 / 16
+    if (this.state.activeTemplateId === 'T2') {
+      return 1920 / 1620
     }
     return 16 / 9
   }
@@ -169,7 +169,7 @@ struct Editor {
     if (slotId === 'pip' || slotId === 'bottomLeft' || slotId === 'left') {
       return this.secondaryControllerA
     }
-    if (slotId === 'bottomRight' || slotId === 'right' || slotId === 'middle') {
+    if (slotId === 'bottomRight' || slotId === 'right' || slotId === 'center' || slotId === 'middle') {
       return this.secondaryControllerB
     }
     return this.secondaryControllerC
@@ -511,6 +511,13 @@ struct Editor {
 
   private selectTemplate(card: TemplateCardModel): void {
     this.applyState(this.bridge.selectTemplate(card.id))
+    this.seekAllControllers(this.getLocalSecond(this.state.playheadSec), true)
+    this.showPreviewCover = this.hasPreviewSource()
+    if (this.previewPlaying) {
+      this.startAllPreview()
+    } else {
+      this.pauseAllPreview()
+    }
     debugLog('剪辑页', `切换模板=${card.id}`)
     this.showControlsTemporarily()
   }
@@ -730,7 +737,7 @@ struct Editor {
         .borderRadius(10)
         .margin({ left: 12, right: 12, top: 6, bottom: 8 })
       }
-      .scrollable(this.state.activeTemplateId === 'T4' ? ScrollDirection.Vertical : ScrollDirection.None)
+      .scrollable(ScrollDirection.None)
       .scrollBar(BarState.Off)
       .onClick(() => {
         if (this.showPreviewCover && this.hasPreviewSource()) {

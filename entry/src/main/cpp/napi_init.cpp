@@ -9,6 +9,7 @@
 #include <ctime>
 #include <cctype>
 #include <cstdlib>
+#include <cmath>
 
 static std::string readUtf8Arg(napi_env env, napi_value value)
 {
@@ -122,28 +123,207 @@ static double extractNumber(const std::string &payload, const std::string &key)
     return std::atof(payload.substr(start, end - start).c_str());
 }
 
+struct NativeExportPipelineRequest {
+    std::vector<std::string> frontUris;
+    std::vector<std::string> backUris;
+    std::vector<std::string> sideUris;
+    std::string templateId;
+    double expectedDurationSec = 0.0;
+    std::string outputPath;
+};
+
+struct NativeExportPipelineResult {
+    int32_t code = 0;
+    std::string message;
+    std::string outputPath;
+};
+
+static constexpr int32_t EXPORT_OK = 0;
+static constexpr int32_t EXPORT_ERR_INVALID_ARG = 1001;
+static constexpr int32_t EXPORT_ERR_FRONT_URIS_EMPTY = 1002;
+static constexpr int32_t EXPORT_ERR_BACK_URIS_EMPTY = 1003;
+static constexpr int32_t EXPORT_ERR_TEMPLATE_ID_INVALID = 1004;
+static constexpr int32_t EXPORT_ERR_OUTPUT_PATH_EMPTY = 1005;
+static constexpr int32_t EXPORT_ERR_EXPECTED_DURATION_INVALID = 1006;
+static constexpr int32_t EXPORT_ERR_NATIVE_EMPTY = 2001;
+static constexpr int32_t EXPORT_ERR_NATIVE_FAILED = 2002;
+static constexpr int32_t EXPORT_ERR_ASYNC_WORK_FAILED = 2003;
+
+static NativeExportPipelineResult makeErrorResult(int32_t code, const std::string &message)
+{
+    NativeExportPipelineResult result;
+    result.code = code;
+    result.message = message;
+    return result;
+}
+
+static bool isAllowedTemplateId(const std::string &value)
+{
+    return isSupportedTemplateId(value);
+}
+
+static bool getNamedProperty(napi_env env, napi_value obj, const char *name, napi_value &out)
+{
+    bool hasProperty = false;
+    if (napi_has_named_property(env, obj, name, &hasProperty) != napi_ok || !hasProperty) {
+        return false;
+    }
+    return napi_get_named_property(env, obj, name, &out) == napi_ok;
+}
+
+static bool readStringArrayFromJs(napi_env env, napi_value value, std::vector<std::string> &output)
+{
+    bool isArray = false;
+    if (napi_is_array(env, value, &isArray) != napi_ok || !isArray) {
+        return false;
+    }
+    uint32_t length = 0;
+    if (napi_get_array_length(env, value, &length) != napi_ok) {
+        return false;
+    }
+    output.clear();
+    output.reserve(length);
+    for (uint32_t i = 0; i < length; i++) {
+        napi_value element = nullptr;
+        if (napi_get_element(env, value, i, &element) != napi_ok) {
+            return false;
+        }
+        napi_valuetype elementType = napi_undefined;
+        if (napi_typeof(env, element, &elementType) != napi_ok || elementType != napi_string) {
+            return false;
+        }
+        std::string item = readUtf8Arg(env, element);
+        if (item.empty()) {
+            return false;
+        }
+        output.push_back(item);
+    }
+    return true;
+}
+
+static bool parseExportPipelineRequest(napi_env env, napi_callback_info info, NativeExportPipelineRequest &request, NativeExportPipelineResult &error)
+{
+    size_t argc = 1;
+    napi_value args[1] = {nullptr};
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 1 || args[0] == nullptr) {
+        error = makeErrorResult(EXPORT_ERR_INVALID_ARG, "ERR_INVALID_ARG");
+        return false;
+    }
+    napi_valuetype argType = napi_undefined;
+    if (napi_typeof(env, args[0], &argType) != napi_ok || argType != napi_object) {
+        error = makeErrorResult(EXPORT_ERR_INVALID_ARG, "ERR_INVALID_ARG");
+        return false;
+    }
+    napi_value frontValue = nullptr;
+    if (!getNamedProperty(env, args[0], "frontUris", frontValue) || !readStringArrayFromJs(env, frontValue, request.frontUris)) {
+        error = makeErrorResult(EXPORT_ERR_INVALID_ARG, "ERR_FRONT_URIS_INVALID");
+        return false;
+    }
+    napi_value backValue = nullptr;
+    if (!getNamedProperty(env, args[0], "backUris", backValue) || !readStringArrayFromJs(env, backValue, request.backUris)) {
+        error = makeErrorResult(EXPORT_ERR_INVALID_ARG, "ERR_BACK_URIS_INVALID");
+        return false;
+    }
+    request.sideUris.clear();
+    napi_value sideValue = nullptr;
+    if (getNamedProperty(env, args[0], "sideUris", sideValue) && !readStringArrayFromJs(env, sideValue, request.sideUris)) {
+        error = makeErrorResult(EXPORT_ERR_INVALID_ARG, "ERR_SIDE_URIS_INVALID");
+        return false;
+    }
+    napi_value templateValue = nullptr;
+    if (!getNamedProperty(env, args[0], "templateId", templateValue)) {
+        error = makeErrorResult(EXPORT_ERR_INVALID_ARG, "ERR_TEMPLATE_ID_INVALID");
+        return false;
+    }
+    request.templateId = readUtf8Arg(env, templateValue);
+    napi_value durationValue = nullptr;
+    if (!getNamedProperty(env, args[0], "expectedDurationSec", durationValue) ||
+        napi_get_value_double(env, durationValue, &request.expectedDurationSec) != napi_ok ||
+        std::isnan(request.expectedDurationSec) || std::isinf(request.expectedDurationSec) ||
+        request.expectedDurationSec < 0.0) {
+        error = makeErrorResult(EXPORT_ERR_EXPECTED_DURATION_INVALID, "ERR_EXPECTED_DURATION_INVALID");
+        return false;
+    }
+    napi_value outputPathValue = nullptr;
+    if (!getNamedProperty(env, args[0], "outputPath", outputPathValue)) {
+        error = makeErrorResult(EXPORT_ERR_INVALID_ARG, "ERR_OUTPUT_PATH_INVALID");
+        return false;
+    }
+    request.outputPath = readUtf8Arg(env, outputPathValue);
+    if (request.frontUris.empty()) {
+        error = makeErrorResult(EXPORT_ERR_FRONT_URIS_EMPTY, "ERR_FRONT_URIS_EMPTY");
+        return false;
+    }
+    if (request.backUris.empty()) {
+        error = makeErrorResult(EXPORT_ERR_BACK_URIS_EMPTY, "ERR_BACK_URIS_EMPTY");
+        return false;
+    }
+    if (!isAllowedTemplateId(request.templateId)) {
+        error = makeErrorResult(EXPORT_ERR_TEMPLATE_ID_INVALID, "ERR_TEMPLATE_ID_INVALID");
+        return false;
+    }
+    if (request.outputPath.empty()) {
+        error = makeErrorResult(EXPORT_ERR_OUTPUT_PATH_EMPTY, "ERR_OUTPUT_PATH_EMPTY");
+        return false;
+    }
+    return true;
+}
+
+static NativeExportPipelineResult runPipelineAndWrapResult(const NativeExportPipelineRequest &request)
+{
+    std::string output = runExportEnginePipeline(
+        request.frontUris,
+        request.backUris,
+        request.sideUris,
+        request.templateId,
+        request.expectedDurationSec,
+        request.outputPath);
+    if (output.empty()) {
+        return makeErrorResult(EXPORT_ERR_NATIVE_EMPTY, "ERR_NATIVE_EMPTY");
+    }
+    if (output.rfind("__ERROR__", 0) == 0) {
+        return makeErrorResult(EXPORT_ERR_NATIVE_FAILED, output);
+    }
+    NativeExportPipelineResult result;
+    result.code = EXPORT_OK;
+    result.outputPath = output;
+    return result;
+}
+
+static napi_value createExportResultValue(napi_env env, const NativeExportPipelineResult &result)
+{
+    napi_value output = nullptr;
+    napi_create_object(env, &output);
+    napi_value code = nullptr;
+    napi_create_int32(env, result.code, &code);
+    napi_set_named_property(env, output, "code", code);
+    napi_value message = nullptr;
+    napi_create_string_utf8(env, result.message.c_str(), NAPI_AUTO_LENGTH, &message);
+    napi_set_named_property(env, output, "message", message);
+    napi_value outputPath = nullptr;
+    napi_create_string_utf8(env, result.outputPath.c_str(), NAPI_AUTO_LENGTH, &outputPath);
+    napi_set_named_property(env, output, "outputPath", outputPath);
+    return output;
+}
+
 static napi_value RunExportPipeline(napi_env env, napi_callback_info info)
 {
-    std::string payload = readPayload(env, info);
-    std::vector<std::string> frontUris = extractArray(payload, "frontUris");
-    std::vector<std::string> backUris = extractArray(payload, "backUris");
-    std::vector<std::string> sideUris = extractArray(payload, "sideUris");
-    std::string templateId = extractString(payload, "templateId");
-    double expectedDurationSec = extractNumber(payload, "expectedDurationSec");
-    std::string outputPath = extractString(payload, "outputPath");
-    std::string result = runExportEnginePipeline(frontUris, backUris, sideUris, templateId, expectedDurationSec, outputPath);
-    napi_value output = nullptr;
-    napi_create_string_utf8(env, result.c_str(), result.length(), &output);
-    return output;
+    NativeExportPipelineRequest request;
+    NativeExportPipelineResult error;
+    if (!parseExportPipelineRequest(env, info, request, error)) {
+        return createExportResultValue(env, error);
+    }
+    NativeExportPipelineResult result = runPipelineAndWrapResult(request);
+    return createExportResultValue(env, result);
 }
 
 struct ExportPipelineAsyncContext {
     napi_env env = nullptr;
     napi_async_work work = nullptr;
     napi_deferred deferred = nullptr;
-    std::string payload;
-    std::string result;
-    std::string error;
+    NativeExportPipelineRequest request;
+    NativeExportPipelineResult result;
 };
 
 static void ExecuteRunExportPipelineAsync(napi_env env, void *data)
@@ -153,18 +333,7 @@ static void ExecuteRunExportPipelineAsync(napi_env env, void *data)
     if (ctx == nullptr) {
         return;
     }
-    std::vector<std::string> frontUris = extractArray(ctx->payload, "frontUris");
-    std::vector<std::string> backUris = extractArray(ctx->payload, "backUris");
-    std::vector<std::string> sideUris = extractArray(ctx->payload, "sideUris");
-    std::string templateId = extractString(ctx->payload, "templateId");
-    double expectedDurationSec = extractNumber(ctx->payload, "expectedDurationSec");
-    std::string outputPath = extractString(ctx->payload, "outputPath");
-    ctx->result = runExportEnginePipeline(frontUris, backUris, sideUris, templateId, expectedDurationSec, outputPath);
-    if (ctx->result.empty()) {
-        ctx->error = "native export returned empty";
-    } else if (ctx->result.rfind("__ERROR__", 0) == 0) {
-        ctx->error = ctx->result;
-    }
+    ctx->result = runPipelineAndWrapResult(ctx->request);
 }
 
 static void CompleteRunExportPipelineAsync(napi_env env, napi_status status, void *data)
@@ -173,20 +342,11 @@ static void CompleteRunExportPipelineAsync(napi_env env, napi_status status, voi
     if (ctx == nullptr) {
         return;
     }
-    if (status != napi_ok && ctx->error.empty()) {
-        ctx->error = "native async work failed";
+    if (status != napi_ok) {
+        ctx->result = makeErrorResult(EXPORT_ERR_ASYNC_WORK_FAILED, "ERR_ASYNC_WORK_FAILED");
     }
-    if (!ctx->error.empty()) {
-        napi_value errorMessage = nullptr;
-        napi_create_string_utf8(env, ctx->error.c_str(), NAPI_AUTO_LENGTH, &errorMessage);
-        napi_value errorObj = nullptr;
-        napi_create_error(env, nullptr, errorMessage, &errorObj);
-        napi_reject_deferred(env, ctx->deferred, errorObj);
-    } else {
-        napi_value resultValue = nullptr;
-        napi_create_string_utf8(env, ctx->result.c_str(), NAPI_AUTO_LENGTH, &resultValue);
-        napi_resolve_deferred(env, ctx->deferred, resultValue);
-    }
+    napi_value resultValue = createExportResultValue(env, ctx->result);
+    napi_resolve_deferred(env, ctx->deferred, resultValue);
     if (ctx->work != nullptr) {
         napi_delete_async_work(env, ctx->work);
     }
@@ -195,22 +355,45 @@ static void CompleteRunExportPipelineAsync(napi_env env, napi_status status, voi
 
 static napi_value RunExportPipelineAsync(napi_env env, napi_callback_info info)
 {
-    std::string payload = readPayload(env, info);
+    NativeExportPipelineRequest request;
+    NativeExportPipelineResult error;
+    napi_value promise = nullptr;
+    napi_deferred deferred = nullptr;
+    napi_create_promise(env, &deferred, &promise);
+    if (!parseExportPipelineRequest(env, info, request, error)) {
+        napi_value resultValue = createExportResultValue(env, error);
+        napi_resolve_deferred(env, deferred, resultValue);
+        return promise;
+    }
     auto *ctx = new ExportPipelineAsyncContext();
     ctx->env = env;
-    ctx->payload = payload;
-    napi_value promise = nullptr;
-    napi_create_promise(env, &ctx->deferred, &promise);
+    ctx->deferred = deferred;
+    ctx->request = request;
     napi_value resourceName = nullptr;
     napi_create_string_utf8(env, "RunExportPipelineAsync", NAPI_AUTO_LENGTH, &resourceName);
-    napi_create_async_work(env,
-                           nullptr,
-                           resourceName,
-                           ExecuteRunExportPipelineAsync,
-                           CompleteRunExportPipelineAsync,
-                           ctx,
-                           &ctx->work);
-    napi_queue_async_work(env, ctx->work);
+    if (napi_create_async_work(env,
+                               nullptr,
+                               resourceName,
+                               ExecuteRunExportPipelineAsync,
+                               CompleteRunExportPipelineAsync,
+                               ctx,
+                               &ctx->work) != napi_ok) {
+        NativeExportPipelineResult asyncError = makeErrorResult(EXPORT_ERR_ASYNC_WORK_FAILED, "ERR_ASYNC_WORK_FAILED");
+        napi_value resultValue = createExportResultValue(env, asyncError);
+        napi_resolve_deferred(env, deferred, resultValue);
+        delete ctx;
+        return promise;
+    }
+    if (napi_queue_async_work(env, ctx->work) != napi_ok) {
+        NativeExportPipelineResult asyncError = makeErrorResult(EXPORT_ERR_ASYNC_WORK_FAILED, "ERR_ASYNC_WORK_FAILED");
+        napi_value resultValue = createExportResultValue(env, asyncError);
+        napi_resolve_deferred(env, deferred, resultValue);
+        if (ctx->work != nullptr) {
+            napi_delete_async_work(env, ctx->work);
+        }
+        delete ctx;
+        return promise;
+    }
     return promise;
 }
 
@@ -222,10 +405,19 @@ static std::string normalizeCamera(const std::string &cameraRaw)
     if (cameraRaw == "back") {
         return "Back";
     }
+    if (cameraRaw == "rear") {
+        return "Back";
+    }
     if (cameraRaw == "left") {
         return "Left";
     }
+    if (cameraRaw == "left_rear") {
+        return "Left";
+    }
     if (cameraRaw == "right") {
+        return "Right";
+    }
+    if (cameraRaw == "right_rear") {
         return "Right";
     }
     if (cameraRaw == "left_front") {
@@ -367,6 +559,18 @@ static napi_value createStringArray(napi_env env, const std::vector<std::string>
     return arr;
 }
 
+static napi_value createIntArray(napi_env env, const std::vector<int64_t> &items)
+{
+    napi_value arr = nullptr;
+    napi_create_array_with_length(env, items.size(), &arr);
+    for (size_t i = 0; i < items.size(); i++) {
+        napi_value v = nullptr;
+        napi_create_int64(env, items[i], &v);
+        napi_set_element(env, arr, i, v);
+    }
+    return arr;
+}
+
 static napi_value ParseDvrFileName(napi_env env, napi_callback_info info)
 {
     size_t argc = 2;
@@ -379,7 +583,7 @@ static napi_value ParseDvrFileName(napi_env env, napi_callback_info info)
         napi_get_null(env, &nil);
         return nil;
     }
-    const std::regex pattern("^DVR_LoopRecording_(\\d{4}-\\d{2}-\\d{2})_(\\d{2})-(\\d{2})-(\\d{2})_([a-z_]+)_camera\\.(mp4|mov|ts)$", std::regex::icase);
+    const std::regex pattern("^(?:.+_)?DVR_LoopRecording_(\\d{4}-\\d{2}-\\d{2})_(\\d{2})-(\\d{2})-(\\d{2})_([a-z_]+)_camera\\.(mp4|mov|ts)$", std::regex::icase);
     std::smatch match;
     if (std::regex_match(name, match, pattern)) {
         std::string date = match[1];
@@ -440,9 +644,12 @@ static napi_value BuildComposeRequest(napi_env env, napi_callback_info info)
     for (size_t i = 0; i < argc && i < 4; i++) {
         params[i] = readUtf8Arg(env, args[i]);
     }
+    std::vector<std::string> clips = splitBy(params[0], ',');
     std::vector<std::string> frontUris;
     std::vector<std::string> backUris;
-    for (const std::string &clip : splitBy(params[0], ',')) {
+    std::vector<int64_t> frontIndexes;
+    for (size_t clipIndex = 0; clipIndex < clips.size(); clipIndex++) {
+        const std::string &clip = clips[clipIndex];
         if (clip.empty()) {
             continue;
         }
@@ -454,6 +661,7 @@ static napi_value BuildComposeRequest(napi_env env, napi_callback_info info)
         const std::string &uri = parts[2];
         if (camera == "Front") {
             frontUris.push_back(uri);
+            frontIndexes.push_back(static_cast<int64_t>(clipIndex));
         } else if (camera == "Back") {
             backUris.push_back(uri);
         }
@@ -462,8 +670,10 @@ static napi_value BuildComposeRequest(napi_env env, napi_callback_info info)
     napi_create_object(env, &output);
     napi_value frontArr = createStringArray(env, frontUris);
     napi_value backArr = createStringArray(env, backUris);
+    napi_value frontIndexArr = createIntArray(env, frontIndexes);
     napi_set_named_property(env, output, "frontUris", frontArr);
     napi_set_named_property(env, output, "backUris", backArr);
+    napi_set_named_property(env, output, "frontIndexes", frontIndexArr);
     return output;
 }
 
@@ -471,7 +681,7 @@ static napi_value GetCoreApiVersion(napi_env env, napi_callback_info info)
 {
     (void)info;
     napi_value output = nullptr;
-    static const char *version = "core-api-v1";
+    static const char *version = "core-api-v2";
     napi_create_string_utf8(env, version, NAPI_AUTO_LENGTH, &output);
     return output;
 }

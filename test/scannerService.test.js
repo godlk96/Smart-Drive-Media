@@ -27,3 +27,24 @@ test('ScannerService returns desc ordered trips and filters invalid files', asyn
   assert.equal(result.length, 2)
   assert.equal(result[0].startTime > result[1].startTime, true)
 })
+
+test('ScannerService supports prefixed files and normalizes rear aliases', async () => {
+  const repository = new TripRepository()
+  const taskRunner = new TaskRunner()
+  const service = new ScannerService({ repository, taskRunner })
+
+  const result = await service.scan([
+    {
+      filePath: 'C:/videos/VID_1772807031_360_DVR_LoopRecording_2026-03-01_08-30-00_left_rear_camera.mp4',
+      durationSec: 60
+    },
+    {
+      filePath: 'C:/videos/VID_1772807031_360_DVR_LoopRecording_2026-03-01_08-30-00_right_rear_camera.mp4',
+      durationSec: 60
+    }
+  ])
+
+  assert.equal(result.length, 1)
+  const positions = result[0].videoTracks.map(track => track.cameraPosition).sort()
+  assert.deepEqual(positions, ['Left', 'Right'])
+})
