@@ -1,8 +1,8 @@
-import { SeamlessVideoPlayer, SeamlessVideoController } from '../components/SeamlessVideoPlayer'
-import { SeamlessPreviewController, SeamlessPreviewView } from '../components/SeamlessPreviewView'
+import { EditorPreviewArea } from '../components/EditorPreviewArea'
 import { sharedCoreBridge } from '../bridge/CoreBridge'
-import { EditorStateModel, PreviewSlotModel, TemplateCardModel, TimelineMarkerModel, TimelineTrackModel } from '../model/AppState'
+import { EditorStateModel, TemplateCardModel, TimelineMarkerModel, TimelineTrackModel } from '../model/AppState'
 import { createEditorStateFromSnapshot, deepCloneExportSnapshot, ExportSnapshot, resolveTemplateDefinition } from '../model/Models'
+import { TripSnapshot } from '../model/TripModels'
 import { startNativeExport } from '../NativeExportManager'
 import { debugLog } from '../utils/Logger'
 import common from '@ohos.app.ability.common'
@@ -12,23 +12,22 @@ import common from '@ohos.app.ability.common'
 struct Editor {
   private bridge = sharedCoreBridge
   private exportSessionSeed: string = ''
-  private primaryControllerA: SeamlessPreviewController = new SeamlessPreviewController()
-  private secondaryControllerA: SeamlessVideoController = new SeamlessVideoController()
-  private secondaryControllerB: SeamlessVideoController = new SeamlessVideoController()
-  private secondaryControllerC: SeamlessVideoController = new SeamlessVideoController()
   private controlsTimer: number = -1
-  private speedEmulationTimer: number = -1
-  private speedEmulationFractionSec: number = 0
-  private lastPlayheadTickAt: number = 0
-  private manualSpeedMode: boolean = false
-  private lastSecondarySeekMs: number = 0
   private lastLoggedSecond: number = -1
   @State private showPlayerControls: boolean = true
   @State private showPreviewCover: boolean = true
-  @State private previewPlaying: boolean = true
-  @State private primarySrcA: string = ''
-  @State private primarySrcB: string = ''
-  @State private primaryMutedA: boolean = true
+  @State private previewPlaying: boolean = false
+  private isSwitchingTemplate: boolean = false
+  private isTimelineDragging: boolean = false
+  private isSettlingAfterDrag: boolean = false
+  private dragPreviewSec: number = 0
+  private settleTargetSec: number = 0
+  private settleTimer: number = -1
+  private readonly settleWindowMs: number = 260
+  private lastStablePlayheadSec: number = 0
+  private readonly minuteBoundaryHysteresisSec: number = 0.35
+  @State private seekToken: number = 0
+  @State private tripSnapshot: TripSnapshot = new TripSnapshot()
   @State private previewRenderVersion: number = 0
   @State private showSlotLabels: boolean = false
   @State private exportLoadingVisible: boolean = false
@@ -85,9 +84,28 @@ struct Editor {
 
   private updatePlayheadSec(sec: number): void {
     const clamped = Math.max(0, Math.min(sec, this.state.totalDurationSec))
+    this.lastStablePlayheadSec = clamped
     const nextState = this.state
     nextState.playheadSec = clamped
     this.state = nextState
+  }
+
+  private stabilizeMinuteBoundary(rawSec: number): number {
+    const clamped = Math.max(0, Math.min(rawSec, this.state.totalDurationSec))
+    const last = this.lastStablePlayheadSec
+    if (last <= 0) {
+      return clamped
+    }
+    const lastMinute = Math.floor(last / 60)
+    const currentMinute = Math.floor(clamped / 60)
+    if (lastMinute === currentMinute) {
+      return clamped
+    }
+    const boundary = Math.max(lastMinute, currentMinute) * 60
+    if (Math.abs(clamped - boundary) < this.minuteBoundaryHysteresisSec) {
+      return last
+    }
+    return clamped
   }
 
   aboutToAppear(): void {
@@ -104,25 +122,22 @@ struct Editor {
     debugLog('剪辑页', `进入页面，行程ID=${tripId}，标题提示=${title}，副标题提示=${subtitle}`)
     this.exportSessionSeed = `${tripId}_${Date.now()}`
     this.applyState(this.bridge.createEditorState(tripId, title, subtitle))
-    this.syncPrimarySourcesByState()
-    this.syncPrimaryMuteByState()
+    this.tripSnapshot = this.bridge.getTripSnapshotClone(this.state.tripId) ?? new TripSnapshot()
     this.showPreviewCover = this.state.previewUri.length > 0
-    this.previewPlaying = !this.showPreviewCover
+    this.previewPlaying = false
     this.showPlayerControls = true
-    this.applyPlaybackRate()
     this.scheduleHideControls()
     this.hasUnsavedChanges = false
     this.backConfirmVisible = false
     this.clipMarks = []
     this.mosaicEnabledUi = true
-    this.lastPlayheadTickAt = Date.now()
     const trackSummary = this.state.timeline.map((item: TimelineTrackModel) => `${item.cameraPosition}:${item.segmentCount}`).join(',')
     debugLog('剪辑诊断', `初始化完成，时长=${this.state.totalDurationSec}s，轨道数=${this.state.timeline.length}，轨道明细=${trackSummary}，预览URI长度=${this.state.previewUri.length}，预览视角=${this.state.previewCamera}`)
   }
 
   aboutToDisappear(): void {
     this.clearHideControlsTimer()
-    this.clearSpeedEmulationTimer()
+    this.clearSettleTimer()
     if (this.toastTimer >= 0) {
       clearTimeout(this.toastTimer)
       this.toastTimer = -1
@@ -136,20 +151,19 @@ struct Editor {
     }
   }
 
-  private clearSpeedEmulationTimer(): void {
-    if (this.speedEmulationTimer >= 0) {
-      clearInterval(this.speedEmulationTimer)
-      this.speedEmulationTimer = -1
-    }
-    this.speedEmulationFractionSec = 0
-  }
-
   private scheduleHideControls(): void {
     this.clearHideControlsTimer()
     this.controlsTimer = setTimeout(() => {
       this.showPlayerControls = false
       debugLog('剪辑诊断', '播放器控件自动隐藏')
     }, 3000)
+  }
+
+  private clearSettleTimer(): void {
+    if (this.settleTimer >= 0) {
+      clearTimeout(this.settleTimer)
+      this.settleTimer = -1
+    }
   }
 
   private showControlsTemporarily(): void {
@@ -171,128 +185,18 @@ struct Editor {
     return 16 / 9
   }
 
-  private getPrimaryPreviewSlot(): PreviewSlotModel | undefined {
-    return this.state.previewSlots[0]
-  }
-
-  private isPrimarySlotEventValid(slot: PreviewSlotModel): boolean {
-    const primary = this.getPrimaryPreviewSlot()
-    if (!primary) {
-      return false
-    }
-    const valid = primary.id === slot.id && primary.uri === slot.uri
-    if (!valid) {
-      debugLog('剪辑诊断', `忽略主画面过期回调，slot=${slot.id}/${slot.uri}，primary=${primary.id}/${primary.uri}`)
-    }
-    return valid
-  }
-
-  private isPrimaryPreviewSlot(slotId: string): boolean {
-    const primary = this.getPrimaryPreviewSlot()
-    return primary !== undefined && primary.id === slotId
-  }
-
   private hasPreviewSource(): boolean {
-    return this.state.previewSlots.some((slot: PreviewSlotModel) => slot.uri.length > 0)
-  }
-
-  private syncPrimarySourcesByState(): void {
-    const primary = this.getPrimaryPreviewSlot()
-    if (!primary || primary.uri.length === 0) {
-      this.primarySrcA = ''
-      this.primarySrcB = ''
-      this.primaryControllerA.reloadWindow('', '', 0)
-      return
-    }
-    this.primarySrcA = primary.uri
-    const preloadUri = primary.nextUri ?? ''
-    this.primarySrcB = preloadUri.length > 0 && preloadUri !== primary.uri ? preloadUri : ''
-    this.primaryControllerA.reloadWindow(this.primarySrcA, this.primarySrcB, this.getLocalSecond(this.state.playheadSec))
-  }
-
-  private syncPrimaryMuteByState(): void {
-    const primary = this.getPrimaryPreviewSlot()
-    const allowAudio = primary ? this.getAudioSlotId() === primary.id : false
-    const activeMuted = allowAudio ? this.state.muted : true
-    this.primaryMutedA = activeMuted
-    this.primaryControllerA.setMuted(activeMuted)
-  }
-
-  private handleSeamlessSwap(): void {
-    if (!this.state.canPlayNext) {
-      return
-    }
-    this.applyState(this.bridge.playNextClip())
-    this.syncPrimarySourcesByState()
-    this.syncPrimaryMuteByState()
-    this.updatePlayheadSec(this.getCurrentClipStartSec())
-    this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.playheadSec * 1000)))
-    this.seekSecondaryControllers(0, true)
-    this.showPreviewCover = false
-    this.showControlsTemporarily()
-  }
-
-  private handleSeamlessEnded(): void {
-    this.previewPlaying = false
-    this.showPreviewCover = true
-    this.clearSpeedEmulationTimer()
-    this.updatePlayheadSec(this.state.totalDurationSec)
-    this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.totalDurationSec * 1000)))
-    this.pauseAllPreview()
-    this.showControlsTemporarily()
-  }
-
-  private handleSeamlessError(message: string): void {
-    debugLog('剪辑诊断', `无缝管理器错误：${message}`)
-    this.showPreviewCover = true
-  }
-
-  private getSecondaryController(slotId: string): SeamlessVideoController {
-    if (slotId === 'pip' || slotId === 'bottomLeft' || slotId === 'left') {
-      return this.secondaryControllerA
-    }
-    if (slotId === 'bottomRight' || slotId === 'right') {
-      return this.secondaryControllerB
-    }
-    if (slotId === 'center' || slotId === 'middle') {
-      return this.secondaryControllerC
-    }
-    return this.secondaryControllerC
-  }
-
-  private getAudioSlotId(): string {
-    const frontSlot = this.state.previewSlots.find((slot: PreviewSlotModel) => slot.camera === 'Front' && slot.uri.length > 0)
-    if (frontSlot) {
-      return frontSlot.id
-    }
-    const primary = this.getPrimaryPreviewSlot()
-    if (primary && primary.uri.length > 0) {
-      return primary.id
-    }
-    const fallback = this.state.previewSlots.find((slot: PreviewSlotModel) => slot.uri.length > 0)
-    return fallback ? fallback.id : ''
+    return this.state.previewSlots.some((slot) => slot.uri.length > 0)
   }
 
   private startAllPreview(): void {
-    this.lastPlayheadTickAt = Date.now()
-    this.syncPrimaryMuteByState()
-    this.primaryControllerA.start()
-    this.secondaryControllerA.start()
-    this.secondaryControllerB.start()
-    this.secondaryControllerC.start()
+    this.showPreviewCover = false
     this.previewPlaying = true
-    this.ensureSpeedEmulation()
     debugLog('剪辑诊断', `触发统一播放，目标倍速=${this.getPlaybackRate()}X`)
   }
 
   private pauseAllPreview(): void {
-    this.primaryControllerA.pause()
-    this.secondaryControllerA.pause()
-    this.secondaryControllerB.pause()
-    this.secondaryControllerC.pause()
     this.previewPlaying = false
-    this.manualSpeedMode = false
-    this.clearSpeedEmulationTimer()
     debugLog('剪辑诊断', `触发统一暂停，当前倍速=${this.getPlaybackRate()}X`)
   }
 
@@ -330,24 +234,17 @@ struct Editor {
     return 1.0
   }
 
-  private syncGlobalPlayhead(second: number, fromUser: boolean): void {
+  private syncGlobalPlayhead(second: number, fromUser: boolean, commitSeek: boolean = true): void {
     const clamped = Math.max(0, Math.min(second, this.state.totalDurationSec))
     this.updatePlayheadSec(clamped)
-    this.applyState(this.bridge.seekGlobalPlayhead(Math.floor(clamped)))
-    this.syncPrimarySourcesByState()
-    this.syncPrimaryMuteByState()
-    this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.playheadSec * 1000)))
-    const localSecond = this.getLocalSecond(this.state.playheadSec)
-    
-    // Optimize: only seek if difference is significant or forced
-    const now = Date.now()
-    if (fromUser || now - this.lastSecondarySeekMs > 1000) {
-      this.seekAllControllers(localSecond, true)
+    if (commitSeek) {
+      this.applyState(this.bridge.seekGlobalPlayhead(Math.floor(clamped)))
+      this.seekToken += 1
     }
-    
-    if (fromUser && Math.floor(clamped) !== this.lastLoggedSecond) {
+    this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.playheadSec * 1000)))
+    if (fromUser && commitSeek && Math.floor(clamped) !== this.lastLoggedSecond) {
       this.lastLoggedSecond = Math.floor(clamped)
-      debugLog('剪辑页', `拖动全局进度，秒=${Math.floor(clamped)}，片段=${this.state.currentClipIndex}/${this.state.currentClipTotal}，片内秒=${Math.floor(localSecond)}`)
+      debugLog('剪辑页', `拖动全局进度，秒=${Math.floor(clamped)}，片段=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
     }
     if (fromUser) {
       this.hasUnsavedChanges = true
@@ -614,114 +511,30 @@ struct Editor {
     this.markUnsaved()
   }
 
-  private ensureSpeedEmulation(): void {
-    this.clearSpeedEmulationTimer()
-    if (!this.previewPlaying) {
+  private handlePreviewPlayheadChanged(playheadMs: number): void {
+    if (!this.previewPlaying || this.isTimelineDragging) {
       return
     }
-    this.lastPlayheadTickAt = Date.now()
-    const rate = this.getPlaybackRate()
-    if (rate <= 1) {
-      this.manualSpeedMode = false
-      this.speedEmulationTimer = setInterval(() => {
-        if (!this.previewPlaying) {
-          return
-        }
-        const now = Date.now()
-        const elapsedSec = Math.max(0, (now - this.lastPlayheadTickAt) / 1000)
-        this.lastPlayheadTickAt = now
-        if (elapsedSec <= 0) {
-          return
-        }
-        
-        const nextSec = Math.min(this.state.totalDurationSec, this.state.playheadSec + elapsedSec)
-        this.updatePlayheadSec(nextSec)
-        this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.playheadSec * 1000)))
-        if (nextSec >= this.state.totalDurationSec) {
-          this.previewPlaying = false
-          this.clearSpeedEmulationTimer()
-        }
-      }, 80)
-      return
-    }
-    this.manualSpeedMode = true
-    this.primaryControllerA.pause()
-    this.secondaryControllerA.pause()
-    this.secondaryControllerB.pause()
-    this.secondaryControllerC.pause()
-    this.lastSecondarySeekMs = 0
-    this.speedEmulationTimer = setInterval(() => {
-      if (!this.previewPlaying) {
+    const nextSec = Math.max(0, Math.min(this.state.totalDurationSec, playheadMs / 1000))
+    if (this.isSettlingAfterDrag) {
+      const delta = Math.abs(nextSec - this.settleTargetSec)
+      if (delta > 0.55) {
         return
       }
-      this.speedEmulationFractionSec += rate * 0.32
-      const stepSec = this.speedEmulationFractionSec
-      this.speedEmulationFractionSec = 0
-      const nextSec = Math.min(this.state.totalDurationSec, this.state.playheadSec + stepSec)
-      const currentClipEnd = this.getCurrentClipStartSec() + this.getClipSpanSec()
-      if (nextSec >= currentClipEnd && this.state.canPlayNext) {
-        this.syncGlobalPlayhead(nextSec, false)
-      } else {
-        this.updatePlayheadSec(nextSec)
-        this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.playheadSec * 1000)))
-        const localSecond = this.getLocalSecond(this.state.playheadSec)
-        this.seekPrimaryController(localSecond)
-        this.seekSecondaryControllers(localSecond, false)
-      }
-      if (nextSec >= this.state.totalDurationSec) {
-        this.previewPlaying = false
-        this.manualSpeedMode = false
-        this.clearSpeedEmulationTimer()
-      }
-    }, 320)
-    debugLog('倍速诊断', `启用预览倍速仿真，rate=${rate}`)
-  }
-
-  private applyPlaybackRate(): void {
-    const rate = this.getPlaybackRate()
-    this.primaryControllerA.setPlaybackSpeed(rate)
-    this.secondaryControllerA.setPlaybackSpeed(rate)
-    this.secondaryControllerB.setPlaybackSpeed(rate)
-    this.secondaryControllerC.setPlaybackSpeed(rate)
-  }
-
-  private getClipSpanSec(): number {
-    if (this.state.currentClipTotal <= 0) {
-      return Math.max(1, this.state.totalDurationSec)
+      this.isSettlingAfterDrag = false
+      this.clearSettleTimer()
     }
-    return Math.max(1, Math.floor(this.state.totalDurationSec / this.state.currentClipTotal))
+    const stabilizedSec = this.stabilizeMinuteBoundary(nextSec)
+    this.updatePlayheadSec(stabilizedSec)
+    this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(stabilizedSec * 1000)))
   }
 
-  private getCurrentClipStartSec(): number {
-    if (this.state.currentClipIndex <= 0) {
-      return 0
-    }
-    return (this.state.currentClipIndex - 1) * this.getClipSpanSec()
-  }
-
-  private getLocalSecond(globalSecond: number): number {
-    const clipStart = this.getCurrentClipStartSec()
-    return Math.max(0, globalSecond - clipStart)
-  }
-
-  private seekPrimaryController(localSecond: number): void {
-    this.primaryControllerA.setCurrentTime(localSecond)
-  }
-
-  private seekSecondaryControllers(localSecond: number, force: boolean): void {
-    const now = Date.now()
-    if (!force && now - this.lastSecondarySeekMs < 1500) {
-      return
-    }
-    this.lastSecondarySeekMs = now
-    this.secondaryControllerA.setCurrentTime(localSecond)
-    this.secondaryControllerB.setCurrentTime(localSecond)
-    this.secondaryControllerC.setCurrentTime(localSecond)
-  }
-
-  private seekAllControllers(localSecond: number, force: boolean): void {
-    this.seekPrimaryController(localSecond)
-    this.seekSecondaryControllers(localSecond, force)
+  private handlePreviewEnded(): void {
+    this.previewPlaying = false
+    this.showPreviewCover = true
+    this.updatePlayheadSec(this.state.totalDurationSec)
+    this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.totalDurationSec * 1000)))
+    this.showControlsTemporarily()
   }
 
   private getRangeStartPercent(): string {
@@ -748,13 +561,42 @@ struct Editor {
 
   @State private timelineWidth: number = 0
 
-  private handleTimelineTouch(localX: number): void {
+  private handleTimelineTouch(localX: number, commitSeek: boolean, fromUser: boolean): void {
     if (this.timelineWidth <= 0) {
       return
     }
     const percent = Math.max(0, Math.min(1, localX / this.timelineWidth))
     const targetSec = percent * this.state.totalDurationSec
-    this.updatePlayhead(targetSec)
+    this.syncGlobalPlayhead(targetSec, fromUser, commitSeek)
+  }
+
+  private beginTimelineDrag(localX: number): void {
+    this.isTimelineDragging = true
+    this.isSettlingAfterDrag = false
+    this.clearSettleTimer()
+    this.handleTimelineTouch(localX, false, false)
+    this.dragPreviewSec = this.state.playheadSec
+  }
+
+  private updateTimelineDrag(localX: number): void {
+    this.handleTimelineTouch(localX, false, false)
+    this.dragPreviewSec = this.state.playheadSec
+  }
+
+  private endTimelineDrag(localX?: number): void {
+    if (localX !== undefined) {
+      this.handleTimelineTouch(localX, false, false)
+    }
+    const finalSec = this.state.playheadSec
+    this.settleTargetSec = finalSec
+    this.isSettlingAfterDrag = true
+    this.clearSettleTimer()
+    this.settleTimer = setTimeout(() => {
+      this.isSettlingAfterDrag = false
+      this.settleTimer = -1
+    }, this.settleWindowMs)
+    this.isTimelineDragging = false
+    this.syncGlobalPlayhead(finalSec, true, true)
   }
 
   private updateExportStatus(statusText: string): void {
@@ -832,34 +674,11 @@ struct Editor {
 
   private switchCamera(camera: string): void {
     this.applyState(this.bridge.switchCamera(camera))
-    this.syncPrimarySourcesByState()
-    this.syncPrimaryMuteByState()
+    this.tripSnapshot = this.bridge.getTripSnapshotClone(this.state.tripId) ?? new TripSnapshot()
+    this.previewRenderVersion += 1
+    this.seekToken += 1
     this.showPreviewCover = this.state.previewUri.length > 0
     debugLog('剪辑页', `切换播放器视角=${camera}，片段=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
-    this.showControlsTemporarily()
-  }
-
-  private playPrevClip(): void {
-    this.applyState(this.bridge.playPrevClip())
-    this.syncPrimarySourcesByState()
-    this.syncPrimaryMuteByState()
-    this.updatePlayheadSec(this.getCurrentClipStartSec())
-    this.updatePlayheadText(this.bridge.updatePlayhead(this.state.playheadSec * 1000))
-    this.seekAllControllers(0, true)
-    this.showPreviewCover = this.state.previewUri.length > 0
-    debugLog('剪辑页', `切换上一片，当前=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
-    this.showControlsTemporarily()
-  }
-
-  private playNextClip(): void {
-    this.applyState(this.bridge.playNextClip())
-    this.syncPrimarySourcesByState()
-    this.syncPrimaryMuteByState()
-    this.updatePlayheadSec(this.getCurrentClipStartSec())
-    this.updatePlayheadText(this.bridge.updatePlayhead(this.state.playheadSec * 1000))
-    this.seekAllControllers(0, true)
-    this.showPreviewCover = this.state.previewUri.length > 0
-    debugLog('剪辑页', `切换下一片，当前=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
     this.showControlsTemporarily()
   }
 
@@ -888,29 +707,28 @@ struct Editor {
   }
 
   private selectTemplate(card: TemplateCardModel): void {
+    if (this.isSwitchingTemplate) {
+      return
+    }
+    this.isSwitchingTemplate = true
     const wasPlaying = this.previewPlaying
+    const targetSec = this.state.playheadSec
     this.pauseAllPreview()
     this.applyState(this.bridge.selectTemplate(card.id))
-    
-    // Reset to 0
-    this.updatePlayheadSec(0)
-    this.updatePlayheadText(this.bridge.updatePlayhead(0))
-    this.applyState(this.bridge.seekGlobalPlayhead(0))
-    this.syncPrimarySourcesByState()
-    this.syncPrimaryMuteByState()
+    this.applyState(this.bridge.seekGlobalPlayhead(Math.floor(targetSec)))
+    this.updatePlayheadSec(this.state.playheadSec)
+    this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.playheadSec * 1000)))
+    this.tripSnapshot = this.bridge.getTripSnapshotClone(this.state.tripId) ?? new TripSnapshot()
 
     this.previewRenderVersion += 1
-    this.showPreviewCover = true
-    
-    // We need to wait for players to be ready after template switch before seeking
+    this.showPreviewCover = !wasPlaying
+    this.seekToken += 1
+    if (wasPlaying) {
+      this.startAllPreview()
+    }
     setTimeout(() => {
-      this.seekAllControllers(0, true)
-      if (!wasPlaying) {
-        this.pauseAllPreview()
-      } else {
-        this.startAllPreview()
-      }
-    }, 150)
+      this.isSwitchingTemplate = false
+    }, 240)
     
     debugLog('剪辑页', `切换模板=${card.id}`)
     this.markUnsaved()
@@ -923,16 +741,7 @@ struct Editor {
 
   private cycleSpeed(): void {
     this.applyState(this.bridge.cycleSpeed())
-    this.applyPlaybackRate()
-    if (this.previewPlaying) {
-      if (this.getPlaybackRate() <= 1) {
-        this.manualSpeedMode = false
-        this.clearSpeedEmulationTimer()
-        this.startAllPreview()
-      } else {
-        this.ensureSpeedEmulation()
-      }
-    }
+    this.seekToken += 1
     debugLog('剪辑诊断', `切换整体倍速=${this.getPlaybackRate()}X`)
     this.markUnsaved()
     this.showControlsTemporarily()
@@ -940,7 +749,7 @@ struct Editor {
 
   private toggleMuted(): void {
     this.applyState(this.bridge.toggleMuted())
-    this.syncPrimaryMuteByState()
+    this.seekToken += 1
     this.showControlsTemporarily()
   }
 
@@ -1024,66 +833,19 @@ struct Editor {
                 .padding({ left: 16, right: 16, top: 12, bottom: 8 })
               Stack({ alignContent: Alignment.Center }) {
                 if (this.hasPreviewSource()) {
-                  if (this.getPrimaryPreviewSlot() && (this.getPrimaryPreviewSlot()?.uri.length ?? 0) > 0) {
-                    SeamlessPreviewView({
-                      currentUri: this.primarySrcA,
-                      nextUri: this.primarySrcB,
-                      controller: this.primaryControllerA,
-                      muted: this.primaryMutedA,
-                      onSwapCallback: () => this.handleSeamlessSwap(),
-                      onEndedCallback: () => this.handleSeamlessEnded(),
-                      onErrorCallback: (message: string) => this.handleSeamlessError(message)
-                    })
-                      .width(this.toPercent(this.getPrimaryPreviewSlot()?.width ?? 0))
-                      .height(this.toPercent(this.getPrimaryPreviewSlot()?.height ?? 0))
-                      .position({
-                        x: this.toPercent(this.getPrimaryPreviewSlot()?.x ?? 0),
-                        y: this.toPercent(this.getPrimaryPreviewSlot()?.y ?? 0)
-                      })
-                      .opacity(1)
-                  }
-                  ForEach(this.state.previewSlots, (slot: PreviewSlotModel) => {
-                    if (slot.uri.length === 0) {
-                      Column()
-                        .width(this.toPercent(slot.width))
-                        .height(this.toPercent(slot.height))
-                        .backgroundColor('#444444')
-                        .border({ width: 1, color: '#333333' })
-                        .position({ x: this.toPercent(slot.x), y: this.toPercent(slot.y) })
-                    } else if (!this.isPrimaryPreviewSlot(slot.id)) {
-                      SeamlessVideoPlayer({
-                        src: slot.uri,
-                        controller: this.getSecondaryController(slot.id),
-                        muted: this.getAudioSlotId() === slot.id ? this.state.muted : true,
-                        onPreparedCallback: () => {
-                          this.applyPlaybackRate()
-                          if (this.previewPlaying && !this.showPreviewCover) {
-                            this.getSecondaryController(slot.id).start()
-                          } else {
-                            this.getSecondaryController(slot.id).pause()
-                          }
-                        }
-                      })
-                        .width(this.toPercent(slot.width))
-                        .height(this.toPercent(slot.height))
-                        .position({ x: this.toPercent(slot.x), y: this.toPercent(slot.y) })
-                    }
-                    Text(this.cameraZhName(slot.camera))
-                      .fontSize(10)
-                      .fontColor('#999999')
-                      .position({ x: this.toPercent(slot.x + 0.01), y: this.toPercent(slot.y + 0.01) })
-                    if (this.mosaicEnabledUi && this.templateSupportsMosaic(this.state.activeTemplateId) && slot.camera === 'Front') {
-                      Column()
-                        .width(this.toPercent(slot.width * 0.3))
-                        .height(this.toPercent(slot.height * 0.15))
-                        .backgroundColor('#000000B3')
-                        .borderRadius(4)
-                        .position({
-                          x: this.toPercent(slot.x + slot.width * 0.35),
-                          y: this.toPercent(slot.y + slot.height * 0.65)
-                        })
-                    }
-                  }, (slot: PreviewSlotModel) => `${this.previewRenderVersion}-${this.state.activeTemplateId}-${slot.id}`)
+                  EditorPreviewArea({
+                    editorState: this.state,
+                    tripSnapshot: this.tripSnapshot,
+                    playing: this.previewPlaying,
+                    seekToken: this.seekToken,
+                    playheadMs: Math.floor(this.state.playheadSec * 1000),
+                    muted: this.state.muted,
+                    speedLabel: this.state.speedLabel,
+                    onPlayheadChanged: (playheadMs: number) => this.handlePreviewPlayheadChanged(playheadMs),
+                    onPlaybackEnded: () => this.handlePreviewEnded()
+                  })
+                    .width('100%')
+                    .height('100%')
                 } else {
                   Text('预览区')
                     .fontSize(14)
@@ -1184,18 +946,25 @@ struct Editor {
                     PanGesture({ direction: PanDirection.Horizontal })
                       .onActionStart((event: GestureEvent) => {
                         if (event.fingerList && event.fingerList.length > 0) {
-                          this.handleTimelineTouch(event.fingerList[0].localX)
+                          this.beginTimelineDrag(event.fingerList[0].localX)
                         }
                       })
                       .onActionUpdate((event: GestureEvent) => {
                         if (event.fingerList && event.fingerList.length > 0) {
-                          this.handleTimelineTouch(event.fingerList[0].localX)
+                          this.updateTimelineDrag(event.fingerList[0].localX)
+                        }
+                      })
+                      .onActionEnd((event: GestureEvent) => {
+                        if (event.fingerList && event.fingerList.length > 0) {
+                          this.endTimelineDrag(event.fingerList[0].localX)
+                        } else {
+                          this.endTimelineDrag()
                         }
                       }),
                     TapGesture()
                       .onAction((event: GestureEvent) => {
                         if (event.fingerList && event.fingerList.length > 0) {
-                          this.handleTimelineTouch(event.fingerList[0].localX)
+                          this.handleTimelineTouch(event.fingerList[0].localX, true, true)
                         }
                       })
                   )
