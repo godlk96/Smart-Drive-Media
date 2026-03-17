@@ -87,6 +87,11 @@ function resolvePreviewTrack(track: string, availableTracks: Array<string>): str
   return availableTracks[0] ?? track
 }
 
+export interface SlotUriResult {
+  current: string;
+  next: string;
+}
+
 export class CoreBridge {
   private readonly requiredPermissions: Array<string> = ['ohos.permission.READ_MEDIA', 'ohos.permission.READ_IMAGEVIDEO', 'ohos.permission.WRITE_MEDIA']
   private readonly jsBridgeEntry: string = JS_BRIDGE_ENTRY
@@ -274,44 +279,51 @@ export class CoreBridge {
     })
   }
 
-  private pickSlotUri(snapshot: TripSnapshot, camera: string, anchorTimestamp: number): string {
+  private pickSlotUri(snapshot: TripSnapshot, camera: string, anchorTimestamp: number): SlotUriResult {
     const clips = snapshot.clips
       .filter((item: DvrMeta) => item.camera === camera && item.uri.length > 0)
       .sort((a: DvrMeta, b: DvrMeta) => a.timestamp - b.timestamp)
     if (clips.length === 0) {
-      return ''
+      return { current: '', next: '' } as SlotUriResult
     }
     if (anchorTimestamp <= 0) {
-      return clips[0].uri
+      return { current: clips[0].uri, next: clips.length > 1 ? clips[1].uri : '' } as SlotUriResult
     }
     let nearest = clips[0]
+    let nearestIndex = 0
     let nearestDelta = Math.abs(nearest.timestamp - anchorTimestamp)
-    clips.forEach((clip: DvrMeta) => {
+    clips.forEach((clip: DvrMeta, index: number) => {
       const delta = Math.abs(clip.timestamp - anchorTimestamp)
       if (delta < nearestDelta) {
         nearest = clip
         nearestDelta = delta
+        nearestIndex = index
       }
     })
-    return nearest.uri
+    const nextUri = nearestIndex + 1 < clips.length ? clips[nearestIndex + 1].uri : ''
+    return { current: nearest.uri, next: nextUri } as SlotUriResult
   }
 
   private buildPreviewSlots(snapshot: TripSnapshot, anchorTimestamp: number): Array<PreviewSlotModel> {
     const defs = this.getTemplateSlotDefs(this.activeTemplateId)
     const availableTracks = snapshot.timeline.map((item: TimelineTrackModel) => item.cameraPosition)
-    return defs.map((slot: PreviewSlotModel) => {
+    const result: Array<PreviewSlotModel> = []
+    for (const slot of defs) {
       const resolvedCamera = resolvePreviewTrack(slot.camera, availableTracks)
+      const uris = this.pickSlotUri(snapshot, resolvedCamera, anchorTimestamp)
       const previewSlot: PreviewSlotModel = {
         id: slot.id,
         camera: resolvedCamera,
-        uri: this.pickSlotUri(snapshot, resolvedCamera, anchorTimestamp),
+        uri: uris.current,
+        nextUri: uris.next,
         x: slot.x,
         y: slot.y,
         width: slot.width,
         height: slot.height
       }
-      return previewSlot
-    })
+      result.push(previewSlot)
+    }
+    return result
   }
 
   private buildTripsFromMetas(metas: Array<DvrMeta>): Array<TripSnapshot> {
@@ -392,7 +404,7 @@ export class CoreBridge {
     merged.id = `trip-merged-${title}-${toTimeText(startDate).replace(/:/g, '')}-${selected.length}`
     merged.title = title
     merged.subtitle = `${toTimeText(startDate)} - ${toTimeText(endDate)} · ${timeline.length} 视角`
-    merged.durationSec = Math.max(1, Math.floor((endTs - startTs) / 1000))
+    merged.durationSec = selected.reduce((acc: number, item: TripSnapshot) => acc + item.durationSec, 0)
     merged.tripTitle = `${title.replace(/-/g, '/')} 合并行程`
     merged.tripRange = `${toTimeText(startDate)} - ${toTimeText(endDate)}`
     merged.previewUri = preview?.previewUri ?? ''

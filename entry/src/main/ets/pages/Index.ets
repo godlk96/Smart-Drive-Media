@@ -126,6 +126,18 @@ struct Index {
     return `${second}s`
   }
 
+  private canShowMergeButton(): boolean {
+    return this.selectionMode && this.selectedTripIds.length >= 2
+  }
+
+  private getCompletenessText(card: TripCardModel): string {
+    return card.previewUri.length > 0 ? '完整' : '不完整'
+  }
+
+  private getCompletenessColor(card: TripCardModel): string {
+    return card.previewUri.length > 0 ? '#0A59F7' : '#FF7A00'
+  }
+
   private handleCardClick(card: TripCardModel): void {
     if (this.selectionMode) {
       this.toggleTripSelection(card)
@@ -200,260 +212,186 @@ struct Index {
   }
 
   build() {
-    Stack({ alignContent: Alignment.Bottom }) {
-      Column({ space: 10 }) {
-        Row() {
-          if (this.selectionMode) {
-            Button('取消')
-              .type(ButtonType.Normal)
-              .fontSize(13)
-              .fontColor('#94A3B8')
-              .backgroundColor('#00000000')
-              .onClick(() => this.toggleSelectionMode())
-            Text(`已选 ${this.selectedTripIds.length}`)
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#F8FAFC')
-            Blank()
-          } else {
-            Text('智驾影音')
-              .fontSize(22)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#F8FAFC')
-            Blank()
-            if (!this.permissionGranted) {
-              Button('授权读取')
-                .type(ButtonType.Capsule)
-                .fontSize(12)
-                .onClick(() => {
-                  debugLog('首页', '点击授权按钮')
-                  this.requestMediaPermissionAndRefresh()
-                })
-            }
-            Button('选择')
-              .type(ButtonType.Capsule)
-              .fontSize(12)
-              .fontColor('#F97316')
-              .backgroundColor('#3F1C1408')
-              .onClick(() => this.toggleSelectionMode())
+    Column({ space: 0 }) {
+      Row() {
+        Text('行车记录6视角剪辑')
+          .fontSize(20)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+          .layoutWeight(1)
+        Row({ space: 8 }) {
+          if (this.canShowMergeButton()) {
+            Button('合并剪辑')
+              .height(36)
+              .padding({ left: 16, right: 16 })
+              .fontSize(14)
+              .fontColor('#FFFFFF')
+              .backgroundColor('#FF7A00')
+              .borderRadius(8)
+              .onClick(() => this.openMergedEditor())
           }
+          Button(this.selectionMode ? '取消' : '多选')
+            .height(36)
+            .padding({ left: 16, right: 16 })
+            .fontSize(14)
+            .fontColor('#FFFFFF')
+            .backgroundColor(this.selectionMode ? '#FF7A00' : '#00000000')
+            .border({
+              width: 1,
+              color: this.selectionMode ? '#FF7A00' : '#444444'
+            })
+            .borderRadius(8)
+            .onClick(() => this.toggleSelectionMode())
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .padding({ left: 16, right: 16, top: 16, bottom: 16 })
+
+      if (this.state.permissionTip.length > 0) {
+        Text(this.state.permissionTip)
+          .fontSize(12)
+          .fontColor('#FF7A00')
+          .width('100%')
+          .padding({ left: 16, right: 16, bottom: 8 })
+      }
+
+      if (!this.permissionGranted && this.state.empty) {
+        Column({ space: 12 }) {
+          Text('需要访问相册权限')
+            .fontSize(18)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#FFFFFF')
+          Text(this.state.emptyText)
+            .fontSize(14)
+            .fontColor('#999999')
+            .textAlign(TextAlign.Center)
+          Button('授权并刷新')
+            .height(40)
+            .padding({ left: 18, right: 18 })
+            .fontSize(14)
+            .fontColor('#FFFFFF')
+            .backgroundColor('#FF7A00')
+            .borderRadius(8)
+            .onClick(() => this.requestMediaPermissionAndRefresh())
         }
         .width('100%')
-        .padding({ left: 16, right: 16, top: 12 })
-
-        if (!this.selectionMode) {
-          Text('自动识别相册中的行车记录')
-            .fontSize(13)
-            .fontColor('#94A3B8')
-            .width('100%')
-            .padding({ left: 16, right: 16 })
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .padding({ left: 20, right: 20 })
+      } else if (this.state.empty) {
+        Column() {
+          Text(this.state.emptyText)
+            .fontSize(14)
+            .fontColor('#999999')
+            .textAlign(TextAlign.Center)
         }
-
-        if (this.state.permissionTip.length > 0) {
-          Text(this.state.permissionTip)
-            .fontSize(12)
-            .fontColor('#F59E0B')
-            .width('100%')
-            .padding({ left: 16, right: 16, top: 2 })
-        }
-
-        if (!this.permissionGranted && this.state.empty) {
-          Column({ space: 10 }) {
-            Text('需要访问相册权限')
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#F8FAFC')
-            Text(this.state.emptyText)
-              .fontSize(13)
-              .fontColor('#94A3B8')
-              .textAlign(TextAlign.Center)
-            Button('授权并刷新')
-              .type(ButtonType.Capsule)
-              .fontSize(13)
-              .fontColor('#FFFFFF')
-              .backgroundColor('#EA580C')
-              .onClick(() => this.requestMediaPermissionAndRefresh())
-          }
-          .width('100%')
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-          .padding({ left: 20, right: 20 })
-        } else if (this.state.empty) {
-          Column() {
-            Text(this.state.emptyText)
-              .fontSize(13)
-              .fontColor('#94A3B8')
-              .textAlign(TextAlign.Center)
-          }
-          .width('100%')
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-          .padding({ left: 20, right: 20 })
-        } else {
-          Grid() {
-            ForEach(this.getDisplayCards(), (item: TripCardModel) => {
-              GridItem() {
-                Stack({ alignContent: Alignment.TopEnd }) {
-                  Stack({ alignContent: Alignment.BottomStart }) {
-                    if (item.previewFrameUri.length > 0) {
-                      if (item.previewFrameUri.endsWith('.jpg') || item.previewFrameUri.endsWith('.jpeg') || item.previewFrameUri.endsWith('.png') || item.previewFrameUri.endsWith('.webp')) {
-                        Image(item.previewFrameUri)
-                          .width('100%')
-                          .height('100%')
-                          .objectFit(ImageFit.Cover)
-                      } else {
-                        Video({
-                          src: item.previewFrameUri
-                        })
-                          .width('100%')
-                          .height('100%')
-                          .objectFit(ImageFit.Cover)
-                          .autoPlay(true)
-                          .controls(false)
-                          .muted(true)
-                      }
-                    } else {
-                      Column({ space: 4 }) {
-                        Text('暂无封面')
-                          .fontSize(11)
-                          .fontColor('#94A3B8')
-                        if (item.previewUri.length > 0) {
-                          Text('可播放视频已命中')
-                            .fontSize(10)
-                            .fontColor('#64748B')
-                        }
-                      }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .padding({ left: 20, right: 20 })
+      } else {
+        Grid() {
+          ForEach(this.getDisplayCards(), (item: TripCardModel) => {
+            GridItem() {
+              Column({ space: 0 }) {
+                Stack({ alignContent: Alignment.TopStart }) {
+                  if (item.previewFrameUri.length > 0) {
+                    if (item.previewFrameUri.endsWith('.jpg') || item.previewFrameUri.endsWith('.jpeg') || item.previewFrameUri.endsWith('.png') || item.previewFrameUri.endsWith('.webp')) {
+                      Image(item.previewFrameUri)
                         .width('100%')
                         .height('100%')
-                        .justifyContent(FlexAlign.Center)
-                        .alignItems(HorizontalAlign.Center)
-                        .backgroundColor('#1E293B')
-                    }
-
-                    Column()
-                      .width('100%')
-                      .height('55%')
-                      .linearGradient({
-                        angle: 180,
-                        colors: [['#00000000', 0.0], ['#45000000', 0.4], ['#DD020617', 1.0]]
+                        .objectFit(ImageFit.Cover)
+                    } else {
+                      Video({
+                        src: item.previewFrameUri
                       })
-                      .alignSelf(ItemAlign.End)
-
+                        .width('100%')
+                        .height('100%')
+                        .objectFit(ImageFit.Cover)
+                        .autoPlay(true)
+                        .controls(false)
+                        .muted(true)
+                    }
+                  } else {
                     Column({ space: 4 }) {
-                      Row() {
-                        if (item.previewCamera.length > 0) {
-                          Text(item.previewCamera === 'Front' ? '前视封面' : `${item.previewCamera}封面`)
-                            .fontSize(10)
-                            .fontColor('#D1FAE5')
-                            .backgroundColor('#064E3B99')
-                            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                            .borderRadius(6)
-                        }
-                        Blank()
-                      }
-                      .width('100%')
-                      Row() {
-                        Text(item.durationText)
-                          .fontSize(10)
-                          .fontColor('#F8FAFC')
-                          .backgroundColor('#66000000')
-                          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                          .borderRadius(6)
-                        Blank()
-                      }
-                      .width('100%')
-                      Row() {
-                        Column({ space: 2 }) {
-                          Text(item.title)
-                            .fontSize(14)
-                            .fontWeight(FontWeight.Bold)
-                            .fontColor('#F8FAFC')
-                          Text(item.subtitle)
-                            .fontSize(10)
-                            .fontColor('#CBD5E1')
-                            .maxLines(1)
-                            .textOverflow({ overflow: TextOverflow.Ellipsis })
-                        }
-                        .alignItems(HorizontalAlign.Start)
-                        .layoutWeight(1)
-                      }
-                      .width('100%')
+                      Text('预览')
+                        .fontSize(10)
+                        .fontColor('#999999')
+                      Text(item.previewUri.length > 0 ? '已命中视频' : '无视频')
+                        .fontSize(10)
+                        .fontColor('#666666')
                     }
                     .width('100%')
-                    .padding(10)
-                    .alignItems(HorizontalAlign.Start)
+                    .height('100%')
+                    .justifyContent(FlexAlign.Center)
+                    .alignItems(HorizontalAlign.Center)
+                    .backgroundColor('#333333')
                   }
-                  .width('100%')
-                  .aspectRatio(4 / 3)
-                  .borderRadius(12)
-                  .clip(true)
-                  .border({
-                    width: this.isTripSelected(item.id) ? 2 : 0,
-                    color: '#F97316'
-                  })
-                  .backgroundColor('#1E293B')
-                  .onClick(() => this.handleCardClick(item))
-
-                  if (this.selectionMode) {
-                    Text(this.isTripSelected(item.id) ? '✓' : '')
-                      .fontSize(11)
-                      .fontWeight(FontWeight.Bold)
+                  Text(this.getCompletenessText(item))
+                    .fontSize(10)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#FFFFFF')
+                    .backgroundColor(this.getCompletenessColor(item))
+                    .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                    .borderRadius(3)
+                    .margin({ top: 4, left: 4 })
+                  if (this.selectionMode && this.isTripSelected(item.id)) {
+                    Text('✓')
+                      .fontSize(12)
                       .fontColor('#FFFFFF')
                       .width(20)
                       .height(20)
                       .textAlign(TextAlign.Center)
-                      .backgroundColor(this.isTripSelected(item.id) ? '#F97316' : '#33000000')
+                      .backgroundColor('#FF7A00')
                       .borderRadius(10)
-                      .margin({ top: 8, right: 8 })
+                      .position({ x: '84%', y: '4%' })
                   }
                 }
-              }
-            }, (item: TripCardModel) => item.id)
-          }
-          .columnsTemplate('1fr 1fr')
-          .columnsGap(10)
-          .rowsGap(10)
-          .layoutWeight(1)
-          .width('100%')
-          .padding({
-            left: 16,
-            right: 16,
-            bottom: this.selectionMode ? 130 : 16
-          })
-        }
-      }
-      .width('100%')
-      .height('100%')
+                .width('100%')
+                .aspectRatio(16 / 9)
+                .borderRadius(12)
+                .clip(true)
+                .border({
+                  width: this.isTripSelected(item.id) ? 2 : 0,
+                  color: '#FF7A00'
+                })
+                .backgroundColor('#282828')
+                .onClick(() => this.handleCardClick(item))
 
-      if (this.selectionMode) {
-        Row() {
-          Column({ space: 2 }) {
-            Text(`已选 ${this.selectedTripIds.length} 组`)
-              .fontSize(13)
-              .fontWeight(FontWeight.Medium)
-              .fontColor('#F8FAFC')
-            Text(`总时长 ${this.formatTotalDuration(this.getSelectedTotalDurationSec())}`)
-              .fontSize(11)
-              .fontColor('#94A3B8')
-          }
-          .alignItems(HorizontalAlign.Start)
-          Blank()
-          Button('合并并剪辑')
-            .type(ButtonType.Capsule)
-            .fontSize(13)
-            .enabled(this.selectedTripIds.length > 0)
-            .onClick(() => this.openMergedEditor())
+                Column({ space: 2 }) {
+                  Text(item.title)
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#FFFFFF')
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  Text(item.subtitle)
+                    .fontSize(10)
+                    .fontColor('#999999')
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+                .width('100%')
+                .padding({ left: 8, right: 8, top: 8, bottom: 8 })
+                .backgroundColor('#282828')
+              }
+            }
+          }, (item: TripCardModel) => item.id)
         }
+        .columnsTemplate('1fr 1fr')
+        .columnsGap(12)
+        .rowsGap(12)
+        .layoutWeight(1)
         .width('100%')
-        .padding({ left: 16, right: 16, top: 12, bottom: 20 })
-        .backgroundColor('#EE0F172A')
+        .padding({ left: 16, right: 16, bottom: 16 })
       }
     }
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .width('100%')
     .height('100%')
-    .backgroundColor('#0F172A')
+    .backgroundColor('#181818')
   }
 }

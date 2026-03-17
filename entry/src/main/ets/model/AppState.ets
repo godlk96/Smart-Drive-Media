@@ -43,6 +43,7 @@ export interface PreviewSlotModel {
   id: string
   camera: string
   uri: string
+  nextUri?: string // Added for seamless double-buffering
   x: number
   y: number
   width: number

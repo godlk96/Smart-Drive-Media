@@ -6,11 +6,15 @@ import { debugLog } from '../utils/Logger'
 struct Export {
   private bridge = sharedCoreBridge
   private pollTimer: number = -1
-  @State private tripTitle: string = '导出中'
+  @State private pageTitle: string = '导出单组视频'
   @State private statusText: string = '导出处理中 0%'
   @State private progress: number = 0
   @State private isSuccess: boolean = false
   @State private isFailed: boolean = false
+  @State private showCancelModal: boolean = false
+  @State private templateName: string = '单视角'
+  @State private resolution: string = '1920×1080'
+  @State private contentInfo: string = '单组视频 | 裁剪后时长60秒'
 
   aboutToAppear(): void {
     let params: Record<string, string> = {}
@@ -20,7 +24,23 @@ struct Export {
       const message = error instanceof Error ? error.message : String(error)
       debugLog('导出页', `读取路由参数失败：${message}`)
     }
-    this.tripTitle = params.title ?? '导出中'
+    const type = params.type ?? 'single'
+    if (type === 'merge') {
+      this.pageTitle = '导出合并视频'
+      this.contentInfo = '多组合并 | 裁剪后时长120秒'
+    } else {
+      this.pageTitle = '导出单组视频'
+      this.contentInfo = '单组视频 | 裁剪后时长60秒'
+    }
+    if ((params.title ?? '').length > 0) {
+      this.pageTitle = params.title ?? this.pageTitle
+    }
+    if ((params.templateName ?? '').length > 0) {
+      this.templateName = params.templateName ?? this.templateName
+    }
+    if ((params.resolution ?? '').length > 0) {
+      this.resolution = params.resolution ?? this.resolution
+    }
     const routeStatus = params.statusText ?? ''
     const initialStatus = routeStatus.length > 0 ? routeStatus : this.bridge.getExportStatusText()
     this.applyStatus(initialStatus)
@@ -72,6 +92,40 @@ struct Export {
     this.progress = normalized
   }
 
+  private getDisplayStatusText(): string {
+    if (this.isSuccess) {
+      return '导出完成！'
+    }
+    if (this.isFailed) {
+      return '导出失败'
+    }
+    return '导出中...'
+  }
+
+  private getEstimatedTimeText(): string {
+    if (this.isSuccess || this.isFailed) {
+      return ''
+    }
+    const remaining = Math.ceil((100 - this.progress) * 0.6)
+    return `预估剩余：${Math.max(0, remaining)}秒`
+  }
+
+  private openCancelModal(): void {
+    if (this.isSuccess || this.isFailed) {
+      return
+    }
+    this.showCancelModal = true
+  }
+
+  private closeCancelModal(): void {
+    this.showCancelModal = false
+  }
+
+  private confirmCancelExport(): void {
+    this.showCancelModal = false
+    this.backToEditor()
+  }
+
   private backToLibrary(): void {
     try {
       this.getUIContext().getRouter().pushUrl({
@@ -93,154 +147,202 @@ struct Export {
     }
   }
 
-  private shareToWeChat(): void {
-    debugLog('导出页', `点击分享，状态=${this.statusText}`)
-  }
-
   build() {
-    Stack({ alignContent: Alignment.Center }) {
-      Column({ space: 10 }) {
-        Row()
-          .width('88%')
-          .height(14)
-          .borderRadius(7)
-          .backgroundColor('#1E293B')
-        Row()
-          .width('92%')
-          .height(168)
-          .borderRadius(14)
-          .backgroundColor('#0F172A')
-        Row()
-          .width('84%')
-          .height(12)
-          .borderRadius(6)
-          .backgroundColor('#1E293B')
-        Row()
-          .width('78%')
-          .height(12)
-          .borderRadius(6)
-          .backgroundColor('#1E293B')
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column() {
+        Row() {
+          Text('← 返回')
+            .fontSize(16)
+            .fontColor('#666666')
+            .padding(8)
+          Text(this.pageTitle)
+            .fontSize(18)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#FFFFFF')
+          Row()
+            .width(60)
+      }
+      .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+        .alignItems(VerticalAlign.Center)
+        .padding({ top: 16, bottom: 16 })
+
+        Column({ space: 0 }) {
+          Text(this.getDisplayStatusText())
+            .fontSize(24)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#FFFFFF')
+            .textAlign(TextAlign.Center)
+            .width('100%')
+            .margin({ bottom: 40 })
+
+          Column({ space: 0 }) {
+            Stack({ alignContent: Alignment.Start }) {
+              Row()
+                .width('100%')
+                .height(8)
+                .borderRadius(4)
+                .backgroundColor('#333333')
+              Row()
+                .width(`${this.progress}%`)
+                .height(8)
+                .borderRadius(4)
+                .backgroundColor('#0A59F7')
+            }
+            .width('100%')
+            .margin({ bottom: 12 })
+            Row() {
+              Text(`${this.progress}%`)
+                .fontSize(14)
+                .fontColor('#999999')
+              Text(this.getEstimatedTimeText())
+                .fontSize(14)
+                .fontColor('#999999')
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.SpaceBetween)
+          }
+          .width('100%')
+          .margin({ bottom: 24 })
+
+          Column({ space: 8 }) {
+            Row() {
+              Text('模板：')
+                .fontSize(14)
+                .fontColor('#999999')
+              Text(this.templateName)
+                .fontSize(14)
+                .fontColor('#FFFFFF')
+            }
+            Row() {
+              Text('分辨率：')
+                .fontSize(14)
+                .fontColor('#999999')
+              Text(this.resolution)
+                .fontSize(14)
+                .fontColor('#FFFFFF')
+            }
+            Row() {
+              Text('内容：')
+                .fontSize(14)
+                .fontColor('#999999')
+              Text(this.contentInfo)
+                .fontSize(14)
+                .fontColor('#FFFFFF')
+            }
+          }
+          .width('100%')
+          .padding(16)
+          .backgroundColor('#282828')
+          .borderRadius(12)
+          .margin({ bottom: 40 })
+
+          Column({ space: 0 }) {
+            if (!this.isSuccess && !this.isFailed) {
+              Button('取消导出')
+                .width('100%')
+                .height(56)
+                .backgroundColor('#333333')
+                .fontColor('#FFFFFF')
+                .fontSize(16)
+                .fontWeight(FontWeight.Medium)
+                .borderRadius(8)
+                .onClick(() => this.openCancelModal())
+            } else if (this.isSuccess) {
+              Button('返回列表')
+                .width('100%')
+                .height(56)
+                .backgroundColor('#FF7A00')
+                .fontColor('#FFFFFF')
+                .fontSize(16)
+                .fontWeight(FontWeight.Medium)
+                .borderRadius(8)
+                .onClick(() => this.backToLibrary())
+            } else {
+              Button('返回剪辑页')
+                .width('100%')
+                .height(56)
+                .backgroundColor('#0A59F7')
+                .fontColor('#FFFFFF')
+                .fontSize(16)
+                .fontWeight(FontWeight.Medium)
+                .borderRadius(8)
+                .onClick(() => this.backToEditor())
+              Text(this.statusText)
+                .fontSize(13)
+                .fontColor('#999999')
+                .textAlign(TextAlign.Center)
+                .width('100%')
+                .margin({ top: 12 })
+            }
+          }
+          .width('100%')
+          .margin({ bottom: 24 })
+
+          Text('导出完成后将自动保存到本地相册')
+            .fontSize(14)
+            .fontColor('#666666')
+            .textAlign(TextAlign.Center)
+            .width('100%')
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
       }
       .width('100%')
       .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-      .backgroundColor('#020617')
-      .opacity(0.45)
-      .blur(18)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor('#181818')
 
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor('#02061799')
-
-      Column({ space: 18 }) {
-        if (!this.isSuccess && !this.isFailed) {
-          LoadingProgress()
-            .color('#F97316')
-            .width(72)
-            .height(72)
-          Column({ space: 6 }) {
-            Text('视频导出中...')
-              .fontSize(24)
-              .fontWeight(FontWeight.Bold)
+      if (this.showCancelModal) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#B3000000')
+        Column({ space: 0 }) {
+          Text('确认取消导出？')
+            .fontSize(18)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#FFFFFF')
+            .textAlign(TextAlign.Center)
+            .width('100%')
+            .margin({ bottom: 12 })
+          Text('取消导出将丢失当前进度')
+            .fontSize(14)
+            .fontColor('#999999')
+            .textAlign(TextAlign.Center)
+            .width('100%')
+            .margin({ bottom: 24 })
+          Row({ space: 12 }) {
+            Button('继续导出')
+              .layoutWeight(1)
+              .height(48)
+              .backgroundColor('#333333')
               .fontColor('#FFFFFF')
-            Text('正在应用隐私遮罩并渲染模板。')
-              .fontSize(13)
-              .fontColor('#94A3B8')
-          }
-          Stack({ alignContent: Alignment.Start }) {
-            Row()
-              .width('100%')
-              .height(8)
-              .borderRadius(10)
-              .backgroundColor('#1E293B')
-            Row()
-              .width(`${this.progress}%`)
-              .height(8)
-              .borderRadius(10)
-              .backgroundColor('#F97316')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .borderRadius(8)
+              .onClick(() => this.closeCancelModal())
+            Button('取消')
+              .layoutWeight(1)
+              .height(48)
+              .backgroundColor('#0A59F7')
+              .fontColor('#FFFFFF')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .borderRadius(8)
+              .onClick(() => this.confirmCancelExport())
           }
           .width('100%')
-          Text(`导出进度 ${this.progress}%`)
-            .fontSize(12)
-            .fontColor('#64748B')
-        } else if (this.isSuccess) {
-          Text('✓')
-            .fontSize(42)
-            .fontColor('#22C55E')
-            .width(92)
-            .height(92)
-            .textAlign(TextAlign.Center)
-            .borderRadius(46)
-            .backgroundColor('#052E16')
-          Column({ space: 6 }) {
-            Text('导出完成')
-              .fontSize(24)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#FFFFFF')
-            Text('视频已保存到相册。')
-              .fontSize(13)
-              .fontColor('#94A3B8')
-          }
-          Button('分享至微信')
-            .width('100%')
-            .height(44)
-            .backgroundColor('#EA580C')
-            .fontColor('#FFFFFF')
-            .fontSize(14)
-            .fontWeight(FontWeight.Bold)
-            .borderRadius(12)
-            .onClick(() => this.shareToWeChat())
-          Button('返回行程库')
-            .width('100%')
-            .height(44)
-            .backgroundColor('#1E293B')
-            .fontColor('#CBD5E1')
-            .fontSize(14)
-            .borderRadius(12)
-            .onClick(() => this.backToLibrary())
-        } else {
-          Text('!')
-            .fontSize(42)
-            .fontColor('#EF4444')
-            .width(92)
-            .height(92)
-            .textAlign(TextAlign.Center)
-            .borderRadius(46)
-            .backgroundColor('#450A0A')
-          Column({ space: 6 }) {
-            Text('导出失败')
-              .fontSize(24)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#FFFFFF')
-            Text(this.statusText)
-              .fontSize(12)
-              .fontColor('#FCA5A5')
-              .maxLines(3)
-          }
-          Button('返回剪辑页')
-            .width('100%')
-            .height(44)
-            .backgroundColor('#334155')
-            .fontColor('#FFFFFF')
-            .fontSize(14)
-            .borderRadius(12)
-            .onClick(() => this.backToEditor())
         }
+        .width('82%')
+        .padding(24)
+        .backgroundColor('#282828')
+        .borderRadius(16)
+        .position({ x: '9%', y: '38%' })
       }
-      .width('92%')
-      .padding({ left: 20, right: 20, top: 28, bottom: 24 })
-      .backgroundColor('#0F172ACC')
-      .borderRadius(20)
-      .border({ width: 1, color: '#334155' })
-
-      Text(this.tripTitle)
-        .fontSize(12)
-        .fontColor('#64748B')
-        .margin({ top: 12 })
-      .position({ y: '76%' })
     }
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .width('100%')
     .height('100%')
   }

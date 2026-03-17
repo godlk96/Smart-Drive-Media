@@ -1,6 +1,7 @@
+import { SeamlessVideoPlayer, SeamlessVideoController } from '../components/SeamlessVideoPlayer'
 import { sharedCoreBridge } from '../bridge/CoreBridge'
 import { EditorStateModel, PreviewSlotModel, TemplateCardModel, TimelineMarkerModel, TimelineTrackModel } from '../model/AppState'
-import { createEditorStateFromSnapshot, deepCloneExportSnapshot, ExportSnapshot } from '../model/Models'
+import { createEditorStateFromSnapshot, deepCloneExportSnapshot, ExportSnapshot, resolveTemplateDefinition } from '../model/Models'
 import { startNativeExport } from '../NativeExportManager'
 import { debugLog } from '../utils/Logger'
 import common from '@ohos.app.ability.common'
@@ -10,26 +11,47 @@ import common from '@ohos.app.ability.common'
 struct Editor {
   private bridge = sharedCoreBridge
   private exportSessionSeed: string = ''
-  private previewController: VideoController = new VideoController()
-  private secondaryControllerA: VideoController = new VideoController()
-  private secondaryControllerB: VideoController = new VideoController()
-  private secondaryControllerC: VideoController = new VideoController()
+  private primaryControllerA: SeamlessVideoController = new SeamlessVideoController()
+  private primaryControllerB: SeamlessVideoController = new SeamlessVideoController()
+  private secondaryControllerA: SeamlessVideoController = new SeamlessVideoController()
+  private secondaryControllerB: SeamlessVideoController = new SeamlessVideoController()
+  private secondaryControllerC: SeamlessVideoController = new SeamlessVideoController()
   private controlsTimer: number = -1
   private speedEmulationTimer: number = -1
   private speedEmulationFractionSec: number = 0
+  private lastPlayheadTickAt: number = 0
   private manualSpeedMode: boolean = false
   private lastSecondarySeekMs: number = 0
   private lastLoggedSecond: number = -1
+  private playheadMs: number = 0
   private previewLogged: boolean = false
   private timelineLogged: boolean = false
   private speedProbeLogged: boolean = false
+  private ignorePrimaryPauseUntilMs: number = 0
   @State private showPlayerControls: boolean = true
   @State private showPreviewCover: boolean = true
   @State private seamlessPendingPlay: boolean = false
   @State private previewPlaying: boolean = true
+  @State private primaryUseA: boolean = true
+  @State private primarySrcA: string = ''
+  @State private primarySrcB: string = ''
+  @State private primaryMutedA: boolean = true
+  @State private primaryMutedB: boolean = true
+  @State private primaryReadyA: boolean = false
+  @State private primaryReadyB: boolean = false
+  private standbyWarmUri: string = ''
+  @State private previewRenderVersion: number = 0
   @State private showSlotLabels: boolean = false
   @State private exportLoadingVisible: boolean = false
   @State private exportLoadingText: string = '导出处理中...'
+  @State private hasUnsavedChanges: boolean = false
+  @State private backConfirmVisible: boolean = false
+  @State private toastText: string = ''
+  @State private toastVisible: boolean = false
+  @State private clipMarks: Array<number> = []
+  @State private mosaicEnabledUi: boolean = true
+  @State private isSwitchingClip: boolean = false // Add flag for smooth visual transition
+  private toastTimer: number = -1
   @State private state: EditorStateModel = {
     tripId: '',
     tripTitle: '剪辑工作台',
@@ -78,6 +100,7 @@ struct Editor {
     const nextState = this.state
     nextState.playheadSec = clamped
     this.state = nextState
+    this.playheadMs = clamped * 1000
   }
 
   aboutToAppear(): void {
@@ -94,12 +117,20 @@ struct Editor {
     debugLog('剪辑页', `进入页面，行程ID=${tripId}，标题提示=${title}，副标题提示=${subtitle}`)
     this.exportSessionSeed = `${tripId}_${Date.now()}`
     this.applyState(this.bridge.createEditorState(tripId, title, subtitle))
+    this.primaryUseA = true
+    this.syncPrimarySourcesByState()
+    this.syncPrimaryMuteByState()
     this.showPreviewCover = this.state.previewUri.length > 0
     this.seamlessPendingPlay = false
     this.previewPlaying = true
     this.showPlayerControls = true
     this.applyPlaybackRate()
     this.scheduleHideControls()
+    this.hasUnsavedChanges = false
+    this.backConfirmVisible = false
+    this.clipMarks = []
+    this.mosaicEnabledUi = true
+    this.lastPlayheadTickAt = Date.now()
     const trackSummary = this.state.timeline.map((item: TimelineTrackModel) => `${item.cameraPosition}:${item.segmentCount}`).join(',')
     debugLog('剪辑诊断', `初始化完成，时长=${this.state.totalDurationSec}s，轨道数=${this.state.timeline.length}，轨道明细=${trackSummary}，预览URI长度=${this.state.previewUri.length}，预览视角=${this.state.previewCamera}`)
   }
@@ -107,6 +138,10 @@ struct Editor {
   aboutToDisappear(): void {
     this.clearHideControlsTimer()
     this.clearSpeedEmulationTimer()
+    if (this.toastTimer >= 0) {
+      clearTimeout(this.toastTimer)
+      this.toastTimer = -1
+    }
   }
 
   private clearHideControlsTimer(): void {
@@ -142,14 +177,33 @@ struct Editor {
   }
 
   private getPreviewAspectRatio(): number {
-    if (this.state.activeTemplateId === 'T2') {
+    const template = resolveTemplateDefinition(this.state.activeTemplateId)
+    if (template.templateId === 'T1') {
+      return 1920 / 2160
+    }
+    if (template.templateId === 'T2') {
       return 1920 / 1620
+    }
+    if (template.templateId === 'T3' || template.templateId === 'T4') {
+      return 3840 / 1080
     }
     return 16 / 9
   }
 
   private getPrimaryPreviewSlot(): PreviewSlotModel | undefined {
     return this.state.previewSlots[0]
+  }
+
+  private isPrimarySlotEventValid(slot: PreviewSlotModel): boolean {
+    const primary = this.getPrimaryPreviewSlot()
+    if (!primary) {
+      return false
+    }
+    const valid = primary.id === slot.id && primary.uri === slot.uri
+    if (!valid) {
+      debugLog('剪辑诊断', `忽略主画面过期回调，slot=${slot.id}/${slot.uri}，primary=${primary.id}/${primary.uri}`)
+    }
+    return valid
   }
 
   private isPrimaryPreviewSlot(slotId: string): boolean {
@@ -161,22 +215,236 @@ struct Editor {
     return this.state.previewSlots.some((slot: PreviewSlotModel) => slot.uri.length > 0)
   }
 
+  private getActivePrimaryController(): SeamlessVideoController {
+    return this.primaryUseA ? this.primaryControllerA : this.primaryControllerB
+  }
+
+  private getStandbyPrimaryController(): SeamlessVideoController {
+    return this.primaryUseA ? this.primaryControllerB : this.primaryControllerA
+  }
+
+  private getActivePrimarySrc(): string {
+    return this.primaryUseA ? this.primarySrcA : this.primarySrcB
+  }
+
+  private getStandbyPrimarySrc(): string {
+    return this.primaryUseA ? this.primarySrcB : this.primarySrcA
+  }
+
+  private setActivePrimarySrc(uri: string): void {
+    if (this.primaryUseA) {
+      this.primarySrcA = uri
+      this.primaryReadyA = false
+      return
+    }
+    this.primarySrcB = uri
+    this.primaryReadyB = false
+  }
+
+  private setStandbyPrimarySrc(uri: string): void {
+    this.standbyWarmUri = ''
+    if (this.primaryUseA) {
+      this.primarySrcB = uri
+      this.primaryReadyB = false
+      return
+    }
+    this.primarySrcA = uri
+    this.primaryReadyA = false
+  }
+
+  private isStandbyReadyFor(uri: string): boolean {
+    if (uri.length === 0) {
+      return false
+    }
+    if (this.primaryUseA) {
+      return this.primarySrcB === uri && this.primaryReadyB
+    }
+    return this.primarySrcA === uri && this.primaryReadyA
+  }
+
+  private getPrimaryPlayerVisible(useA: boolean): number {
+    return this.primaryUseA === useA ? 1 : 0.001
+  }
+
+  private markPrimaryPrepared(useA: boolean): void {
+    if (useA) {
+      this.primaryReadyA = true
+      return
+    }
+    this.primaryReadyB = true
+  }
+
+  private syncPrimarySourcesByState(): void {
+    const primary = this.getPrimaryPreviewSlot()
+    if (!primary || primary.uri.length === 0) {
+      this.primarySrcA = ''
+      this.primarySrcB = ''
+      this.primaryReadyA = false
+      this.primaryReadyB = false
+      this.standbyWarmUri = ''
+      return
+    }
+    if (this.getActivePrimarySrc() !== primary.uri) {
+      this.setActivePrimarySrc(primary.uri)
+    }
+    const preloadUri = primary.nextUri ?? ''
+    if (preloadUri.length === 0 || preloadUri === primary.uri) {
+      if (this.getStandbyPrimarySrc().length > 0) {
+        this.setStandbyPrimarySrc('')
+      }
+      return
+    }
+    if (this.getStandbyPrimarySrc() !== preloadUri) {
+      this.setStandbyPrimarySrc(preloadUri)
+    }
+  }
+
+  private syncPrimaryMuteByState(): void {
+    const primary = this.getPrimaryPreviewSlot()
+    const allowAudio = primary ? this.getAudioSlotId() === primary.id : false
+    const activeMuted = allowAudio ? this.state.muted : true
+    if (this.primaryUseA) {
+      this.primaryMutedA = activeMuted
+      this.primaryMutedB = true
+      return
+    }
+    this.primaryMutedA = true
+    this.primaryMutedB = activeMuted
+  }
+
+  private warmStandbyIfNeeded(nextSec: number, currentClipEnd: number): void {
+    const currentPrimary = this.getPrimaryPreviewSlot()
+    const preloadUri = currentPrimary?.nextUri ?? ''
+    if (preloadUri.length === 0 || nextSec < currentClipEnd - 0.45) {
+      return
+    }
+    if (!this.isStandbyReadyFor(preloadUri) || this.standbyWarmUri === preloadUri) {
+      return
+    }
+    const standby = this.getStandbyPrimaryController()
+    standby.setCurrentTime(0)
+    standby.start()
+    setTimeout(() => {
+      standby.pause()
+    }, 60)
+    this.standbyWarmUri = preloadUri
+    debugLog('剪辑诊断', `预热命中，待切段URI=${preloadUri}`)
+  }
+
+  private isPrimaryPlayerActive(useA: boolean): boolean {
+    return this.primaryUseA === useA
+  }
+
+  private handlePrimaryPrepared(useA: boolean): void {
+    this.markPrimaryPrepared(useA)
+    if (!this.isPrimaryPlayerActive(useA)) {
+      return
+    }
+    this.isSwitchingClip = false
+    this.ignorePrimaryPauseUntilMs = Date.now() + 500
+    this.applyPlaybackRate()
+    this.seekAllControllers(this.getLocalSecond(this.state.playheadSec), true)
+    if (this.seamlessPendingPlay) {
+      this.seamlessPendingPlay = false
+      this.startAllPreview()
+      this.showPreviewCover = false
+      this.showControlsTemporarily()
+      return
+    }
+    if (this.showPreviewCover) {
+      this.showPreviewCover = false
+      this.showControlsTemporarily()
+    }
+    if (this.previewPlaying) {
+      this.startAllPreview()
+    } else {
+      this.pauseAllPreview()
+    }
+  }
+
+  private handlePrimaryStart(useA: boolean): void {
+    if (!this.isPrimaryPlayerActive(useA)) {
+      return
+    }
+    this.showPreviewCover = false
+    this.previewPlaying = true
+    this.ensureSpeedEmulation()
+    this.showControlsTemporarily()
+  }
+
+  private handlePrimaryPause(useA: boolean): void {
+    if (!this.isPrimaryPlayerActive(useA)) {
+      return
+    }
+    if (this.shouldIgnorePrimaryPause()) {
+      debugLog('剪辑诊断', `忽略主画面暂停回写，manual=${this.manualSpeedMode}，pending=${this.seamlessPendingPlay}，switching=${this.isSwitchingClip}`)
+      return
+    }
+    this.previewPlaying = false
+    this.clearSpeedEmulationTimer()
+    this.showControlsTemporarily()
+  }
+
+  private handlePrimaryFinish(useA: boolean): void {
+    if (!this.isPrimaryPlayerActive(useA)) {
+      return
+    }
+    if (this.state.canPlayNext) {
+      if (this.isSwitchingClip || this.seamlessPendingPlay) {
+        debugLog('剪辑诊断', `忽略重复finish切段，switching=${this.isSwitchingClip}，pending=${this.seamlessPendingPlay}`)
+        return
+      }
+      this.playNextClipForSeamless()
+      return
+    }
+    if (this.state.playheadSec >= this.state.totalDurationSec - 1) {
+      this.showPreviewCover = true
+      this.clearSpeedEmulationTimer()
+      this.showControlsTemporarily()
+      this.pauseAllPreview()
+      this.updatePlayheadSec(this.state.totalDurationSec)
+      this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.playheadSec * 1000)))
+    }
+  }
+
+  private handlePrimaryError(useA: boolean): void {
+    if (!this.isPrimaryPlayerActive(useA)) {
+      return
+    }
+    this.showPreviewCover = true
+  }
+
   private isMergedTrip(): boolean {
     return this.state.tripId.startsWith('trip-merged-')
   }
 
-  private getSecondaryController(slotId: string): VideoController {
+  private getSecondaryController(slotId: string): SeamlessVideoController {
     if (slotId === 'pip' || slotId === 'bottomLeft' || slotId === 'left') {
       return this.secondaryControllerA
     }
-    if (slotId === 'bottomRight' || slotId === 'right' || slotId === 'center' || slotId === 'middle') {
+    if (slotId === 'bottomRight' || slotId === 'right') {
       return this.secondaryControllerB
+    }
+    if (slotId === 'center' || slotId === 'middle') {
+      return this.secondaryControllerC
     }
     return this.secondaryControllerC
   }
 
+  private getAudioSlotId(): string {
+    const frontSlot = this.state.previewSlots.find((slot: PreviewSlotModel) => slot.camera === 'Front')
+    if (frontSlot) {
+      return frontSlot.id
+    }
+    const primary = this.getPrimaryPreviewSlot()
+    return primary ? primary.id : ''
+  }
+
   private startAllPreview(): void {
-    this.previewController.start()
+    this.ignorePrimaryPauseUntilMs = Date.now() + 600
+    this.lastPlayheadTickAt = Date.now()
+    this.syncPrimaryMuteByState()
+    this.getActivePrimaryController().start()
     this.secondaryControllerA.start()
     this.secondaryControllerB.start()
     this.secondaryControllerC.start()
@@ -186,7 +454,9 @@ struct Editor {
   }
 
   private pauseAllPreview(): void {
-    this.previewController.pause()
+    this.ignorePrimaryPauseUntilMs = 0
+    this.getActivePrimaryController().pause()
+    this.getStandbyPrimaryController().pause()
     this.secondaryControllerA.pause()
     this.secondaryControllerB.pause()
     this.secondaryControllerC.pause()
@@ -201,6 +471,9 @@ struct Editor {
       this.pauseAllPreview()
       debugLog('剪辑诊断', '点击暂停预览，已同步暂停全部画面')
     } else {
+      if (Math.abs(this.state.playheadSec - this.state.totalDurationSec) < 0.2) {
+        this.syncGlobalPlayhead(0, true)
+      }
       this.startAllPreview()
       this.showPreviewCover = false
       debugLog('剪辑诊断', '点击播放预览，已同步播放全部画面')
@@ -229,18 +502,289 @@ struct Editor {
 
   private syncGlobalPlayhead(second: number, fromUser: boolean): void {
     const clamped = Math.max(0, Math.min(second, this.state.totalDurationSec))
+    if (fromUser) {
+      this.ignorePrimaryPauseUntilMs = Date.now() + 900
+    }
     this.updatePlayheadSec(clamped)
     this.applyState(this.bridge.seekGlobalPlayhead(Math.floor(clamped)))
+    this.syncPrimarySourcesByState()
+    this.syncPrimaryMuteByState()
     this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.playheadSec * 1000)))
     const localSecond = this.getLocalSecond(this.state.playheadSec)
-    this.seekAllControllers(localSecond, true)
+    
+    // Optimize: only seek if difference is significant or forced
+    const now = Date.now()
+    if (fromUser || now - this.lastSecondarySeekMs > 1000) {
+      this.seekAllControllers(localSecond, true)
+    }
+    
     if (fromUser && Math.floor(clamped) !== this.lastLoggedSecond) {
       this.lastLoggedSecond = Math.floor(clamped)
       debugLog('剪辑页', `拖动全局进度，秒=${Math.floor(clamped)}，片段=${this.state.currentClipIndex}/${this.state.currentClipTotal}，片内秒=${Math.floor(localSecond)}`)
     }
     if (fromUser) {
+      this.hasUnsavedChanges = true
       this.showControlsTemporarily()
     }
+  }
+
+  private markUnsaved(): void {
+    this.hasUnsavedChanges = true
+  }
+
+  private showToast(message: string): void {
+    this.toastText = message
+    this.toastVisible = true
+    if (this.toastTimer >= 0) {
+      clearTimeout(this.toastTimer)
+    }
+    this.toastTimer = setTimeout(() => {
+      this.toastVisible = false
+      this.toastTimer = -1
+    }, 2000)
+  }
+
+  private getTemplateUiName(card: TemplateCardModel): string {
+    if (card.id === 'T5') {
+      return '单视角'
+    }
+    if (card.id === 'T1') {
+      return '防追尾双录'
+    }
+    if (card.id === 'T2') {
+      return '避险防加塞'
+    }
+    if (card.id === 'T3') {
+      return '左右盲区'
+    }
+    if (card.id === 'T4') {
+      return '沉浸式旅拍'
+    }
+    return card.title
+  }
+
+  private getTemplateResolution(card: TemplateCardModel): string {
+    if (card.id === 'T5') {
+      return '1920×1080'
+    }
+    if (card.id === 'T1') {
+      return '1920×2160'
+    }
+    if (card.id === 'T2') {
+      return '1920×1620'
+    }
+    return '3840×1080'
+  }
+
+  private getTemplateIcon(card: TemplateCardModel): string {
+    if (card.id === 'T5') {
+      return '📹'
+    }
+    if (card.id === 'T1') {
+      return '📹📹'
+    }
+    if (card.id === 'T2') {
+      return '👁️👁️👁️'
+    }
+    if (card.id === 'T3') {
+      return '⬅️➡️'
+    }
+    return '🎬'
+  }
+
+  private templateSupportsMosaic(templateId: string): boolean {
+    return templateId === 'T1' || templateId === 'T2' || templateId === 'T5'
+  }
+
+  private templateSupportsAudio(templateId: string): boolean {
+    return true
+  }
+
+  private normalizeCameraName(camera: string): string {
+    if (camera === 'FRONT') {
+      return 'Front'
+    }
+    if (camera === 'REAR') {
+      return 'Back'
+    }
+    if (camera === 'LEFT') {
+      return 'Left'
+    }
+    if (camera === 'RIGHT') {
+      return 'Right'
+    }
+    if (camera === 'LEFT_FRONT') {
+      return 'LeftFront'
+    }
+    if (camera === 'RIGHT_FRONT') {
+      return 'RightFront'
+    }
+    return camera
+  }
+
+  private cameraZhName(camera: string): string {
+    const normalized = this.normalizeCameraName(camera)
+    if (normalized === 'Front') {
+      return '前'
+    }
+    if (normalized === 'Back') {
+      return '后'
+    }
+    if (normalized === 'Left') {
+      return '左后'
+    }
+    if (normalized === 'Right') {
+      return '右后'
+    }
+    if (normalized === 'LeftFront') {
+      return '左前'
+    }
+    if (normalized === 'RightFront') {
+      return '右前'
+    }
+    return normalized
+  }
+
+  private isTemplateDisabled(card: TemplateCardModel): boolean {
+    const definition = resolveTemplateDefinition(card.id)
+    const tracks = this.state.timeline.map((item: TimelineTrackModel) => this.normalizeCameraName(item.cameraPosition))
+    return definition.requiredCameras.some((camera) => !tracks.some((item: string) => item === this.normalizeCameraName(String(camera))))
+  }
+
+  private getTemplateMissingViews(card: TemplateCardModel): string {
+    const definition = resolveTemplateDefinition(card.id)
+    const tracks = this.state.timeline.map((item: TimelineTrackModel) => this.normalizeCameraName(item.cameraPosition))
+    const missing = definition.requiredCameras
+      .filter((camera) => !tracks.some((item: string) => item === this.normalizeCameraName(String(camera))))
+      .map((camera) => this.cameraZhName(this.normalizeCameraName(String(camera))))
+    return missing.join('、')
+  }
+
+  private selectTemplateForUi(card: TemplateCardModel): void {
+    if (this.isTemplateDisabled(card)) {
+      const missing = this.getTemplateMissingViews(card)
+      this.showToast(`缺少${missing}视角，无法使用该模板`)
+      return
+    }
+    this.selectTemplate(card)
+  }
+
+  private addClipMark(): void {
+    if (this.clipMarks.length >= 2) {
+      this.showToast('最多只能添加2个剪辑点')
+      return
+    }
+    const marks = [...this.clipMarks, Math.floor(this.state.playheadSec)]
+    this.clipMarks = marks
+    if (marks.length === 2) {
+      const start = Math.min(marks[0], marks[1])
+      const end = Math.max(marks[0], marks[1])
+      this.applyState(this.bridge.updateSelectionRange(start, end))
+      this.syncGlobalPlayhead(this.state.playheadSec, false)
+    }
+    this.markUnsaved()
+    this.showToast('已添加剪辑点')
+  }
+
+  private undoClipMark(): void {
+    if (this.clipMarks.length === 0) {
+      this.showToast('没有可撤回的剪辑点')
+      return
+    }
+    const marks = [...this.clipMarks]
+    marks.pop()
+    this.clipMarks = marks
+    if (marks.length === 0) {
+      this.applyState(this.bridge.updateSelectionRange(0, this.state.totalDurationSec))
+    } else if (marks.length === 1) {
+      this.applyState(this.bridge.updateSelectionRange(marks[0], this.state.totalDurationSec))
+    }
+    this.markUnsaved()
+    this.showToast('已撤回上次剪辑点')
+  }
+
+  private getPlayheadPercent(): string {
+    const total = Math.max(1, this.state.totalDurationSec)
+    const value = Math.max(0, Math.min(100, (this.state.playheadSec / total) * 100))
+    return `${value}%`
+  }
+
+  private getClipSegmentLeft(): string {
+    if (this.clipMarks.length < 2) {
+      return '0%'
+    }
+    const total = Math.max(1, this.state.totalDurationSec)
+    const start = Math.min(this.clipMarks[0], this.clipMarks[1])
+    return `${Math.max(0, Math.min(100, (start / total) * 100))}%`
+  }
+
+  private getClipSegmentWidth(): string {
+    if (this.clipMarks.length < 2) {
+      return '0%'
+    }
+    const total = Math.max(1, this.state.totalDurationSec)
+    const start = Math.min(this.clipMarks[0], this.clipMarks[1])
+    const end = Math.max(this.clipMarks[0], this.clipMarks[1])
+    return `${Math.max(0, Math.min(100, ((end - start) / total) * 100))}%`
+  }
+
+  private markPercent(mark: number): string {
+    const total = Math.max(1, this.state.totalDurationSec)
+    return `${Math.max(0, Math.min(100, (mark / total) * 100))}%`
+  }
+
+  private formatTimelineTick(seconds: number): string {
+    const min = Math.floor(seconds / 60)
+    const sec = Math.floor(seconds % 60)
+    return `${min}:${sec.toString().padStart(2, '0')}`
+  }
+
+  private getTimelineTicks(): Array<number> {
+    const result: Array<number> = []
+    const interval = this.state.totalDurationSec <= 60 ? 10 : 30
+    for (let point = 0; point <= this.state.totalDurationSec; point += interval) {
+      result.push(point)
+    }
+    if (result.length === 0 || result[result.length - 1] !== this.state.totalDurationSec) {
+      result.push(this.state.totalDurationSec)
+    }
+    return result
+  }
+
+  private getSegmentInfoText(): string {
+    return `已添加 ${this.clipMarks.length} 个剪辑点 | 总时长 ${this.state.totalDurationSec} 秒`
+  }
+
+  private handleBack(): void {
+    if (this.hasUnsavedChanges) {
+      this.backConfirmVisible = true
+      return
+    }
+    try {
+      this.getUIContext().getRouter().back()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('剪辑页', `返回失败：${message}`)
+    }
+  }
+
+  private confirmBack(): void {
+    this.backConfirmVisible = false
+    try {
+      this.getUIContext().getRouter().back()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('剪辑页', `返回失败：${message}`)
+    }
+  }
+
+  private cancelBack(): void {
+    this.backConfirmVisible = false
+  }
+
+  private toggleMosaicByUi(value: boolean): void {
+    this.mosaicEnabledUi = value
+    this.markUnsaved()
   }
 
   private ensureSpeedEmulation(): void {
@@ -248,13 +792,46 @@ struct Editor {
     if (!this.previewPlaying) {
       return
     }
+    this.lastPlayheadTickAt = Date.now()
     const rate = this.getPlaybackRate()
     if (rate <= 1) {
       this.manualSpeedMode = false
+      this.speedEmulationTimer = setInterval(() => {
+        if (!this.previewPlaying) {
+          return
+        }
+        if (this.isSwitchingClip) {
+          this.lastPlayheadTickAt = Date.now()
+          return
+        }
+        const now = Date.now()
+        const elapsedSec = Math.max(0, (now - this.lastPlayheadTickAt) / 1000)
+        this.lastPlayheadTickAt = now
+        if (elapsedSec <= 0) {
+          return
+        }
+        
+        const nextSec = Math.min(this.state.totalDurationSec, this.state.playheadSec + elapsedSec)
+        const currentClipEnd = this.getCurrentClipStartSec() + this.getClipSpanSec()
+        this.warmStandbyIfNeeded(nextSec, currentClipEnd)
+        if (nextSec >= currentClipEnd - 0.18 && this.state.canPlayNext) {
+          debugLog('剪辑诊断', `提前触发切段，nextSec=${nextSec.toFixed(3)}，clipEnd=${currentClipEnd.toFixed(3)}`)
+          this.playNextClipForSeamless()
+          return
+        }
+
+        this.updatePlayheadSec(nextSec)
+        this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.playheadSec * 1000)))
+        if (nextSec >= this.state.totalDurationSec) {
+          this.previewPlaying = false
+          this.clearSpeedEmulationTimer()
+        }
+      }, 80)
       return
     }
     this.manualSpeedMode = true
-    this.previewController.pause()
+    this.getActivePrimaryController().pause()
+    this.getStandbyPrimaryController().pause()
     this.secondaryControllerA.pause()
     this.secondaryControllerB.pause()
     this.secondaryControllerC.pause()
@@ -288,43 +865,11 @@ struct Editor {
 
   private applyPlaybackRate(): void {
     const rate = this.getPlaybackRate()
-    const applyRate = (controller: VideoController, name: string): void => {
-      const controllerHost = controller as Object as Record<string, (value: number) => void>
-      const hasSetPlaybackSpeed = controllerHost['setPlaybackSpeed'] !== undefined
-      const hasSetSpeed = controllerHost['setSpeed'] !== undefined
-      const hasSetRate = controllerHost['setRate'] !== undefined
-      if (!this.speedProbeLogged) {
-        debugLog('倍速诊断', `控制器能力 ${name} setPlaybackSpeed=${hasSetPlaybackSpeed} setSpeed=${hasSetSpeed} setRate=${hasSetRate}`)
-      }
-      try {
-        if (hasSetPlaybackSpeed) {
-          controllerHost['setPlaybackSpeed'](rate)
-          debugLog('倍速诊断', `倍速应用成功 ${name} method=setPlaybackSpeed rate=${rate}`)
-          return
-        }
-        if (hasSetSpeed) {
-          controllerHost['setSpeed'](rate)
-          debugLog('倍速诊断', `倍速应用成功 ${name} method=setSpeed rate=${rate}`)
-          return
-        }
-        if (hasSetRate) {
-          controllerHost['setRate'](rate)
-          debugLog('倍速诊断', `倍速应用成功 ${name} method=setRate rate=${rate}`)
-          return
-        }
-        debugLog('倍速诊断', `倍速应用失败 ${name} 无可用方法 rate=${rate}`)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        debugLog('倍速诊断', `倍速应用异常 ${name} rate=${rate} message=${message}`)
-      }
-    }
-    applyRate(this.previewController, 'primary')
-    applyRate(this.secondaryControllerA, 'secondaryA')
-    applyRate(this.secondaryControllerB, 'secondaryB')
-    applyRate(this.secondaryControllerC, 'secondaryC')
-    if (!this.speedProbeLogged) {
-      this.speedProbeLogged = true
-    }
+    this.primaryControllerA.setPlaybackSpeed(rate)
+    this.primaryControllerB.setPlaybackSpeed(rate)
+    this.secondaryControllerA.setPlaybackSpeed(rate)
+    this.secondaryControllerB.setPlaybackSpeed(rate)
+    this.secondaryControllerC.setPlaybackSpeed(rate)
   }
 
   private getClipSpanSec(): number {
@@ -347,7 +892,7 @@ struct Editor {
   }
 
   private seekPrimaryController(localSecond: number): void {
-    this.previewController.setCurrentTime(localSecond)
+    this.getActivePrimaryController().setCurrentTime(localSecond)
   }
 
   private seekSecondaryControllers(localSecond: number, force: boolean): void {
@@ -382,6 +927,21 @@ struct Editor {
     const total = Math.max(1, this.state.totalDurationSec)
     const widthPercent = Math.max(0, Math.min(100, ((this.state.selectionEndSec - this.state.selectionStartSec) / total) * 100))
     return `${widthPercent}%`
+  }
+
+  private hasActiveSelectionRange(): boolean {
+    return this.state.selectionStartSec > 0 || this.state.selectionEndSec < this.state.totalDurationSec
+  }
+
+  @State private timelineWidth: number = 0
+
+  private handleTimelineTouch(localX: number): void {
+    if (this.timelineWidth <= 0) {
+      return
+    }
+    const percent = Math.max(0, Math.min(1, localX / this.timelineWidth))
+    const targetSec = percent * this.state.totalDurationSec
+    this.updatePlayhead(targetSec)
   }
 
   private updateExportStatus(statusText: string): void {
@@ -459,6 +1019,8 @@ struct Editor {
 
   private switchCamera(camera: string): void {
     this.applyState(this.bridge.switchCamera(camera))
+    this.syncPrimarySourcesByState()
+    this.syncPrimaryMuteByState()
     this.showPreviewCover = this.state.previewUri.length > 0
     const angle = this.previewRotationAngle(this.state.previewCamera)
     debugLog('剪辑页', `切换播放器视角=${camera}，片段=${this.state.currentClipIndex}/${this.state.currentClipTotal}，旋转角=${angle}`)
@@ -466,10 +1028,19 @@ struct Editor {
   }
 
   private playPrevClip(): void {
+    const prevPrimaryUri = this.getPrimaryPreviewSlot()?.uri ?? ''
+    this.isSwitchingClip = true
     this.applyState(this.bridge.playPrevClip())
+    this.syncPrimarySourcesByState()
+    this.syncPrimaryMuteByState()
+    const nextPrimaryUri = this.getPrimaryPreviewSlot()?.uri ?? ''
     this.updatePlayheadSec(this.getCurrentClipStartSec())
     this.updatePlayheadText(this.bridge.updatePlayhead(this.state.playheadSec * 1000))
     this.seekAllControllers(0, true)
+    if (prevPrimaryUri === nextPrimaryUri) {
+      this.isSwitchingClip = false
+      debugLog('剪辑诊断', `上一片切换URI未变化，直接解除切换态，uri=${nextPrimaryUri}`)
+    }
     this.showPreviewCover = this.state.previewUri.length > 0
     this.seamlessPendingPlay = false
     debugLog('剪辑页', `切换上一片，当前=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
@@ -477,18 +1048,80 @@ struct Editor {
   }
 
   private playNextClip(): void {
+    const prevPrimaryUri = this.getPrimaryPreviewSlot()?.uri ?? ''
+    this.isSwitchingClip = true
     this.applyState(this.bridge.playNextClip())
+    this.syncPrimarySourcesByState()
+    this.syncPrimaryMuteByState()
+    const nextPrimaryUri = this.getPrimaryPreviewSlot()?.uri ?? ''
     this.updatePlayheadSec(this.getCurrentClipStartSec())
     this.updatePlayheadText(this.bridge.updatePlayhead(this.state.playheadSec * 1000))
     this.seekAllControllers(0, true)
+    if (prevPrimaryUri === nextPrimaryUri) {
+      this.isSwitchingClip = false
+      debugLog('剪辑诊断', `下一片切换URI未变化，直接解除切换态，uri=${nextPrimaryUri}`)
+    }
     this.showPreviewCover = this.state.previewUri.length > 0
     this.seamlessPendingPlay = false
     debugLog('剪辑页', `切换下一片，当前=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
     this.showControlsTemporarily()
   }
 
+  private playNextClipForSeamless(): void {
+    const currentPrimary = this.getPrimaryPreviewSlot()
+    const prevPrimaryUri = currentPrimary?.uri ?? ''
+    const preloadUri = currentPrimary?.nextUri ?? ''
+    this.isSwitchingClip = true
+    this.ignorePrimaryPauseUntilMs = Date.now() + 1400
+    this.applyState(this.bridge.playNextClip())
+    this.syncPrimarySourcesByState()
+    this.syncPrimaryMuteByState()
+    const nextPrimaryUri = this.getPrimaryPreviewSlot()?.uri ?? ''
+    debugLog('剪辑诊断', `自动切段主URI变化，changed=${prevPrimaryUri !== nextPrimaryUri}，from=${prevPrimaryUri}，to=${nextPrimaryUri}`)
+    if (preloadUri.length > 0 && nextPrimaryUri === preloadUri && this.isStandbyReadyFor(preloadUri)) {
+      this.primaryUseA = !this.primaryUseA
+      this.syncPrimaryMuteByState()
+      this.isSwitchingClip = false
+      this.seamlessPendingPlay = false
+      this.updatePlayheadSec(this.getCurrentClipStartSec())
+      this.updatePlayheadText(this.bridge.updatePlayhead(this.state.playheadSec * 1000))
+      this.getActivePrimaryController().setCurrentTime(0)
+      this.getActivePrimaryController().start()
+      this.getStandbyPrimaryController().pause()
+      this.syncPrimarySourcesByState()
+      this.standbyWarmUri = ''
+      this.showPreviewCover = false
+      this.showControlsTemporarily()
+      debugLog('剪辑诊断', `命中双实例预热切段，切换到${this.primaryUseA ? 'A' : 'B'}，uri=${nextPrimaryUri}`)
+      return
+    }
+    this.updatePlayheadSec(this.getCurrentClipStartSec())
+    this.updatePlayheadText(this.bridge.updatePlayhead(this.state.playheadSec * 1000))
+    this.showPreviewCover = false
+    this.seamlessPendingPlay = prevPrimaryUri !== nextPrimaryUri
+    this.standbyWarmUri = ''
+    if (prevPrimaryUri === nextPrimaryUri) {
+      this.isSwitchingClip = false
+      this.seekAllControllers(0, true)
+      this.startAllPreview()
+      debugLog('剪辑诊断', `自动切段URI未变化，直接续播，uri=${nextPrimaryUri}`)
+    }
+    this.showControlsTemporarily()
+    debugLog('剪辑页', `自动切换下一片，当前=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
+  }
+
   private updatePlayhead(second: number): void {
     this.syncGlobalPlayhead(second, true)
+  }
+
+  private shouldIgnorePrimaryPause(): boolean {
+    if (this.manualSpeedMode) {
+      return true
+    }
+    if (this.seamlessPendingPlay || this.isSwitchingClip) {
+      return true
+    }
+    return Date.now() < this.ignorePrimaryPauseUntilMs
   }
 
   private updateRangeStart(value: number): void {
@@ -497,6 +1130,7 @@ struct Editor {
     if (this.state.playheadSec < this.state.selectionStartSec) {
       this.updatePlayhead(this.state.selectionStartSec)
     }
+    this.markUnsaved()
     this.showControlsTemporarily()
   }
 
@@ -506,19 +1140,38 @@ struct Editor {
     if (this.state.playheadSec > this.state.selectionEndSec) {
       this.updatePlayhead(this.state.selectionEndSec)
     }
+    this.markUnsaved()
     this.showControlsTemporarily()
   }
 
   private selectTemplate(card: TemplateCardModel): void {
+    const wasPlaying = this.previewPlaying
+    this.seamlessPendingPlay = wasPlaying
+    this.pauseAllPreview()
     this.applyState(this.bridge.selectTemplate(card.id))
-    this.seekAllControllers(this.getLocalSecond(this.state.playheadSec), true)
-    this.showPreviewCover = this.hasPreviewSource()
-    if (this.previewPlaying) {
-      this.startAllPreview()
-    } else {
-      this.pauseAllPreview()
-    }
+    
+    // Reset to 0
+    this.updatePlayheadSec(0)
+    this.updatePlayheadText(this.bridge.updatePlayhead(0))
+    this.applyState(this.bridge.seekGlobalPlayhead(0))
+    this.syncPrimarySourcesByState()
+    this.syncPrimaryMuteByState()
+
+    this.previewRenderVersion += 1
+    this.showPreviewCover = true
+    
+    // We need to wait for players to be ready after template switch before seeking
+    setTimeout(() => {
+      this.seekAllControllers(0, true)
+      if (!wasPlaying) {
+        this.pauseAllPreview()
+      } else {
+        this.startAllPreview()
+      }
+    }, 150)
+    
     debugLog('剪辑页', `切换模板=${card.id}`)
+    this.markUnsaved()
     this.showControlsTemporarily()
   }
 
@@ -539,11 +1192,13 @@ struct Editor {
       }
     }
     debugLog('剪辑诊断', `切换整体倍速=${this.getPlaybackRate()}X`)
+    this.markUnsaved()
     this.showControlsTemporarily()
   }
 
   private toggleMuted(): void {
     this.applyState(this.bridge.toggleMuted())
+    this.syncPrimaryMuteByState()
     this.showControlsTemporarily()
   }
 
@@ -553,446 +1208,408 @@ struct Editor {
   }
 
   build() {
-    Stack({ alignContent: Alignment.Center }) {
+    Stack({ alignContent: Alignment.TopStart }) {
       Column({ space: 0 }) {
-      Row() {
-        Button('返回')
-          .type(ButtonType.Capsule)
-          .fontSize(12)
-          .onClick(() => {
-            debugLog('剪辑页', '点击返回')
-            try {
-              this.getUIContext().getRouter().back()
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error)
-              debugLog('剪辑页', `返回失败：${message}`)
-            }
-          })
-        Column({ space: 2 }) {
-          Text(this.state.tripTitle)
-            .fontSize(14)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#F8FAFC')
-          Text(this.state.timeRange)
-            .fontSize(11)
-            .fontColor('#94A3B8')
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Center)
-        Button('导出')
-          .type(ButtonType.Capsule)
-          .fontSize(12)
-          .onClick(() => {
-            this.startNativeExportTask()
-          })
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12, top: 12 })
-
-      Scroll() {
-        Stack({ alignContent: Alignment.Center }) {
-        if (this.hasPreviewSource()) {
-          ForEach(this.state.previewSlots, (slot: PreviewSlotModel) => {
-            if (slot.uri.length === 0) {
-              Column()
-                .width(this.toPercent(slot.width))
-                .height(this.toPercent(slot.height))
-                .backgroundColor('#0B1220')
-                .position({ x: this.toPercent(slot.x), y: this.toPercent(slot.y) })
-            } else if (this.isPrimaryPreviewSlot(slot.id)) {
-              Video({
-                src: slot.uri,
-                controller: this.previewController
-              })
-                .width(this.toPercent(slot.width))
-                .height(this.toPercent(slot.height))
-                .objectFit(ImageFit.Cover)
-                .autoPlay(false)
-                .controls(false)
-                .position({ x: this.toPercent(slot.x), y: this.toPercent(slot.y) })
-                .onPrepared(() => {
-                  debugLog('剪辑诊断', `主轨视频准备完成，视角=${slot.camera}`)
-                  this.applyPlaybackRate()
-                  this.seekAllControllers(this.getLocalSecond(this.state.playheadSec), true)
-                  if (this.seamlessPendingPlay) {
-                    this.seamlessPendingPlay = false
-                    this.startAllPreview()
-                    this.showPreviewCover = false
-                    this.showControlsTemporarily()
-                    debugLog('剪辑诊断', `无缝衔接继续播放，片段=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
-                    return
-                  }
-                  if (this.showPreviewCover) {
-                    this.showPreviewCover = false
-                    debugLog('剪辑诊断', '首帧就绪，保持自动播放')
-                    this.showControlsTemporarily()
-                  }
-                  if (this.previewPlaying) {
-                    this.startAllPreview()
-                  } else {
-                    this.pauseAllPreview()
-                  }
-                })
-                .onStart(() => {
-                  this.showPreviewCover = false
-                  this.previewPlaying = true
-                  this.ensureSpeedEmulation()
-                  this.showControlsTemporarily()
-                  debugLog('剪辑诊断', `主轨开始播放，视角=${slot.camera}`)
-                })
-                .onPause(() => {
-                  if (this.manualSpeedMode) {
-                    debugLog('剪辑诊断', '主轨暂停事件已忽略（倍速仿真模式）')
-                    return
-                  }
-                  this.previewPlaying = false
-                  this.clearSpeedEmulationTimer()
-                  this.showControlsTemporarily()
-                  debugLog('剪辑诊断', '主轨视频暂停')
-                })
-                .onFinish(() => {
-                  if (this.state.canPlayNext) {
-                    this.applyState(this.bridge.playNextClip())
-                    this.updatePlayheadSec(this.getCurrentClipStartSec())
-                    this.updatePlayheadText(this.bridge.updatePlayhead(this.state.playheadSec * 1000))
-                    this.showPreviewCover = false
-                    this.seamlessPendingPlay = true
-                    this.showControlsTemporarily()
-                    debugLog('剪辑诊断', `自动切换下一片实现无缝预览，片段=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
-                    return
-                  }
-                  this.showPreviewCover = true
-                  this.clearSpeedEmulationTimer()
-                  this.showControlsTemporarily()
-                  debugLog('剪辑诊断', '主轨播放结束')
-                })
-                .onError(() => {
-                  this.showPreviewCover = true
-                  debugLog('剪辑诊断', `主轨视频播放失败，URI长度=${slot.uri.length}`)
-                })
-                .rotate({ angle: this.previewRotationAngle(slot.camera), x: 0, y: 0, z: 1 })
-            } else {
-              Video({
-                src: slot.uri,
-                controller: this.getSecondaryController(slot.id)
-              })
-                .width(this.toPercent(slot.width))
-                .height(this.toPercent(slot.height))
-                .objectFit(ImageFit.Cover)
-                .autoPlay(false)
-                .controls(false)
-                .muted(true)
-                .position({ x: this.toPercent(slot.x), y: this.toPercent(slot.y) })
-                .onPrepared(() => {
-                  this.applyPlaybackRate()
-                  if (this.previewPlaying) {
-                    this.getSecondaryController(slot.id).start()
-                  } else {
-                    this.getSecondaryController(slot.id).pause()
-                  }
-                })
-            }
-            if (this.showSlotLabels) {
-              Text(slot.camera)
-                .fontSize(10)
-                .fontColor('#E2E8F0')
-                .backgroundColor('#020617B3')
-                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                .borderRadius(6)
-                .position({ x: this.toPercent(slot.x + 0.01), y: this.toPercent(slot.y + 0.01) })
-            }
-          }, (slot: PreviewSlotModel) => slot.id)
-          if (this.state.hideSpeed) {
-            Text('SPEED HIDDEN')
-              .fontSize(10)
-              .fontColor('#FCA5A5')
-              .backgroundColor('#7F1D1DB3')
-              .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-              .borderRadius(6)
-              .position({ x: '5%', y: '86%' })
-          }
-          if (this.state.watermarkEnabled) {
-            Text('Shot on AITO')
-              .fontSize(10)
-              .fontColor('#64748B')
-              .position({ x: '76%', y: '92%' })
-          }
-          if (this.showPreviewCover) {
-            Text('加载首帧中...')
-              .fontSize(13)
-              .fontColor('#CBD5E1')
-              .backgroundColor('#00000099')
-              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-              .borderRadius(8)
-          }
-        } else {
-          Text('预览区')
-            .fontSize(14)
-            .fontColor('#CBD5E1')
-        }
-        }
-        .width('100%')
-        .aspectRatio(this.getPreviewAspectRatio())
-        .backgroundColor('#111827')
-        .borderRadius(10)
-        .margin({ left: 12, right: 12, top: 6, bottom: 8 })
-      }
-      .scrollable(ScrollDirection.None)
-      .scrollBar(BarState.Off)
-      .onClick(() => {
-        if (this.showPreviewCover && this.hasPreviewSource()) {
-          this.startAllPreview()
-          this.showPreviewCover = false
-        }
-        this.showControlsTemporarily()
-      })
-      .onAppear(() => {
-        if (!this.previewLogged) {
-          this.previewLogged = true
-          debugLog('剪辑诊断', `预览组件已渲染，占位模式=${this.state.previewUri.length > 0 ? '否' : '是'}，预览URI长度=${this.state.previewUri.length}，行程=${this.state.tripId}`)
-        }
-      })
-      .width('100%')
-      .layoutWeight(this.state.layers[0]?.heightRatio ?? 0.5)
-
-      Row({ space: 10 }) {
-        if (!this.isMergedTrip()) {
-          Button('上一个')
-            .type(ButtonType.Capsule)
-            .fontSize(11)
-            .enabled(this.state.canPlayPrev)
-            .onClick(() => this.playPrevClip())
-          Button('下一个')
-            .type(ButtonType.Capsule)
-            .fontSize(11)
-            .enabled(this.state.canPlayNext)
-            .onClick(() => this.playNextClip())
-        } else {
-          Text('连续预览')
-            .fontSize(11)
-            .fontColor('#94A3B8')
-        }
-        Button(this.previewPlaying ? '暂停预览' : '播放预览')
-          .type(ButtonType.Capsule)
-          .fontSize(11)
-          .onClick(() => this.togglePreviewPlay())
-        Button(this.showSlotLabels ? '隐藏视角' : '显示视角')
-          .type(ButtonType.Capsule)
-          .fontSize(11)
-          .onClick(() => this.toggleSlotLabels())
-        Blank()
-        Text(this.state.playheadText)
-          .fontSize(12)
-          .fontColor('#CBD5E1')
-        Blank()
-        Button(this.state.speedLabel)
-          .type(ButtonType.Capsule)
-          .fontSize(11)
-          .onClick(() => this.cycleSpeed())
-        Button(this.state.muted ? '已静音' : '静音')
-          .type(ButtonType.Capsule)
-          .fontSize(11)
-          .onClick(() => this.toggleMuted())
-      }
-      .width('100%')
-      .layoutWeight(this.state.layers[1]?.heightRatio ?? 0.12)
-      .padding({ left: 12, right: 12, top: 4, bottom: 4 })
-      .backgroundColor('#0F172A')
-
-      Column({ space: 2 }) {
         Row() {
-          Text(`逻辑选区 ${this.state.selectionStartSec}s - ${this.state.selectionEndSec}s`)
-            .fontSize(11)
-            .fontColor('#94A3B8')
-          Blank()
-          Text(`全局进度 ${this.state.playheadSec}s / ${this.state.totalDurationSec}s`)
-            .fontSize(11)
-            .fontColor('#64748B')
+          Button('← 返回')
+            .type(ButtonType.Normal)
+            .fontSize(16)
+            .fontColor('#FFFFFF')
+            .backgroundColor('#00000000')
+            .onClick(() => this.handleBack())
+          Text(this.state.timeRange.length > 0 ? this.state.timeRange : this.state.tripTitle)
+            .fontSize(18)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#FFFFFF')
+            .layoutWeight(1)
+            .textAlign(TextAlign.Center)
+          Button('导出剪辑')
+            .type(ButtonType.Capsule)
+            .fontSize(14)
+            .fontColor('#FFFFFF')
+            .backgroundColor('#FF7A00')
+            .onClick(() => this.startNativeExportTask())
         }
         .width('100%')
-          .padding({ left: 12, right: 12, top: 2 })
-        Stack({ alignContent: Alignment.Center }) {
-          Row()
-            .width('100%')
-            .height('100%')
-            .backgroundColor('#02061766')
-          Row()
-            .width(this.getRangeWidthPercent())
-            .height('100%')
-            .backgroundColor('#F9731626')
-            .position({ x: this.getRangeStartPercent(), y: '0%' })
-          Column()
-            .width(18)
-            .height('86%')
-            .backgroundColor('#F97316')
-            .borderRadius(10)
-            .position({ x: this.getRangeStartPercent(), y: '7%' })
-          Column()
-            .width(18)
-            .height('86%')
-            .backgroundColor('#F97316')
-            .borderRadius(10)
-            .position({ x: this.getRangeEndPercent(), y: '7%' })
-          Row({ space: 2 }) {
-            ForEach(this.state.boundaryMarkers, (marker: TimelineMarkerModel) => {
-              Text('|')
-                .fontSize(12)
-                .fontColor('#334155')
-                .width('100%')
-            }, (marker: TimelineMarkerModel, index: number) => `${marker.positionSec}-${index}`)
-          }
-          .width('100%')
-          .justifyContent(FlexAlign.SpaceBetween)
-          Slider({
-            value: this.state.selectionStartSec,
-            min: 0,
-            max: this.state.totalDurationSec,
-            step: 1,
-            style: SliderStyle.OutSet
-          })
-            .blockColor('#F97316')
-            .selectedColor('#F97316')
-            .onChange((value: number) => this.updateRangeStart(value))
-            .width('100%')
-          Slider({
-            value: this.state.selectionEndSec,
-            min: 0,
-            max: this.state.totalDurationSec,
-            step: 1,
-            style: SliderStyle.OutSet
-          })
-            .blockColor('#F97316')
-            .selectedColor('#F97316')
-            .onChange((value: number) => this.updateRangeEnd(value))
-            .width('100%')
-          Slider({
-            value: this.state.playheadSec,
-            min: 0,
-            max: this.state.totalDurationSec,
-            step: 1,
-            style: SliderStyle.OutSet
-          })
-            .blockColor('#FFFFFF')
-            .selectedColor('#FFFFFF')
-            .onChange((value: number) => this.updatePlayhead(value))
-            .width('100%')
-            .padding({ left: 4, right: 4 })
-        }
-        .height(70)
-        .margin({ left: 12, right: 12, top: 2, bottom: 2 })
-        .backgroundColor('#0B1220')
-        .borderRadius(8)
-      }
-      .layoutWeight(this.state.layers[2]?.heightRatio ?? 0.16)
-      .width('100%')
-      .backgroundColor('#0F172A')
+        .padding({ left: 8, right: 8, top: 12, bottom: 12 })
 
-      Column({ space: 6 }) {
-        Row({ space: 8 }) {
-          Toggle({ type: ToggleType.Checkbox, isOn: this.state.hideSpeed })
-            .onChange((value: boolean) => this.togglePrivacy('speed', value))
-          Text('车速')
-            .fontSize(11)
-            .fontColor('#CBD5E1')
-          Toggle({ type: ToggleType.Checkbox, isOn: this.state.hideGps })
-            .onChange((value: boolean) => this.togglePrivacy('gps', value))
-          Text('GPS')
-            .fontSize(11)
-            .fontColor('#CBD5E1')
-          Toggle({ type: ToggleType.Checkbox, isOn: this.state.hideVin })
-            .onChange((value: boolean) => this.togglePrivacy('vin', value))
-          Text('VIN')
-            .fontSize(11)
-            .fontColor('#CBD5E1')
-          Blank()
-          Button(this.state.watermarkEnabled ? '尾标开' : '尾标关')
-            .type(ButtonType.Capsule)
-            .fontSize(10)
-            .onClick(() => this.toggleWatermark())
-          Button(this.state.drawerExpanded ? '收起' : '展开')
-            .type(ButtonType.Capsule)
-            .fontSize(10)
-            .onClick(() => this.toggleDrawer())
-        }
-        .width('100%')
-        .padding({ left: 12, right: 12, top: 6 })
-        if (this.state.drawerExpanded) {
-          Scroll() {
-            Row({ space: 8 }) {
-              ForEach(this.state.templateCards, (card: TemplateCardModel) => {
-                Column({ space: 4 }) {
-                  Text(card.title)
-                    .fontSize(12)
-                    .fontColor(card.id === this.state.activeTemplateId ? '#FB923C' : '#CBD5E1')
-                  Text(card.subtitle)
-                    .fontSize(10)
-                    .fontColor(card.id === this.state.activeTemplateId ? '#FB923C' : '#64748B')
+        Scroll() {
+          Column({ space: 16 }) {
+            Column({ space: 12 }) {
+              Text('剪辑模板（点击查看比例）')
+                .fontSize(14)
+                .fontColor('#999999')
+                .width('100%')
+              Scroll() {
+                Row({ space: 12 }) {
+                  ForEach(this.state.templateCards, (card: TemplateCardModel) => {
+                    Column({ space: 4 }) {
+                      Text(this.getTemplateIcon(card))
+                        .fontSize(22)
+                      Text(this.getTemplateUiName(card))
+                        .fontSize(12)
+                        .fontColor('#FFFFFF')
+                      Text(this.getTemplateResolution(card))
+                        .fontSize(10)
+                        .fontColor(card.id === this.state.activeTemplateId ? '#FFFFFF' : '#999999')
+                    }
+                    .width(100)
+                    .height(84)
+                    .justifyContent(FlexAlign.Center)
+                    .alignItems(HorizontalAlign.Center)
+                    .backgroundColor(card.id === this.state.activeTemplateId ? '#FF7A00' : '#333333')
+                    .borderRadius(8)
+                    .border({ width: 2, color: card.id === this.state.activeTemplateId ? '#FF7A00' : '#00000000' })
+                    .opacity(this.isTemplateDisabled(card) ? 0.5 : 1)
+                    .onClick(() => this.selectTemplateForUi(card))
+                  }, (card: TemplateCardModel) => card.id)
                 }
-                .width(84)
-                .height(72)
-                .justifyContent(FlexAlign.Center)
-                .backgroundColor(card.id === this.state.activeTemplateId ? '#1E293B' : '#0B1220')
-                .borderRadius(10)
-                .border({
-                  width: card.id === this.state.activeTemplateId ? 2 : 1,
-                  color: card.id === this.state.activeTemplateId ? '#F97316' : '#334155'
-                })
-                .scale({
-                  x: card.id === this.state.activeTemplateId ? 1.03 : 1,
-                  y: card.id === this.state.activeTemplateId ? 1.03 : 1
-                })
-                .onClick(() => this.selectTemplate(card))
-              }, (card: TemplateCardModel) => card.id)
+                .padding({ bottom: 4 })
+              }
+              .scrollable(ScrollDirection.Horizontal)
+              .scrollBar(BarState.Off)
             }
-            .padding({ left: 12, right: 12, bottom: 8 })
-          }
-          .scrollable(ScrollDirection.Horizontal)
-          .scrollBar(BarState.Off)
-        }
-        List({ space: 4 }) {
-          ForEach(this.state.timeline, (track: TimelineTrackModel) => {
-            ListItem() {
-              Row() {
-                Text(track.cameraPosition)
-                  .fontSize(11)
-                  .fontColor(track.cameraPosition === this.state.previewCamera ? '#60A5FA' : '#CBD5E1')
-                Blank()
-                Text(`片段 ${track.segmentCount}`)
-                  .fontSize(10)
-                  .fontColor(track.degraded ? '#F59E0B' : '#64748B')
+            .width('100%')
+            .padding(16)
+            .backgroundColor('#282828')
+            .borderRadius(12)
+
+            Column({ space: 0 }) {
+              Text('播放剪辑器')
+                .fontSize(14)
+                .fontColor('#999999')
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 12, bottom: 8 })
+              Stack({ alignContent: Alignment.Center }) {
+                if (this.hasPreviewSource()) {
+                  if (this.getPrimaryPreviewSlot() && (this.getPrimaryPreviewSlot()?.uri.length ?? 0) > 0) {
+                    SeamlessVideoPlayer({
+                      src: this.primarySrcA,
+                      controller: this.primaryControllerA,
+                      muted: this.primaryMutedA,
+                      onPreparedCallback: () => this.handlePrimaryPrepared(true),
+                      onStartCallback: () => this.handlePrimaryStart(true),
+                      onPauseCallback: () => this.handlePrimaryPause(true),
+                      onFinishCallback: () => this.handlePrimaryFinish(true),
+                      onErrorCallback: () => this.handlePrimaryError(true)
+                    })
+                      .width(this.toPercent(this.getPrimaryPreviewSlot()?.width ?? 0))
+                      .height(this.toPercent(this.getPrimaryPreviewSlot()?.height ?? 0))
+                      .position({
+                        x: this.toPercent(this.getPrimaryPreviewSlot()?.x ?? 0),
+                        y: this.toPercent(this.getPrimaryPreviewSlot()?.y ?? 0)
+                      })
+                      .opacity(this.getPrimaryPlayerVisible(true))
+                    SeamlessVideoPlayer({
+                      src: this.primarySrcB,
+                      controller: this.primaryControllerB,
+                      muted: this.primaryMutedB,
+                      onPreparedCallback: () => this.handlePrimaryPrepared(false),
+                      onStartCallback: () => this.handlePrimaryStart(false),
+                      onPauseCallback: () => this.handlePrimaryPause(false),
+                      onFinishCallback: () => this.handlePrimaryFinish(false),
+                      onErrorCallback: () => this.handlePrimaryError(false)
+                    })
+                      .width(this.toPercent(this.getPrimaryPreviewSlot()?.width ?? 0))
+                      .height(this.toPercent(this.getPrimaryPreviewSlot()?.height ?? 0))
+                      .position({
+                        x: this.toPercent(this.getPrimaryPreviewSlot()?.x ?? 0),
+                        y: this.toPercent(this.getPrimaryPreviewSlot()?.y ?? 0)
+                      })
+                      .opacity(this.getPrimaryPlayerVisible(false))
+                  }
+                  ForEach(this.state.previewSlots, (slot: PreviewSlotModel) => {
+                    if (slot.uri.length === 0) {
+                      Column()
+                        .width(this.toPercent(slot.width))
+                        .height(this.toPercent(slot.height))
+                        .backgroundColor('#444444')
+                        .border({ width: 1, color: '#333333' })
+                        .position({ x: this.toPercent(slot.x), y: this.toPercent(slot.y) })
+                    } else if (!this.isPrimaryPreviewSlot(slot.id)) {
+                      SeamlessVideoPlayer({
+                        src: slot.uri,
+                        controller: this.getSecondaryController(slot.id),
+                        muted: this.getAudioSlotId() === slot.id ? this.state.muted : true,
+                        onPreparedCallback: () => {
+                          this.applyPlaybackRate()
+                          if (this.previewPlaying) {
+                            this.getSecondaryController(slot.id).start()
+                          } else {
+                            this.getSecondaryController(slot.id).pause()
+                          }
+                        }
+                      })
+                        .width(this.toPercent(slot.width))
+                        .height(this.toPercent(slot.height))
+                        .position({ x: this.toPercent(slot.x), y: this.toPercent(slot.y) })
+                    }
+                    Text(this.cameraZhName(slot.camera))
+                      .fontSize(10)
+                      .fontColor('#999999')
+                      .position({ x: this.toPercent(slot.x + 0.01), y: this.toPercent(slot.y + 0.01) })
+                    if (this.mosaicEnabledUi && this.templateSupportsMosaic(this.state.activeTemplateId) && slot.camera === 'Front') {
+                      Column()
+                        .width(this.toPercent(slot.width * 0.3))
+                        .height(this.toPercent(slot.height * 0.15))
+                        .backgroundColor('#000000B3')
+                        .borderRadius(4)
+                        .position({
+                          x: this.toPercent(slot.x + slot.width * 0.35),
+                          y: this.toPercent(slot.y + slot.height * 0.65)
+                        })
+                    }
+                  }, (slot: PreviewSlotModel) => `${this.previewRenderVersion}-${this.state.activeTemplateId}-${slot.id}`)
+                } else {
+                  Text('预览区')
+                    .fontSize(14)
+                    .fontColor('#FFFFFF')
+                }
+                if (this.showPlayerControls && this.hasPreviewSource()) {
+                  Text(this.previewPlaying ? '⏸' : '▶')
+                    .fontSize(24)
+                    .fontColor('#FFFFFF')
+                    .textAlign(TextAlign.Center)
+                    .width(56)
+                    .height(56)
+                    .onClick(() => this.togglePreviewPlay())
+                  Text(this.state.speedLabel.replace('X', 'x'))
+                    .fontSize(12)
+                    .fontColor('#FFFFFF')
+                    .backgroundColor('#B3000000')
+                    .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                    .borderRadius(4)
+                    .position({ x: '86%', y: '4%' })
+                  if (this.state.muted) {
+                    Text('🔇 全局静音')
+                      .fontSize(12)
+                      .fontColor('#FFFFFF')
+                      .backgroundColor('#B3FF0000')
+                      .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                      .borderRadius(4)
+                      .position({ x: '2%', y: '4%' })
+                  }
+                }
               }
               .width('100%')
-              .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-              .backgroundColor('#111827')
-              .borderRadius(8)
-              .onClick(() => this.switchCamera(track.cameraPosition))
-            }
-          }, (track: TimelineTrackModel, index: number) => `${track.cameraPosition}-${index}`)
-        }
-        .onAppear(() => {
-          if (!this.timelineLogged) {
-            this.timelineLogged = true
-            const trackSummary = this.state.timeline.map((item: TimelineTrackModel) => `${item.cameraPosition}:${item.segmentCount}`).join(',')
-            debugLog('剪辑诊断', `时间轴渲染完成，轨道数=${this.state.timeline.length}，轨道明细=${trackSummary}`)
-          }
-        })
-        .layoutWeight(1)
-        .width('100%')
-        .padding({ left: 12, right: 12 })
+              .aspectRatio(this.getPreviewAspectRatio())
+              .backgroundColor('#000000')
+              .onClick(() => {
+                if (this.showPreviewCover && this.hasPreviewSource()) {
+                  this.startAllPreview()
+                  this.showPreviewCover = false
+                }
+                this.showControlsTemporarily()
+              })
 
-        Text(`导出状态：${this.state.exportStatusText}`)
-          .fontSize(11)
-          .fontColor('#60A5FA')
+              Row() {
+                Stack({ alignContent: Alignment.BottomStart }) {
+                  Column()
+                    .width('100%')
+                    .height(56)
+                    .backgroundColor('#121212')
+                  if (this.hasActiveSelectionRange()) {
+                    Column()
+                      .height(56)
+                      .backgroundColor('#33FF7A00')
+                      .width(this.getRangeWidthPercent())
+                      .position({ x: this.getRangeStartPercent(), y: '0%' })
+                  }
+                  Column()
+                    .width(2)
+                    .height(56)
+                    .backgroundColor('#0A59F7')
+                    .position({ x: this.getPlayheadPercent(), y: '0%' })
+                  Text(this.formatTimelineTick(Math.floor(this.state.playheadSec)))
+                    .fontSize(10)
+                    .fontColor('#FFFFFF')
+                    .backgroundColor('#0A59F7')
+                    .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                    .borderRadius(4)
+                    .position({ x: this.getPlayheadPercent(), y: '-30%' })
+                  ForEach(this.clipMarks, (mark: number, index: number) => {
+                    Column()
+                      .width(2)
+                      .height(56)
+                      .backgroundColor('#FF7A00')
+                      .position({ x: this.markPercent(mark), y: '0%' })
+                    Text('▼')
+                      .fontSize(10)
+                      .fontColor('#FF7A00')
+                      .position({ x: this.markPercent(mark), y: '2%' })
+                  }, (mark: number, index: number) => `${mark}-${index}`)
+                  Row() {
+                    ForEach(this.getTimelineTicks(), (tick: number) => {
+                      Text(this.formatTimelineTick(tick))
+                        .fontSize(10)
+                        .fontColor('#666666')
+                    }, (tick: number) => `${tick}`)
+                  }
+                  .width('100%')
+                  .justifyContent(FlexAlign.SpaceBetween)
+                  .padding({ left: 8, right: 8, top: 58 })
+                }
+                .layoutWeight(1)
+                .height(80)
+                .backgroundColor('#121212')
+                .onAreaChange((oldValue: Area, newValue: Area) => {
+                  this.timelineWidth = Number(newValue.width)
+                })
+                .gesture(
+                  GestureGroup(GestureMode.Exclusive,
+                    PanGesture({ direction: PanDirection.Horizontal })
+                      .onActionStart((event: GestureEvent) => {
+                        if (event.fingerList && event.fingerList.length > 0) {
+                          this.handleTimelineTouch(event.fingerList[0].localX)
+                        }
+                      })
+                      .onActionUpdate((event: GestureEvent) => {
+                        if (event.fingerList && event.fingerList.length > 0) {
+                          this.handleTimelineTouch(event.fingerList[0].localX)
+                        }
+                      }),
+                    TapGesture()
+                      .onAction((event: GestureEvent) => {
+                        if (event.fingerList && event.fingerList.length > 0) {
+                          this.handleTimelineTouch(event.fingerList[0].localX)
+                        }
+                      })
+                  )
+                )
+                Column({ space: 4 }) {
+                  Text('+')
+                    .fontSize(20)
+                    .fontColor('#FFFFFF')
+                    .backgroundColor('#333333')
+                    .width(32)
+                    .height(32)
+                    .textAlign(TextAlign.Center)
+                    .borderRadius(4)
+                    .onClick(() => this.addClipMark())
+                  Text('✕')
+                    .fontSize(16)
+                    .fontColor('#FF4444')
+                    .backgroundColor('#333333')
+                    .width(32)
+                    .height(32)
+                    .textAlign(TextAlign.Center)
+                    .borderRadius(4)
+                    .onClick(() => this.undoClipMark())
+                }
+                .width(44)
+                .height(80)
+                .justifyContent(FlexAlign.Center)
+                .alignItems(HorizontalAlign.Center)
+                .backgroundColor('#1A1A1A')
+              }
+              .width('100%')
+
+              Text(this.getSegmentInfoText())
+                .fontSize(12)
+                .fontColor('#999999')
+                .width('100%')
+                .textAlign(TextAlign.Center)
+                .padding({ top: 8, bottom: 8 })
+                .backgroundColor('#1A1A1A')
+            }
+            .width('100%')
+            .backgroundColor('#222222')
+            .borderRadius(12)
+            .border({ width: 1, color: '#333333' })
+
+            Column({ space: 12 }) {
+              Text('功能设置')
+                .fontSize(14)
+                .fontColor('#999999')
+                .width('100%')
+              if (this.templateSupportsMosaic(this.state.activeTemplateId)) {
+                Row() {
+                  Text('前视角固定打码')
+                    .fontSize(14)
+                    .fontColor('#FFFFFF')
+                  Blank()
+                  Toggle({ type: ToggleType.Switch, isOn: this.mosaicEnabledUi })
+                    .onChange((value: boolean) => this.toggleMosaicByUi(value))
+                }
+                .width('100%')
+              }
+              Row() {
+                Text('倍速')
+                  .fontSize(14)
+                  .fontColor('#FFFFFF')
+                Blank()
+                Button(this.state.speedLabel.replace('X', 'x'))
+                  .type(ButtonType.Capsule)
+                  .fontSize(14)
+                  .fontColor('#FFFFFF')
+                  .backgroundColor('#333333')
+                  .onClick(() => this.cycleSpeed())
+              }
+              .width('100%')
+            }
+            .width('100%')
+            .padding(16)
+            .backgroundColor('#282828')
+            .borderRadius(12)
+          }
           .width('100%')
-          .padding({ left: 12, right: 12, bottom: 8 })
-      }
-      .layoutWeight(this.state.layers[3]?.heightRatio ?? 0.22)
-      .width('100%')
-      .backgroundColor('#020617')
+          .padding({ left: 16, right: 16, bottom: 20 })
+        }
+        .scrollBar(BarState.Off)
       }
       .width('100%')
       .height('100%')
-      .backgroundColor('#0F172A')
+      .backgroundColor('#181818')
+
+      if (this.toastVisible) {
+        Text(this.toastText)
+          .fontSize(14)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#E6000000')
+          .padding({ left: 24, right: 24, top: 12, bottom: 12 })
+          .borderRadius(8)
+          .position({ x: '24%', y: '86%' })
+      }
+
+      if (this.backConfirmVisible) {
+        Column({ space: 0 }) {
+          Column({ space: 12 }) {
+            Text('确认放弃修改？')
+              .fontSize(18)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#FFFFFF')
+            Text('返回将丢失未保存的修改')
+              .fontSize(14)
+              .fontColor('#999999')
+            Row({ space: 12 }) {
+              Button('继续编辑')
+                .layoutWeight(1)
+                .type(ButtonType.Capsule)
+                .fontSize(14)
+                .fontColor('#FFFFFF')
+                .backgroundColor('#333333')
+                .onClick(() => this.cancelBack())
+              Button('放弃')
+                .layoutWeight(1)
+                .type(ButtonType.Capsule)
+                .fontSize(14)
+                .fontColor('#FFFFFF')
+                .backgroundColor('#0A59F7')
+                .onClick(() => this.confirmBack())
+            }
+            .width('100%')
+          }
+          .width('84%')
+          .padding(24)
+          .backgroundColor('#282828')
+          .borderRadius(16)
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor('#B3000000')
+      }
 
       if (this.exportLoadingVisible) {
         Column({ space: 10 }) {
@@ -1008,7 +1625,7 @@ struct Editor {
         .alignItems(HorizontalAlign.Center)
         .width('100%')
         .height('100%')
-        .backgroundColor('#00000088')
+        .backgroundColor('#88000000')
       }
     }
     .width('100%')

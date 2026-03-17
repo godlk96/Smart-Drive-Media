@@ -182,68 +182,81 @@ export class ExportManager {
       photoType: photoAccessHelper.PhotoType.VIDEO,
       subtype: photoAccessHelper.PhotoSubtype.DEFAULT
     }]
-    const desFileUris = await helper.showAssetsCreationDialog(srcFileUris, photoCreationConfigs)
-    const albumUri = desFileUris[0]
-    if (!albumUri || albumUri.length === 0) {
-      throw new Error('未选择相册保存位置')
-    }
-    let srcFd: number = -1
-    let dstFd: number = -1
-    const chunkSize: number = 1024 * 1024
-    let totalSize: number = 0
-    let copiedSize: number = 0
-    const baseProgress: number = Math.max(86, Math.min(99, startProgress))
-    let reportedProgress: number = baseProgress
     try {
-      try {
-        const stat = await fs.stat(sourceUri)
-        totalSize = Number(stat.size ?? 0)
-      } catch (_) {
-        totalSize = 0
-      }
-      const src = await fs.open(sourceUri, fs.OpenMode.READ_ONLY)
-      srcFd = src.fd
-      const dst = await fs.open(albumUri, fs.OpenMode.READ_WRITE)
-      dstFd = dst.fd
-      while (true) {
-        const buffer = new ArrayBuffer(chunkSize)
-        const readLen = await fs.read(srcFd, buffer)
-        if (readLen <= 0) {
-          break
+        const desFileUris = await helper.showAssetsCreationDialog(srcFileUris, photoCreationConfigs)
+        const albumUri = desFileUris[0]
+        if (!albumUri || albumUri.length === 0) {
+          throw new Error('未选择相册保存位置')
         }
-        await fs.write(dstFd, buffer.slice(0, readLen))
-        copiedSize += readLen
-        if (totalSize > 0) {
-          const progressSpan = Math.max(0, 99 - baseProgress)
-          const targetProgress = baseProgress + Math.min(progressSpan, Math.floor((copiedSize * progressSpan) / totalSize))
-          while (reportedProgress < targetProgress) {
+        let srcFd: number = -1
+        let dstFd: number = -1
+        const chunkSize: number = 1024 * 1024
+        let totalSize: number = 0
+        let copiedSize: number = 0
+        const baseProgress: number = Math.max(86, Math.min(99, startProgress))
+        let reportedProgress: number = baseProgress
+        try {
+          try {
+            const stat = await fs.stat(sourceUri)
+            totalSize = Number(stat.size ?? 0)
+          } catch (_) {
+            totalSize = 0
+          }
+          const src = await fs.open(sourceUri, fs.OpenMode.READ_ONLY)
+          srcFd = src.fd
+          const dst = await fs.open(albumUri, fs.OpenMode.READ_WRITE)
+          dstFd = dst.fd
+          while (true) {
+            const buffer = new ArrayBuffer(chunkSize)
+            let readLen = 0
+            try {
+              readLen = await fs.read(srcFd, buffer)
+            } catch (e) {
+              break
+            }
+            if (readLen <= 0) {
+              break
+            }
+            try {
+              await fs.write(dstFd, buffer.slice(0, readLen))
+            } catch (e) {
+              break
+            }
+            copiedSize += readLen
+            if (totalSize > 0) {
+              const progressSpan = Math.max(0, 99 - baseProgress)
+              const targetProgress = baseProgress + Math.min(progressSpan, Math.floor((copiedSize * progressSpan) / totalSize))
+              while (reportedProgress < targetProgress) {
+                reportedProgress += 1
+                onProgress(reportedProgress)
+              }
+            } else if (reportedProgress < 99) {
+              reportedProgress += 1
+              onProgress(reportedProgress)
+            }
+          }
+          while (reportedProgress < 99) {
             reportedProgress += 1
             onProgress(reportedProgress)
           }
-        } else if (reportedProgress < 99) {
-          reportedProgress += 1
-          onProgress(reportedProgress)
+        } finally {
+          if (srcFd >= 0) {
+            try {
+              await fs.close(srcFd)
+            } catch (_) {
+            }
+          }
+          if (dstFd >= 0) {
+            try {
+              await fs.close(dstFd)
+            } catch (_) {
+            }
+          }
         }
+        return albumUri
+      } catch (error) {
+        throw new Error(`保存到相册失败: ${error instanceof Error ? error.message : String(error)}`)
       }
-      while (reportedProgress < 99) {
-        reportedProgress += 1
-        onProgress(reportedProgress)
-      }
-    } finally {
-      if (srcFd >= 0) {
-        try {
-          await fs.close(srcFd)
-        } catch (_) {
-        }
-      }
-      if (dstFd >= 0) {
-        try {
-          await fs.close(dstFd)
-        } catch (_) {
-        }
-      }
-    }
-    return albumUri
   }
 }
 
