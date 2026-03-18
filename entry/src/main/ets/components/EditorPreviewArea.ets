@@ -1,4 +1,6 @@
 import { EditorStateModel, PreviewSlotModel } from '../model/AppState'
+import { normalizeCameraNameById } from '../constants/AppConstants'
+import { TemplateId } from '../model/Models'
 import { DvrMeta, TripSnapshot } from '../model/TripModels'
 import { GlobalTimelineManager } from '../media/GlobalTimelineManager'
 import { PingPongTrackController, TrackSegmentSource } from '../media/PingPongTrackController'
@@ -31,25 +33,38 @@ interface TrackRenderItem {
 export struct EditorPreviewArea {
   @Prop @Watch('onTemplateOrTripChanged') editorState: EditorStateModel
   @Prop @Watch('onTemplateOrTripChanged') tripSnapshot: TripSnapshot = new TripSnapshot()
+  @Prop @Watch('onTemplateSwitchingChanged') isTemplateSwitching: boolean = false
   @Prop @Watch('onPlayingChanged') playing: boolean
   @Prop @Watch('onSeekTokenChanged') seekToken: number
+  @Prop @Watch('onSwitchTaskIdChanged') switchTaskId: number
   @Prop playheadMs: number
   @Prop @Watch('onMutedChanged') muted: boolean
   @Prop @Watch('onSpeedLabelChanged') speedLabel: string
   onPlayheadChanged?: (playheadMs: number) => void
   onPlaybackEnded?: () => void
+  onTemplateSwitchStageReady?: (taskId: number, stage: string) => void
 
   @State private trackItems: Array<TrackRenderItem> = []
   private manager?: GlobalTimelineManager
   private rebuildQueue: Promise<void> = Promise.resolve()
   private lastRebuildKey: string = ''
+  private rebuildEpoch: number = 0
+  private disposed: boolean = false
+  private pendingSurfaceTrackKeys: Array<string> = []
+  private readySurfaceTrackKeys: Array<string> = []
+  private surfaceReadyResolve?: () => void
+  private surfaceReadyTimer: number = -1
 
   aboutToAppear(): void {
+    this.disposed = false
     this.requestRebuild(true)
   }
 
   aboutToDisappear(): void {
-    this.releaseAll()
+    this.disposed = true
+    this.enqueueManagerTask(async () => {
+      await this.releaseAll()
+    })
   }
 
   private toPercent(value: number): string {
@@ -66,48 +81,30 @@ export struct EditorPreviewArea {
   }
 
   private normalizeCameraName(camera: string): string {
-    if (camera === 'FRONT') {
-      return 'Front'
-    }
-    if (camera === 'REAR') {
-      return 'Back'
-    }
-    if (camera === 'LEFT') {
-      return 'Left'
-    }
-    if (camera === 'RIGHT') {
-      return 'Right'
-    }
-    if (camera === 'LEFT_FRONT') {
-      return 'LeftFront'
-    }
-    if (camera === 'RIGHT_FRONT') {
-      return 'RightFront'
-    }
-    return camera
+    return normalizeCameraNameById(camera)
   }
 
   private resolveLayout(templateId: string): Array<LayoutSlotDefinition> {
-    if (templateId === 'T1') {
+    if (templateId === TemplateId.T1) {
       return [
         { id: 'top', camera: 'Front', x: 0, y: 0, width: 1, height: 0.5, zoomX: 1 },
         { id: 'bottom', camera: 'Back', x: 0, y: 0.5, width: 1, height: 0.5, zoomX: 1 }
       ]
     }
-    if (templateId === 'T2') {
+    if (templateId === TemplateId.T2) {
       return [
         { id: 'top', camera: 'Front', x: 0, y: 0, width: 1, height: 0.6667, zoomX: 1 },
         { id: 'bottomLeft', camera: 'Left', x: 0, y: 0.6667, width: 0.5, height: 0.3333, zoomX: 1 },
         { id: 'bottomRight', camera: 'Right', x: 0.5, y: 0.6667, width: 0.5, height: 0.3333, zoomX: 1 }
       ]
     }
-    if (templateId === 'T3') {
+    if (templateId === TemplateId.T3) {
       return [
         { id: 'left', camera: 'Left', x: 0, y: 0, width: 0.5, height: 1, zoomX: 1 },
         { id: 'right', camera: 'Right', x: 0.5, y: 0, width: 0.5, height: 1, zoomX: 1 }
       ]
     }
-    if (templateId === 'T4') {
+    if (templateId === TemplateId.T4) {
       return [
         { id: 'left', camera: 'LeftFront', x: 0, y: 0, width: 0.3333, height: 1, zoomX: 1.35 },
         { id: 'center', camera: 'Front', x: 0.3333, y: 0, width: 0.3334, height: 1, zoomX: 1 },
@@ -128,7 +125,7 @@ export struct EditorPreviewArea {
   }
 
   private isAudioMaster(templateId: string, camera: string): boolean {
-    if (templateId === 'T3') {
+    if (templateId === TemplateId.T3) {
       return false
     }
     return camera === 'Front'
@@ -179,7 +176,17 @@ export struct EditorPreviewArea {
     const clips = this.tripSnapshot.clips
     const firstTs = clips.length > 0 ? clips[0].timestamp : 0
     const lastTs = clips.length > 0 ? clips[clips.length - 1].timestamp : 0
-    return `${this.editorState.tripId}_${this.editorState.activeTemplateId}_${clips.length}_${firstTs}_${lastTs}`
+    return `${this.editorState.tripId}_${this.editorState.activeTemplateId}_${this.switchTaskId}_${clips.length}_${firstTs}_${lastTs}`
+  }
+
+  private enqueueManagerTask(task: () => Promise<void>, contextTaskId: number = this.switchTaskId): void {
+    this.rebuildQueue = this.rebuildQueue.then(task).catch((error: Object) => {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('EditorPreviewArea', `manager task failed: ${message}`)
+      if (contextTaskId > 0 && this.switchTaskId === contextTaskId && this.onTemplateSwitchStageReady) {
+        this.onTemplateSwitchStageReady(contextTaskId, 'failed')
+      }
+    })
   }
 
   private requestRebuild(force: boolean): void {
@@ -192,31 +199,47 @@ export struct EditorPreviewArea {
   }
 
   private rebuild(): void {
-    this.rebuildQueue = this.rebuildQueue.then(async () => {
+    const currentTaskId = this.switchTaskId
+    this.enqueueManagerTask(async () => {
+      if (this.disposed) {
+        await this.releaseAll()
+        return
+      }
+      this.rebuildEpoch += 1
+      const currentEpoch = this.rebuildEpoch
       await this.releaseAll()
+      if (this.disposed || currentEpoch !== this.rebuildEpoch) {
+        return
+      }
       const snapshot = this.tripSnapshot
       const manager = new GlobalTimelineManager()
       manager.setDuration(this.editorState.totalDurationSec * 1000)
       manager.setCallbacks(
         (globalMs: number) => {
-          if (this.onPlayheadChanged) {
-            this.onPlayheadChanged(globalMs)
+          if (this.disposed || currentEpoch !== this.rebuildEpoch || !this.onPlayheadChanged) {
+            return
           }
+          this.onPlayheadChanged(globalMs)
         },
         undefined,
         () => {
-          if (this.onPlaybackEnded) {
-            this.onPlaybackEnded()
+          if (this.disposed || currentEpoch !== this.rebuildEpoch || !this.onPlaybackEnded) {
+            return
           }
+          this.onPlaybackEnded()
         }
       )
       const definitions = this.resolveLayout(this.editorState.activeTemplateId)
       const renderItems: Array<TrackRenderItem> = []
       for (const definition of definitions) {
+        if (this.disposed || currentEpoch !== this.rebuildEpoch) {
+          await manager.release()
+          return
+        }
         const camera = this.resolveSlotCamera(definition)
         const trackSegments = snapshot.clips.length > 0 ? this.buildTrackSegments(snapshot, camera) : []
         const controller = new PingPongTrackController(
-          `${this.editorState.tripId}_${this.editorState.activeTemplateId}_${definition.id}`,
+          `${this.editorState.tripId}_${this.editorState.activeTemplateId}_${this.switchTaskId}_${definition.id}`,
           camera,
           this.isAudioMaster(this.editorState.activeTemplateId, camera)
         )
@@ -224,7 +247,7 @@ export struct EditorPreviewArea {
         manager.registerTrack(controller)
         const hasSource = trackSegments.length > 0
         renderItems.push({
-          key: `${this.editorState.activeTemplateId}_${definition.id}_${camera}`,
+          key: `${this.editorState.activeTemplateId}_${this.switchTaskId}_${definition.id}_${camera}`,
           camera,
           x: definition.x,
           y: definition.y,
@@ -235,24 +258,98 @@ export struct EditorPreviewArea {
           controller
         })
       }
+      if (this.disposed || currentEpoch !== this.rebuildEpoch) {
+        await manager.release()
+        return
+      }
       this.manager = manager
       this.trackItems = renderItems
+      this.startSurfaceHandshake(renderItems)
+      await this.waitSurfaceHandshake(1800)
+      if (this.disposed || currentEpoch !== this.rebuildEpoch) {
+        return
+      }
       await manager.setMuted(this.muted)
       await manager.setPlaybackRate(this.parseSpeedLabel(this.speedLabel))
       await manager.seek(this.playheadMs)
       if (this.playing) {
         await manager.play()
+        this.notifyTemplateSwitchStageReady(currentTaskId, 'playing')
       } else {
         await manager.pause()
+        this.notifyTemplateSwitchStageReady(currentTaskId, 'prepared')
       }
       debugLog('EditorPreviewArea', `rebuild done, template=${this.editorState.activeTemplateId}, tracks=${renderItems.length}`)
-    }).catch((error: Object) => {
-      const message = error instanceof Error ? error.message : String(error)
-      debugLog('EditorPreviewArea', `rebuild failed: ${message}`)
+    }, currentTaskId)
+  }
+
+  private notifyTemplateSwitchStageReady(taskId: number, stage: string): void {
+    if (taskId <= 0 || taskId !== this.switchTaskId || !this.onTemplateSwitchStageReady) {
+      return
+    }
+    this.onTemplateSwitchStageReady(taskId, stage)
+  }
+
+  private clearSurfaceReadyTimer(): void {
+    if (this.surfaceReadyTimer < 0) {
+      return
+    }
+    clearTimeout(this.surfaceReadyTimer)
+    this.surfaceReadyTimer = -1
+  }
+
+  private startSurfaceHandshake(renderItems: Array<TrackRenderItem>): void {
+    this.clearSurfaceReadyTimer()
+    this.pendingSurfaceTrackKeys = renderItems.filter((item: TrackRenderItem) => item.hasSource).map((item: TrackRenderItem) => item.key)
+    this.readySurfaceTrackKeys = []
+    this.surfaceReadyResolve = undefined
+  }
+
+  private isAllSurfaceReady(): boolean {
+    return this.pendingSurfaceTrackKeys.length === this.readySurfaceTrackKeys.length
+  }
+
+  private markTrackSurfaceReady(trackKey: string): void {
+    if (!this.pendingSurfaceTrackKeys.some((item: string) => item === trackKey)) {
+      return
+    }
+    if (this.readySurfaceTrackKeys.some((item: string) => item === trackKey)) {
+      return
+    }
+    this.readySurfaceTrackKeys.push(trackKey)
+    if (!this.surfaceReadyResolve || !this.isAllSurfaceReady()) {
+      return
+    }
+    const resolve = this.surfaceReadyResolve
+    this.surfaceReadyResolve = undefined
+    this.clearSurfaceReadyTimer()
+    resolve()
+  }
+
+  private waitSurfaceHandshake(timeoutMs: number): Promise<void> {
+    if (this.pendingSurfaceTrackKeys.length === 0 || this.isAllSurfaceReady()) {
+      return Promise.resolve()
+    }
+    return new Promise((resolve) => {
+      this.surfaceReadyResolve = resolve
+      this.clearSurfaceReadyTimer()
+      this.surfaceReadyTimer = setTimeout(() => {
+        if (!this.surfaceReadyResolve) {
+          return
+        }
+        const done = this.surfaceReadyResolve
+        this.surfaceReadyResolve = undefined
+        this.surfaceReadyTimer = -1
+        done()
+      }, timeoutMs)
     })
   }
 
   private async releaseAll(): Promise<void> {
+    this.clearSurfaceReadyTimer()
+    this.pendingSurfaceTrackKeys = []
+    this.readySurfaceTrackKeys = []
+    this.surfaceReadyResolve = undefined
     if (this.manager) {
       await this.manager.release()
       this.manager = undefined
@@ -264,36 +361,72 @@ export struct EditorPreviewArea {
     this.requestRebuild(false)
   }
 
+  private onTemplateSwitchingChanged(): void {
+    if (!this.isTemplateSwitching) {
+      return
+    }
+    const currentTaskId = this.switchTaskId
+    this.enqueueManagerTask(async () => {
+      if (this.disposed) {
+        return
+      }
+      if (this.manager) {
+        await this.manager.pause()
+      }
+      await this.releaseAll()
+      this.notifyTemplateSwitchStageReady(currentTaskId, 'released')
+    }, currentTaskId)
+  }
+
+  private onSwitchTaskIdChanged(): void {
+    if (this.switchTaskId <= 0 || this.isTemplateSwitching) {
+      return
+    }
+    this.requestRebuild(false)
+  }
+
   private onPlayingChanged(): void {
-    if (!this.manager) {
-      return
-    }
-    if (this.playing) {
-      this.manager.play()
-      return
-    }
-    this.manager.pause()
+    const currentTaskId = this.switchTaskId
+    this.enqueueManagerTask(async () => {
+      if (this.disposed || currentTaskId !== this.switchTaskId || !this.manager) {
+        return
+      }
+      if (this.playing) {
+        await this.manager.play()
+        return
+      }
+      await this.manager.pause()
+    })
   }
 
   private onSeekTokenChanged(): void {
-    if (!this.manager) {
-      return
-    }
-    this.manager.seek(this.playheadMs)
+    const currentTaskId = this.switchTaskId
+    this.enqueueManagerTask(async () => {
+      if (this.disposed || currentTaskId !== this.switchTaskId || !this.manager) {
+        return
+      }
+      await this.manager.seek(this.playheadMs)
+    })
   }
 
   private onMutedChanged(): void {
-    if (!this.manager) {
-      return
-    }
-    this.manager.setMuted(this.muted)
+    const currentTaskId = this.switchTaskId
+    this.enqueueManagerTask(async () => {
+      if (this.disposed || currentTaskId !== this.switchTaskId || !this.manager) {
+        return
+      }
+      await this.manager.setMuted(this.muted)
+    })
   }
 
   private onSpeedLabelChanged(): void {
-    if (!this.manager) {
-      return
-    }
-    this.manager.setPlaybackRate(this.parseSpeedLabel(this.speedLabel))
+    const currentTaskId = this.switchTaskId
+    this.enqueueManagerTask(async () => {
+      if (this.disposed || currentTaskId !== this.switchTaskId || !this.manager) {
+        return
+      }
+      await this.manager.setPlaybackRate(this.parseSpeedLabel(this.speedLabel))
+    })
   }
 
   build() {
@@ -301,7 +434,10 @@ export struct EditorPreviewArea {
       ForEach(this.trackItems, (item: TrackRenderItem) => {
         Stack({ alignContent: Alignment.Center }) {
           if (item.hasSource) {
-            PingPongTrackView({ controller: item.controller })
+            PingPongTrackView({
+              controller: item.controller,
+              onSurfaceReady: () => this.markTrackSurfaceReady(item.key)
+            })
               .width(item.zoomX > 1 ? `${item.zoomX * 100}%` : '100%')
               .height('100%')
           } else {

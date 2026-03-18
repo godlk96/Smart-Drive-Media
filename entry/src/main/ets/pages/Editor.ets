@@ -1,23 +1,27 @@
 import { EditorPreviewArea } from '../components/EditorPreviewArea'
-import { sharedCoreBridge } from '../bridge/CoreBridge'
-import { EditorStateModel, TemplateCardModel, TimelineMarkerModel, TimelineTrackModel } from '../model/AppState'
-import { createEditorStateFromSnapshot, deepCloneExportSnapshot, ExportSnapshot, resolveTemplateDefinition } from '../model/Models'
+import { EditorStateModel, TemplateCardModel, TimelineTrackModel } from '../model/AppState'
 import { TripSnapshot } from '../model/TripModels'
 import { startNativeExport } from '../NativeExportManager'
 import { debugLog } from '../utils/Logger'
 import common from '@ohos.app.ability.common'
+import { EditorViewModel } from '../viewmodel/EditorViewModel'
 
 @Entry
 @Component
 struct Editor {
-  private bridge = sharedCoreBridge
+  private viewModel: EditorViewModel = new EditorViewModel()
   private exportSessionSeed: string = ''
   private controlsTimer: number = -1
   private lastLoggedSecond: number = -1
+  private pendingReleaseWaitTaskId: number = 0
+  private pendingReleaseWaitTimer: number = -1
+  private pendingReleaseWaitResolve?: () => void
+  private pendingPreparedWaitTaskId: number = 0
+  private pendingPreparedWaitTimer: number = -1
   @State private showPlayerControls: boolean = true
   @State private showPreviewCover: boolean = true
   @State private previewPlaying: boolean = false
-  private isSwitchingTemplate: boolean = false
+  @State private isTemplateSwitching: boolean = false
   private isTimelineDragging: boolean = false
   private isSettlingAfterDrag: boolean = false
   private dragPreviewSec: number = 0
@@ -27,6 +31,7 @@ struct Editor {
   private lastStablePlayheadSec: number = 0
   private readonly minuteBoundaryHysteresisSec: number = 0.35
   @State private seekToken: number = 0
+  @State private switchTaskId: number = 0
   @State private tripSnapshot: TripSnapshot = new TripSnapshot()
   @State private previewRenderVersion: number = 0
   @State private showSlotLabels: boolean = false
@@ -39,6 +44,8 @@ struct Editor {
   @State private clipMarks: Array<number> = []
   @State private mosaicEnabledUi: boolean = true
   private toastTimer: number = -1
+  private wasMutedBeforeDrag: boolean = false
+  private wasPlayingBeforeDrag: boolean = false
   @State private state: EditorStateModel = {
     tripId: '',
     tripTitle: '剪辑工作台',
@@ -117,12 +124,11 @@ struct Editor {
       debugLog('剪辑页', `读取路由参数失败：${message}`)
     }
     const tripId = params.tripId ?? 'trip-demo-1'
-    const title = params.title ?? ''
-    const subtitle = params.subtitle ?? ''
-    debugLog('剪辑页', `进入页面，行程ID=${tripId}，标题提示=${title}，副标题提示=${subtitle}`)
-    this.exportSessionSeed = `${tripId}_${Date.now()}`
-    this.applyState(this.bridge.createEditorState(tripId, title, subtitle))
-    this.tripSnapshot = this.bridge.getTripSnapshotClone(this.state.tripId) ?? new TripSnapshot()
+    debugLog('剪辑页', `进入页面，行程ID=${tripId}`)
+    const hydrateResult = this.viewModel.hydrate(tripId)
+    this.exportSessionSeed = hydrateResult.exportSessionSeed
+    this.applyState(hydrateResult.state)
+    this.tripSnapshot = hydrateResult.tripSnapshot
     this.showPreviewCover = this.state.previewUri.length > 0
     this.previewPlaying = false
     this.showPlayerControls = true
@@ -138,6 +144,8 @@ struct Editor {
   aboutToDisappear(): void {
     this.clearHideControlsTimer()
     this.clearSettleTimer()
+    this.resolveTemplateSwitchReleaseWait(this.pendingReleaseWaitTaskId)
+    this.resolveTemplateSwitchPreparedWait(this.pendingPreparedWaitTaskId)
     if (this.toastTimer >= 0) {
       clearTimeout(this.toastTimer)
       this.toastTimer = -1
@@ -172,21 +180,12 @@ struct Editor {
   }
 
   private getPreviewAspectRatio(): number {
-    const template = resolveTemplateDefinition(this.state.activeTemplateId)
-    if (template.templateId === 'T1') {
-      return 1920 / 2160
-    }
-    if (template.templateId === 'T2') {
-      return 1920 / 1620
-    }
-    if (template.templateId === 'T3' || template.templateId === 'T4') {
-      return 3840 / 1080
-    }
-    return 16 / 9
+    return this.viewModel.getPreviewAspectRatio(this.state.activeTemplateId)
   }
 
   private hasPreviewSource(): boolean {
-    return this.state.previewSlots.some((slot) => slot.uri.length > 0)
+    const payload = this.viewModel.buildPreviewPayload(this.state)
+    return payload.slots.some((slot) => slot.uri.length > 0)
   }
 
   private startAllPreview(): void {
@@ -226,22 +225,17 @@ struct Editor {
   }
 
   private getPlaybackRate(): number {
-    const normalized = this.state.speedLabel.replace('X', '')
-    const parsed = Number(normalized)
-    if (parsed >= 1.0 && parsed <= 4) {
-      return parsed
-    }
-    return 1.0
+    return this.viewModel.getPlaybackRate(this.state.speedLabel)
   }
 
   private syncGlobalPlayhead(second: number, fromUser: boolean, commitSeek: boolean = true): void {
     const clamped = Math.max(0, Math.min(second, this.state.totalDurationSec))
     this.updatePlayheadSec(clamped)
     if (commitSeek) {
-      this.applyState(this.bridge.seekGlobalPlayhead(Math.floor(clamped)))
+      this.applyState(this.viewModel.seekGlobalPlayhead(clamped))
       this.seekToken += 1
     }
-    this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.playheadSec * 1000)))
+    this.updatePlayheadText(this.viewModel.updatePlayheadText(this.state.playheadSec))
     if (fromUser && commitSeek && Math.floor(clamped) !== this.lastLoggedSecond) {
       this.lastLoggedSecond = Math.floor(clamped)
       debugLog('剪辑页', `拖动全局进度，秒=${Math.floor(clamped)}，片段=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
@@ -269,55 +263,19 @@ struct Editor {
   }
 
   private getTemplateUiName(card: TemplateCardModel): string {
-    if (card.id === 'T5') {
-      return '单视角'
-    }
-    if (card.id === 'T1') {
-      return '防追尾双录'
-    }
-    if (card.id === 'T2') {
-      return '避险防加塞'
-    }
-    if (card.id === 'T3') {
-      return '左右盲区'
-    }
-    if (card.id === 'T4') {
-      return '沉浸式旅拍'
-    }
-    return card.title
+    return this.viewModel.getTemplateUiName(card)
   }
 
   private getTemplateResolution(card: TemplateCardModel): string {
-    if (card.id === 'T5') {
-      return '1920×1080'
-    }
-    if (card.id === 'T1') {
-      return '1920×2160'
-    }
-    if (card.id === 'T2') {
-      return '1920×1620'
-    }
-    return '3840×1080'
+    return this.viewModel.getTemplateResolution(card)
   }
 
   private getTemplateIcon(card: TemplateCardModel): string {
-    if (card.id === 'T5') {
-      return '📹'
-    }
-    if (card.id === 'T1') {
-      return '📹📹'
-    }
-    if (card.id === 'T2') {
-      return '👁️👁️👁️'
-    }
-    if (card.id === 'T3') {
-      return '⬅️➡️'
-    }
-    return '🎬'
+    return this.viewModel.getTemplateIcon(card)
   }
 
   private templateSupportsMosaic(templateId: string): boolean {
-    return templateId === 'T1' || templateId === 'T2' || templateId === 'T5'
+    return this.viewModel.templateSupportsMosaic(templateId)
   }
 
   private templateSupportsAudio(templateId: string): boolean {
@@ -325,66 +283,83 @@ struct Editor {
   }
 
   private normalizeCameraName(camera: string): string {
-    if (camera === 'FRONT') {
-      return 'Front'
-    }
-    if (camera === 'REAR') {
-      return 'Back'
-    }
-    if (camera === 'LEFT') {
-      return 'Left'
-    }
-    if (camera === 'RIGHT') {
-      return 'Right'
-    }
-    if (camera === 'LEFT_FRONT') {
-      return 'LeftFront'
-    }
-    if (camera === 'RIGHT_FRONT') {
-      return 'RightFront'
-    }
-    return camera
+    return this.viewModel.normalizeCameraName(camera)
   }
 
   private cameraZhName(camera: string): string {
-    const normalized = this.normalizeCameraName(camera)
-    if (normalized === 'Front') {
-      return '前'
-    }
-    if (normalized === 'Back') {
-      return '后'
-    }
-    if (normalized === 'Left') {
-      return '左后'
-    }
-    if (normalized === 'Right') {
-      return '右后'
-    }
-    if (normalized === 'LeftFront') {
-      return '左前'
-    }
-    if (normalized === 'RightFront') {
-      return '右前'
-    }
-    return normalized
+    return this.viewModel.cameraZhName(camera)
   }
 
   private isTemplateDisabled(card: TemplateCardModel): boolean {
-    const definition = resolveTemplateDefinition(card.id)
-    const tracks = this.state.timeline.map((item: TimelineTrackModel) => this.normalizeCameraName(item.cameraPosition))
-    return definition.requiredCameras.some((camera) => !tracks.some((item: string) => item === this.normalizeCameraName(String(camera))))
+    return this.viewModel.isTemplateDisabled(card, this.state.timeline)
   }
 
   private getTemplateMissingViews(card: TemplateCardModel): string {
-    const definition = resolveTemplateDefinition(card.id)
-    const tracks = this.state.timeline.map((item: TimelineTrackModel) => this.normalizeCameraName(item.cameraPosition))
-    const missing = definition.requiredCameras
-      .filter((camera) => !tracks.some((item: string) => item === this.normalizeCameraName(String(camera))))
-      .map((camera) => this.cameraZhName(this.normalizeCameraName(String(camera))))
-    return missing.join('、')
+    return this.viewModel.getTemplateMissingViews(card, this.state.timeline)
+  }
+
+  private syncTemplateSwitchState(): void {
+    this.isTemplateSwitching = this.viewModel.getIsTemplateSwitching()
+    this.switchTaskId = this.viewModel.getTemplateSwitchTaskId()
+  }
+
+  private waitTemplateSwitchRelease(taskId: number): Promise<void> {
+    this.resolveTemplateSwitchReleaseWait(this.pendingReleaseWaitTaskId)
+    this.pendingReleaseWaitTaskId = taskId
+    return new Promise((resolve) => {
+      this.pendingReleaseWaitResolve = resolve
+      this.pendingReleaseWaitTimer = setTimeout(() => {
+        this.resolveTemplateSwitchReleaseWait(taskId)
+      }, 1500)
+    })
+  }
+
+  private resolveTemplateSwitchReleaseWait(taskId: number): void {
+    if (taskId <= 0 || this.pendingReleaseWaitTaskId !== taskId) {
+      return
+    }
+    this.pendingReleaseWaitTaskId = 0
+    if (this.pendingReleaseWaitTimer >= 0) {
+      clearTimeout(this.pendingReleaseWaitTimer)
+      this.pendingReleaseWaitTimer = -1
+    }
+    const resolve = this.pendingReleaseWaitResolve
+    this.pendingReleaseWaitResolve = undefined
+    if (resolve) {
+      resolve()
+    }
+  }
+
+  private startTemplateSwitchPreparedWatchdog(taskId: number): void {
+    this.resolveTemplateSwitchPreparedWait(this.pendingPreparedWaitTaskId)
+    if (taskId <= 0 || !this.viewModel.isTemplateSwitchTaskValid(taskId)) {
+      return
+    }
+    this.pendingPreparedWaitTaskId = taskId
+    this.pendingPreparedWaitTimer = setTimeout(() => {
+      if (this.pendingPreparedWaitTaskId !== taskId) {
+        return
+      }
+      this.completeTemplateSwitch(taskId)
+    }, 2200)
+  }
+
+  private resolveTemplateSwitchPreparedWait(taskId: number): void {
+    if (taskId <= 0 || this.pendingPreparedWaitTaskId !== taskId) {
+      return
+    }
+    this.pendingPreparedWaitTaskId = 0
+    if (this.pendingPreparedWaitTimer >= 0) {
+      clearTimeout(this.pendingPreparedWaitTimer)
+      this.pendingPreparedWaitTimer = -1
+    }
   }
 
   private selectTemplateForUi(card: TemplateCardModel): void {
+    if (this.isTemplateSwitching) {
+      this.showToast('模板切换中，请稍候')
+      return
+    }
     if (this.isTemplateDisabled(card)) {
       const missing = this.getTemplateMissingViews(card)
       this.showToast(`缺少${missing}视角，无法使用该模板`)
@@ -403,7 +378,7 @@ struct Editor {
     if (marks.length === 2) {
       const start = Math.min(marks[0], marks[1])
       const end = Math.max(marks[0], marks[1])
-      this.applyState(this.bridge.updateSelectionRange(start, end))
+      this.applyState(this.viewModel.updateSelectionRange(start, end))
       this.syncGlobalPlayhead(this.state.playheadSec, false)
     }
     this.markUnsaved()
@@ -419,9 +394,9 @@ struct Editor {
     marks.pop()
     this.clipMarks = marks
     if (marks.length === 0) {
-      this.applyState(this.bridge.updateSelectionRange(0, this.state.totalDurationSec))
+      this.applyState(this.viewModel.updateSelectionRange(0, this.state.totalDurationSec))
     } else if (marks.length === 1) {
-      this.applyState(this.bridge.updateSelectionRange(marks[0], this.state.totalDurationSec))
+      this.applyState(this.viewModel.updateSelectionRange(marks[0], this.state.totalDurationSec))
     }
     this.markUnsaved()
     this.showToast('已撤回上次剪辑点')
@@ -458,21 +433,11 @@ struct Editor {
   }
 
   private formatTimelineTick(seconds: number): string {
-    const min = Math.floor(seconds / 60)
-    const sec = Math.floor(seconds % 60)
-    return `${min}:${sec.toString().padStart(2, '0')}`
+    return this.viewModel.formatTimelineTick(seconds)
   }
 
   private getTimelineTicks(): Array<number> {
-    const result: Array<number> = []
-    const interval = this.state.totalDurationSec <= 60 ? 10 : 30
-    for (let point = 0; point <= this.state.totalDurationSec; point += interval) {
-      result.push(point)
-    }
-    if (result.length === 0 || result[result.length - 1] !== this.state.totalDurationSec) {
-      result.push(this.state.totalDurationSec)
-    }
-    return result
+    return this.viewModel.getTimelineTicks(this.state.totalDurationSec)
   }
 
   private getSegmentInfoText(): string {
@@ -526,14 +491,14 @@ struct Editor {
     }
     const stabilizedSec = this.stabilizeMinuteBoundary(nextSec)
     this.updatePlayheadSec(stabilizedSec)
-    this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(stabilizedSec * 1000)))
+    this.updatePlayheadText(this.viewModel.updatePlayheadText(stabilizedSec))
   }
 
   private handlePreviewEnded(): void {
     this.previewPlaying = false
     this.showPreviewCover = true
     this.updatePlayheadSec(this.state.totalDurationSec)
-    this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.totalDurationSec * 1000)))
+    this.updatePlayheadText(this.viewModel.updatePlayheadText(this.state.totalDurationSec))
     this.showControlsTemporarily()
   }
 
@@ -571,21 +536,47 @@ struct Editor {
   }
 
   private beginTimelineDrag(localX: number): void {
+    this.wasPlayingBeforeDrag = this.previewPlaying
+    if (this.previewPlaying) {
+      this.pauseAllPreview()
+    }
+    this.wasMutedBeforeDrag = this.state.muted
+    if (!this.wasMutedBeforeDrag) {
+      this.applyState(this.viewModel.setMuted(true))
+    }
     this.isTimelineDragging = true
     this.isSettlingAfterDrag = false
     this.clearSettleTimer()
-    this.handleTimelineTouch(localX, false, false)
+    this.handleTimelineTouch(localX, true, false)
     this.dragPreviewSec = this.state.playheadSec
   }
 
+  private handleTimelineTap(localX: number): void {
+    if (this.timelineWidth <= 0) {
+      return
+    }
+    const percent = Math.max(0, Math.min(1, localX / this.timelineWidth))
+    const targetSec = percent * this.state.totalDurationSec
+    
+    this.settleTargetSec = targetSec
+    this.isSettlingAfterDrag = true
+    this.clearSettleTimer()
+    this.settleTimer = setTimeout(() => {
+      this.isSettlingAfterDrag = false
+      this.settleTimer = -1
+    }, this.settleWindowMs)
+    
+    this.syncGlobalPlayhead(targetSec, true, true)
+  }
+
   private updateTimelineDrag(localX: number): void {
-    this.handleTimelineTouch(localX, false, false)
+    this.handleTimelineTouch(localX, true, false)
     this.dragPreviewSec = this.state.playheadSec
   }
 
   private endTimelineDrag(localX?: number): void {
     if (localX !== undefined) {
-      this.handleTimelineTouch(localX, false, false)
+      this.handleTimelineTouch(localX, true, false)
     }
     const finalSec = this.state.playheadSec
     this.settleTargetSec = finalSec
@@ -596,41 +587,27 @@ struct Editor {
       this.settleTimer = -1
     }, this.settleWindowMs)
     this.isTimelineDragging = false
+
+    if (!this.wasMutedBeforeDrag) {
+      this.applyState(this.viewModel.setMuted(false))
+    }
+    
     this.syncGlobalPlayhead(finalSec, true, true)
+    
+    if (this.wasPlayingBeforeDrag) {
+      this.startAllPreview()
+    }
   }
 
   private updateExportStatus(statusText: string): void {
-    this.bridge.setExportStatusText(statusText)
+    this.viewModel.setExportStatusText(statusText)
     const nextState = this.state
     nextState.exportStatusText = statusText
     this.state = nextState
   }
 
-  private buildExportSnapshot(): ExportSnapshot | undefined {
-    const snapshot = this.bridge.getTripSnapshotClone(this.state.tripId)
-    if (!snapshot) {
-      return undefined
-    }
-    let draft = createEditorStateFromSnapshot(
-      snapshot,
-      this.exportSessionSeed,
-      this.state.activeTemplateId,
-      this.state.speedLabel,
-      this.state.muted,
-      this.state.watermarkEnabled,
-      this.state.hideSpeed,
-      this.state.hideGps,
-      this.state.hideVin,
-      this.state.drawerExpanded,
-      this.state.exportStatusText
-    )
-    const startMs = Math.floor(this.state.selectionStartSec * 1000)
-    const endMs = Math.floor(this.state.selectionEndSec * 1000)
-    const playheadMs = Math.floor(this.state.playheadSec * 1000)
-    draft.playback.rangeStartMs = startMs
-    draft.playback.rangeEndMs = endMs
-    draft.playback.playheadMs = Math.max(startMs, Math.min(playheadMs, endMs))
-    return deepCloneExportSnapshot(draft)
+  private buildExportSnapshot() {
+    return this.viewModel.buildExportSnapshot(this.state, this.exportSessionSeed)
   }
 
   private async startNativeExportTask(): Promise<void> {
@@ -651,6 +628,8 @@ struct Editor {
     this.exportLoadingVisible = true
     this.exportLoadingText = '导出处理中...'
     this.updateExportStatus('导出处理中...')
+    const ffmpegArgs = this.viewModel.buildFfmpegArgs(this.state, this.exportSessionSeed)
+    debugLog('导出', `FFmpeg参数预览=${ffmpegArgs.join(' ')}`)
     try {
       const outputPath = await startNativeExport(exportSnapshot, context, (event) => {
         this.updateExportStatus(event.status)
@@ -668,16 +647,17 @@ struct Editor {
 
   private togglePrivacy(type: string, enabled: boolean): void {
     debugLog('剪辑页', `切换隐私开关，类型=${type}，值=${enabled}`)
-    this.applyState(this.bridge.updatePrivacy(type, enabled))
+    this.applyState(this.viewModel.updatePrivacy(type, enabled))
     this.showControlsTemporarily()
   }
 
   private switchCamera(camera: string): void {
-    this.applyState(this.bridge.switchCamera(camera))
-    this.tripSnapshot = this.bridge.getTripSnapshotClone(this.state.tripId) ?? new TripSnapshot()
+    this.applyState(this.viewModel.switchCamera(camera))
+    this.tripSnapshot = this.viewModel.getTripSnapshot(this.state.tripId)
     this.previewRenderVersion += 1
     this.seekToken += 1
     this.showPreviewCover = this.state.previewUri.length > 0
+    this.viewModel.logPreviewPayload(this.state)
     debugLog('剪辑页', `切换播放器视角=${camera}，片段=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
     this.showControlsTemporarily()
   }
@@ -688,7 +668,7 @@ struct Editor {
 
   private updateRangeStart(value: number): void {
     const nextStart = Math.min(Math.floor(value), this.state.selectionEndSec)
-    this.applyState(this.bridge.updateSelectionRange(nextStart, this.state.selectionEndSec))
+    this.applyState(this.viewModel.updateSelectionRange(nextStart, this.state.selectionEndSec))
     if (this.state.playheadSec < this.state.selectionStartSec) {
       this.updatePlayhead(this.state.selectionStartSec)
     }
@@ -698,7 +678,7 @@ struct Editor {
 
   private updateRangeEnd(value: number): void {
     const nextEnd = Math.max(Math.floor(value), this.state.selectionStartSec)
-    this.applyState(this.bridge.updateSelectionRange(this.state.selectionStartSec, nextEnd))
+    this.applyState(this.viewModel.updateSelectionRange(this.state.selectionStartSec, nextEnd))
     if (this.state.playheadSec > this.state.selectionEndSec) {
       this.updatePlayhead(this.state.selectionEndSec)
     }
@@ -706,41 +686,93 @@ struct Editor {
     this.showControlsTemporarily()
   }
 
-  private selectTemplate(card: TemplateCardModel): void {
-    if (this.isSwitchingTemplate) {
+  private async selectTemplate(card: TemplateCardModel): Promise<void> {
+    if (this.isTemplateSwitching) {
       return
     }
-    this.isSwitchingTemplate = true
-    const wasPlaying = this.previewPlaying
-    const targetSec = this.state.playheadSec
-    this.pauseAllPreview()
-    this.applyState(this.bridge.selectTemplate(card.id))
-    this.applyState(this.bridge.seekGlobalPlayhead(Math.floor(targetSec)))
-    this.updatePlayheadSec(this.state.playheadSec)
-    this.updatePlayheadText(this.bridge.updatePlayhead(Math.floor(this.state.playheadSec * 1000)))
-    this.tripSnapshot = this.bridge.getTripSnapshotClone(this.state.tripId) ?? new TripSnapshot()
-
-    this.previewRenderVersion += 1
-    this.showPreviewCover = !wasPlaying
-    this.seekToken += 1
-    if (wasPlaying) {
-      this.startAllPreview()
+    const taskId = this.viewModel.beginTemplateSwitchTask()
+    if (taskId <= 0 || !this.viewModel.isTemplateSwitchTaskValid(taskId)) {
+      return
     }
-    setTimeout(() => {
-      this.isSwitchingTemplate = false
-    }, 240)
-    
-    debugLog('剪辑页', `切换模板=${card.id}`)
-    this.markUnsaved()
-    this.showControlsTemporarily()
+    let waitPreviewPrepared = false
+    try {
+      this.syncTemplateSwitchState()
+      if (!this.viewModel.isTemplateSwitchTaskValid(taskId)) {
+        return
+      }
+      const wasPlaying = this.previewPlaying
+      const targetSec = this.state.playheadSec
+      this.pauseAllPreview()
+      if (this.hasPreviewSource()) {
+        await this.waitTemplateSwitchRelease(taskId)
+      }
+      if (!this.viewModel.isTemplateSwitchTaskValid(taskId)) {
+        return
+      }
+      const switchedState = this.viewModel.changeTemplate(card.id, taskId)
+      if (!switchedState || !this.viewModel.isTemplateSwitchTaskValid(taskId)) {
+        return
+      }
+      this.applyState(switchedState)
+      this.applyState(this.viewModel.seekGlobalPlayhead(targetSec))
+      this.updatePlayheadSec(this.state.playheadSec)
+      this.updatePlayheadText(this.viewModel.updatePlayheadText(this.state.playheadSec))
+      this.tripSnapshot = this.viewModel.getTripSnapshot(this.state.tripId)
+
+      this.previewRenderVersion += 1
+      this.showPreviewCover = !wasPlaying
+      this.seekToken += 1
+      if (wasPlaying) {
+        this.startAllPreview()
+      }
+      waitPreviewPrepared = this.hasPreviewSource()
+      debugLog('剪辑页', `切换模板=${card.id}`)
+      this.markUnsaved()
+      this.showControlsTemporarily()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('剪辑页', `切换模板失败：${message}`)
+    } finally {
+      if (waitPreviewPrepared) {
+        this.startTemplateSwitchPreparedWatchdog(taskId)
+      } else {
+        this.completeTemplateSwitch(taskId)
+      }
+    }
+  }
+
+  private completeTemplateSwitch(taskId: number): void {
+    this.resolveTemplateSwitchPreparedWait(taskId)
+    this.resolveTemplateSwitchReleaseWait(taskId)
+    if (!this.viewModel.isTemplateSwitchTaskValid(taskId)) {
+      return
+    }
+    this.viewModel.finishTemplateSwitchTask(taskId)
+    this.syncTemplateSwitchState()
+  }
+
+  private handleTemplateSwitchStageReady(taskId: number, stage: string): void {
+    if (taskId <= 0 || taskId !== this.switchTaskId) {
+      return
+    }
+    if (stage === 'released' || stage === 'failed') {
+      this.resolveTemplateSwitchReleaseWait(taskId)
+    }
+    if (stage === 'released') {
+      return
+    }
+    if (stage !== 'prepared' && stage !== 'playing' && stage !== 'failed') {
+      return
+    }
+    this.completeTemplateSwitch(taskId)
   }
 
   private toggleDrawer(): void {
-    this.applyState(this.bridge.toggleTemplateDrawer(!this.state.drawerExpanded))
+    this.applyState(this.viewModel.toggleTemplateDrawer(!this.state.drawerExpanded))
   }
 
   private cycleSpeed(): void {
-    this.applyState(this.bridge.cycleSpeed())
+    this.applyState(this.viewModel.cycleSpeed())
     this.seekToken += 1
     debugLog('剪辑诊断', `切换整体倍速=${this.getPlaybackRate()}X`)
     this.markUnsaved()
@@ -748,13 +780,13 @@ struct Editor {
   }
 
   private toggleMuted(): void {
-    this.applyState(this.bridge.toggleMuted())
+    this.applyState(this.viewModel.toggleMuted())
     this.seekToken += 1
     this.showControlsTemporarily()
   }
 
   private toggleWatermark(): void {
-    this.applyState(this.bridge.toggleWatermark())
+    this.applyState(this.viewModel.toggleWatermark())
     this.showControlsTemporarily()
   }
 
@@ -811,7 +843,7 @@ struct Editor {
                     .backgroundColor(card.id === this.state.activeTemplateId ? '#FF7A00' : '#333333')
                     .borderRadius(8)
                     .border({ width: 2, color: card.id === this.state.activeTemplateId ? '#FF7A00' : '#00000000' })
-                    .opacity(this.isTemplateDisabled(card) ? 0.5 : 1)
+                    .opacity(this.isTemplateSwitching || this.isTemplateDisabled(card) ? 0.5 : 1)
                     .onClick(() => this.selectTemplateForUi(card))
                   }, (card: TemplateCardModel) => card.id)
                 }
@@ -836,13 +868,16 @@ struct Editor {
                   EditorPreviewArea({
                     editorState: this.state,
                     tripSnapshot: this.tripSnapshot,
+                    isTemplateSwitching: this.isTemplateSwitching,
                     playing: this.previewPlaying,
                     seekToken: this.seekToken,
-                    playheadMs: Math.floor(this.state.playheadSec * 1000),
+                    switchTaskId: this.switchTaskId,
+                    playheadMs: this.viewModel.buildPreviewPayload(this.state).playheadMs,
                     muted: this.state.muted,
                     speedLabel: this.state.speedLabel,
                     onPlayheadChanged: (playheadMs: number) => this.handlePreviewPlayheadChanged(playheadMs),
-                    onPlaybackEnded: () => this.handlePreviewEnded()
+                    onPlaybackEnded: () => this.handlePreviewEnded(),
+                    onTemplateSwitchStageReady: (taskId: number, stage: string) => this.handleTemplateSwitchStageReady(taskId, stage)
                   })
                     .width('100%')
                     .height('100%')
@@ -964,7 +999,7 @@ struct Editor {
                     TapGesture()
                       .onAction((event: GestureEvent) => {
                         if (event.fingerList && event.fingerList.length > 0) {
-                          this.handleTimelineTouch(event.fingerList[0].localX, true, true)
+                          this.handleTimelineTap(event.fingerList[0].localX)
                         }
                       })
                   )

@@ -16,7 +16,9 @@ interface PlayerSlot {
   prepared: boolean
   sourceUri: string
   surfaceId: string
+  callbackTaskVersion: number
   preparedResolve?: () => void
+  pendingSeekTaskVersion: number
   pendingSeekResolve?: () => void
 }
 
@@ -99,6 +101,12 @@ export class PingPongTrackController {
       if (this.disposed) {
         return
       }
+      const sameSurface = this.attached && this.slotA.surfaceId === surfaceA && this.slotB.surfaceId === surfaceB
+      if (sameSurface) {
+        await this.applyMutedAndActiveVolume()
+        await this.applyPlaybackRate()
+        return
+      }
       this.slotA.surfaceId = surfaceA
       this.slotB.surfaceId = surfaceB
       await this.ensureSlot(this.slotA)
@@ -167,8 +175,18 @@ export class PingPongTrackController {
       name,
       prepared: false,
       sourceUri: '',
-      surfaceId: ''
+      surfaceId: '',
+      callbackTaskVersion: 0,
+      pendingSeekTaskVersion: -1
     }
+  }
+
+  private bumpSlotTaskVersion(slot: PlayerSlot): void {
+    slot.callbackTaskVersion = slot.callbackTaskVersion + 1
+  }
+
+  private isExpiredSlotTask(slot: PlayerSlot, taskVersion: number): boolean {
+    return taskVersion !== slot.callbackTaskVersion
   }
 
   private getSlot(name: ActiveLayer): PlayerSlot {
@@ -257,10 +275,14 @@ export class PingPongTrackController {
       return
     }
     playerRef.on('stateChange', (state: media.AVPlayerState) => {
-      if (!slot.player || slot.player !== playerRef || this.disposed) {
+      const taskVersion = slot.callbackTaskVersion
+      if (!slot.player || slot.player !== playerRef || this.disposed || this.isExpiredSlotTask(slot, taskVersion)) {
         return
       }
       if (state === 'initialized') {
+        if (this.isExpiredSlotTask(slot, taskVersion)) {
+          return
+        }
         if (slot.surfaceId.length > 0) {
           slot.player.surfaceId = slot.surfaceId
         }
@@ -268,6 +290,9 @@ export class PingPongTrackController {
         return
       }
       if (state === 'prepared') {
+        if (this.isExpiredSlotTask(slot, taskVersion)) {
+          return
+        }
         slot.prepared = true
         if (slot.preparedResolve) {
           slot.preparedResolve()
@@ -281,17 +306,29 @@ export class PingPongTrackController {
         return
       }
       if (state === 'completed' && slot.name === this.activeLayer) {
+        if (this.isExpiredSlotTask(slot, taskVersion)) {
+          return
+        }
         this.handleActiveCompleted()
       }
     })
     playerRef.on('seekDone', () => {
+      const taskVersion = slot.callbackTaskVersion
+      if (!slot.player || slot.player !== playerRef || this.disposed || this.isExpiredSlotTask(slot, taskVersion)) {
+        return
+      }
+      if (slot.pendingSeekTaskVersion !== taskVersion) {
+        return
+      }
       if (slot.pendingSeekResolve) {
         slot.pendingSeekResolve()
         slot.pendingSeekResolve = undefined
+        slot.pendingSeekTaskVersion = -1
       }
     })
     playerRef.on('timeUpdate', (timeMs: number) => {
-      if (slot.name !== this.activeLayer || this.disposed || this.activeSegmentIndex < 0) {
+      const taskVersion = slot.callbackTaskVersion
+      if (slot.name !== this.activeLayer || this.disposed || this.activeSegmentIndex < 0 || this.isExpiredSlotTask(slot, taskVersion)) {
         return
       }
       const segment = this.segments[this.activeSegmentIndex]
@@ -306,12 +343,18 @@ export class PingPongTrackController {
       const remaining = segment.durationMs - Math.max(0, timeMs)
       if (remaining < 1000) {
         this.enqueue(async () => {
+          if (this.isExpiredSlotTask(slot, taskVersion)) {
+            return
+          }
           const standby = this.getStandbySlot()
           await this.prepareStandbyForNext(standby, this.activeSegmentIndex + 1)
         })
       }
       if (remaining <= 20) {
         this.enqueue(async () => {
+          if (this.isExpiredSlotTask(slot, taskVersion)) {
+            return
+          }
           await this.tryHandoff()
         })
       }
@@ -334,8 +377,14 @@ export class PingPongTrackController {
     if (!slot.player) {
       return
     }
+    this.bumpSlotTaskVersion(slot)
     slot.prepared = false
     slot.sourceUri = ''
+    slot.pendingSeekTaskVersion = -1
+    if (slot.pendingSeekResolve) {
+      slot.pendingSeekResolve()
+      slot.pendingSeekResolve = undefined
+    }
     try {
       await slot.player.reset()
     } catch (_) {}
@@ -366,10 +415,12 @@ export class PingPongTrackController {
     }
     const player = slot.player
     return new Promise((resolve) => {
+      slot.pendingSeekTaskVersion = slot.callbackTaskVersion
       slot.pendingSeekResolve = resolve
       try {
         player.seek(Math.max(0, Math.floor(offsetMs)), media.SeekMode.SEEK_PREV_SYNC)
       } catch (_) {
+        slot.pendingSeekTaskVersion = -1
         slot.pendingSeekResolve = undefined
         resolve()
       }
@@ -472,9 +523,11 @@ export class PingPongTrackController {
   }
 
   private async releaseSlot(slot: PlayerSlot): Promise<void> {
+    this.bumpSlotTaskVersion(slot)
     slot.prepared = false
     slot.sourceUri = ''
     slot.preparedResolve = undefined
+    slot.pendingSeekTaskVersion = -1
     if (slot.pendingSeekResolve) {
       slot.pendingSeekResolve()
       slot.pendingSeekResolve = undefined

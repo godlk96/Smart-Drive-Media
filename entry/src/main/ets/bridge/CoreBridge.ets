@@ -714,6 +714,12 @@ export class CoreBridge {
     return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
   }
 
+  setMuted(muted: boolean): EditorStateModel {
+    this.muted = muted
+    const snapshot = this.trips.get(this.tripId)
+    return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
+  }
+
   toggleWatermark(): EditorStateModel {
     this.watermarkEnabled = !this.watermarkEnabled
     const snapshot = this.trips.get(this.tripId)
@@ -737,16 +743,6 @@ export class CoreBridge {
     debugLog('剪辑', `切换视角，目标=${camera}`)
     const snapshot = this.trips.get(this.tripId)
     return this.buildEditorState(snapshot, camera, 0)
-  }
-
-  playPrevClip(): EditorStateModel {
-    const snapshot = this.trips.get(this.tripId)
-    return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex - 1)
-  }
-
-  playNextClip(): EditorStateModel {
-    const snapshot = this.trips.get(this.tripId)
-    return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex + 1)
   }
 
   getExportStatusText(): string {

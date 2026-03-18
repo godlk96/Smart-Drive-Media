@@ -1,20 +1,12 @@
 import common from '@ohos.app.ability.common'
-import abilityAccessCtrl from '@ohos.abilityAccessCtrl'
-import { Permissions } from '@kit.AbilityKit'
-import { sharedCoreBridge } from '../bridge/CoreBridge'
 import { LibraryStateModel, TripCardModel } from '../model/AppState'
 import { debugLog } from '../utils/Logger'
-
-const REQUIRED_PERMISSIONS: Array<Permissions> = [
-  'ohos.permission.READ_MEDIA' as Permissions,
-  'ohos.permission.READ_IMAGEVIDEO' as Permissions,
-  'ohos.permission.WRITE_MEDIA' as Permissions
-]
+import { HomeViewModel } from '../viewmodel/HomeViewModel'
 
 @Entry
 @Component
 struct Index {
-  private bridge = sharedCoreBridge
+  private viewModel: HomeViewModel = new HomeViewModel()
   @State private permissionGranted: boolean = false
   @State private hasAutoRequestedPermission: boolean = false
   @State private selectionMode: boolean = false
@@ -28,10 +20,11 @@ struct Index {
   }
 
   aboutToAppear(): void {
+    this.syncViewState()
     if (!this.permissionGranted && !this.hasAutoRequestedPermission) {
-      this.requestMediaPermissionAndRefresh(false)
+      void this.requestMediaPermissionAndRefresh(false)
     }
-    this.refreshState()
+    void this.refreshState()
   }
 
   private getHostContextOrNull(): common.UIAbilityContext | null {
@@ -47,33 +40,34 @@ struct Index {
     return null
   }
 
-  private refreshState(): void {
-    debugLog('首页', `刷新列表，授权状态=${this.permissionGranted}`)
+  private syncViewState(): void {
+    const state = this.viewModel.getState()
+    this.permissionGranted = state.permissionGranted
+    this.hasAutoRequestedPermission = state.hasAutoRequestedPermission
+    this.selectionMode = state.selectionMode
+    this.selectedTripIds = state.selectedTripIds
+    this.state = state.libraryState
+  }
+
+  private async refreshState(): Promise<void> {
     const context = this.getHostContextOrNull()
     if (context === null) {
       return
     }
-    this.bridge.createLibraryState(this.permissionGranted, context)
-      .then((next: LibraryStateModel) => {
-        this.state = next
-        this.selectedTripIds = this.selectedTripIds.filter((id: string) => next.cards.some((item: TripCardModel) => item.id === id))
-      })
-      .catch((error: Error) => {
-        debugLog('首页', `刷新失败：${error.message}`)
-      })
+    try {
+      await this.viewModel.refresh(context)
+      this.syncViewState()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('首页', `刷新失败：${message}`)
+    }
   }
 
   private openEditor(card: TripCardModel): void {
     debugLog('首页', `进入剪辑，行程=${card.id}`)
+    const route = this.viewModel.openEditorRoute(card)
     try {
-      this.getUIContext().getRouter().pushUrl({
-        url: 'pages/Editor',
-        params: {
-          tripId: card.id,
-          title: card.title,
-          subtitle: card.subtitle
-        }
-      })
+      this.getUIContext().getRouter().pushUrl(route)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       debugLog('首页', `进入剪辑失败：${message}`)
@@ -81,21 +75,13 @@ struct Index {
   }
 
   private toggleTripSelection(card: TripCardModel): void {
-    const exists = this.selectedTripIds.some((id: string) => id === card.id)
-    if (exists) {
-      this.selectedTripIds = this.selectedTripIds.filter((id: string) => id !== card.id)
-      return
-    }
-    this.selectedTripIds = [...this.selectedTripIds, card.id]
+    this.viewModel.toggleTripSelection(card.id)
+    this.syncViewState()
   }
 
   private toggleSelectionMode(): void {
-    if (this.selectionMode) {
-      this.selectionMode = false
-      this.selectedTripIds = []
-      return
-    }
-    this.selectionMode = true
+    this.viewModel.toggleSelectionMode()
+    this.syncViewState()
   }
 
   private isTripSelected(cardId: string): boolean {
@@ -103,27 +89,7 @@ struct Index {
   }
 
   private getDisplayCards(): Array<TripCardModel> {
-    return [...this.state.cards].reverse()
-  }
-
-  private getSelectedTotalDurationSec(): number {
-    return this.state.cards
-      .filter((item: TripCardModel) => this.isTripSelected(item.id))
-      .reduce((total: number, item: TripCardModel) => total + item.durationSec, 0)
-  }
-
-  private formatTotalDuration(totalSec: number): string {
-    const seconds = Math.max(0, Math.floor(totalSec))
-    const hour = Math.floor(seconds / 3600)
-    const minute = Math.floor((seconds % 3600) / 60)
-    const second = seconds % 60
-    if (hour > 0) {
-      return `${hour}h ${minute}m`
-    }
-    if (minute > 0) {
-      return `${minute}m ${second}s`
-    }
-    return `${second}s`
+    return this.viewModel.getDisplayCards()
   }
 
   private canShowMergeButton(): boolean {
@@ -131,11 +97,11 @@ struct Index {
   }
 
   private getCompletenessText(card: TripCardModel): string {
-    return card.previewUri.length > 0 ? '完整' : '不完整'
+    return this.viewModel.getCompletenessText(card)
   }
 
   private getCompletenessColor(card: TripCardModel): string {
-    return card.previewUri.length > 0 ? '#0A59F7' : '#FF7A00'
+    return this.viewModel.getCompletenessColor(card)
   }
 
   private handleCardClick(card: TripCardModel): void {
@@ -147,68 +113,26 @@ struct Index {
   }
 
   private openMergedEditor(): void {
-    const mergedTripId = this.bridge.mergeTrips(this.selectedTripIds)
-    if (mergedTripId.length === 0) {
+    const route = this.viewModel.openMergedEditorRoute()
+    if (!route) {
       return
     }
     debugLog('首页', `进入合并剪辑，行程数量=${this.selectedTripIds.length}`)
     try {
-      this.getUIContext().getRouter().pushUrl({
-        url: 'pages/Editor',
-        params: {
-          tripId: mergedTripId,
-          title: '',
-          subtitle: ''
-        }
-      })
+      this.getUIContext().getRouter().pushUrl(route)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       debugLog('首页', `进入合并剪辑失败：${message}`)
     }
   }
 
-  private requestMediaPermissionAndRefresh(shouldGuideToSetting: boolean = true): void {
-    this.hasAutoRequestedPermission = true
+  private async requestMediaPermissionAndRefresh(shouldGuideToSetting: boolean = true): Promise<void> {
     const context = this.getHostContextOrNull()
     if (context === null) {
-      this.permissionGranted = false
       return
     }
-    const atManager = abilityAccessCtrl.createAtManager()
-    atManager.requestPermissionsFromUser(context, REQUIRED_PERMISSIONS)
-      .then((result) => {
-        const allGranted = result.authResults.every((item: number) => item === 0)
-        if (allGranted) {
-          this.permissionGranted = true
-          debugLog('首页', '权限申请完成，已全部授权')
-          this.refreshState()
-          return
-        }
-        if (!shouldGuideToSetting) {
-          this.permissionGranted = false
-          debugLog('首页', '自动权限申请未全部通过，展示无权限态')
-          this.refreshState()
-          return
-        }
-        debugLog('首页', '权限被拒绝，尝试拉起系统设置授权页')
-        atManager.requestPermissionOnSetting(context, REQUIRED_PERMISSIONS)
-          .then((settingResult: Array<number>) => {
-            const grantedInSetting = settingResult.every((item: number) => item === 0)
-            this.permissionGranted = grantedInSetting
-            debugLog('首页', `设置页授权结果=${grantedInSetting ? '已授权' : '未授权'}`)
-            this.refreshState()
-          })
-          .catch((settingError: Error) => {
-            this.permissionGranted = false
-            debugLog('首页', `拉起设置页失败：${settingError.message}`)
-            this.refreshState()
-          })
-      })
-      .catch((error: Error) => {
-        this.permissionGranted = false
-        debugLog('首页', `权限申请失败：${error.message}`)
-        this.refreshState()
-      })
+    await this.viewModel.requestMediaPermissionAndRefresh(context, shouldGuideToSetting)
+    this.syncViewState()
   }
 
   build() {
