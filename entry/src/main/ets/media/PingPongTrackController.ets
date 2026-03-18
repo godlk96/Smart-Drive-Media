@@ -18,6 +18,10 @@ interface PlayerSlot {
   surfaceId: string
   preparedResolve?: () => void
   pendingSeekResolve?: () => void
+  stateChangeHandler?: (state: media.AVPlayerState) => void
+  seekDoneHandler?: () => void
+  timeUpdateHandler?: (timeMs: number) => void
+  errorHandler?: (error: Object) => void
 }
 
 interface SegmentSeekTarget {
@@ -46,6 +50,12 @@ export class PingPongTrackController {
   private onLayerChanged?: (layer: ActiveLayer) => void
   private onProgressChanged?: (globalMs: number) => void
   private onTrackEnded?: () => void
+  private recoveringPlayer: boolean = false
+  private lifecycleEpoch: number = 0
+  private handoffTriggerSegmentIndex: number = -1
+  private handoffInFlight: boolean = false
+  private readonly standbyPrepareLeadMs: number = 1000
+  private readonly handoffLeadMs: number = 20
 
   constructor(trackId: string, camera: string, isAudioMaster: boolean) {
     this.trackId = trackId
@@ -92,19 +102,28 @@ export class PingPongTrackController {
     this.activeSegmentIndex = -1
     this.standbyPreparedSegmentIndex = -1
     this.lastReportedGlobalMs = 0
+    this.handoffTriggerSegmentIndex = -1
+    this.handoffInFlight = false
   }
 
   async init(surfaceA: string, surfaceB: string): Promise<void> {
+    const requestEpoch = this.lifecycleEpoch
     await this.enqueue(async () => {
-      if (this.disposed) {
+      if (await this.releaseIfExpired(requestEpoch)) {
         return
       }
       this.slotA.surfaceId = surfaceA
       this.slotB.surfaceId = surfaceB
       await this.ensureSlot(this.slotA)
       await this.ensureSlot(this.slotB)
+      if (await this.releaseIfExpired(requestEpoch)) {
+        return
+      }
       this.attached = true
-      await this.seekInternal(this.pendingGlobalSeekMs)
+      await this.seekInternal(this.pendingGlobalSeekMs, requestEpoch)
+      if (await this.releaseIfExpired(requestEpoch)) {
+        return
+      }
       await this.applyMutedAndActiveVolume()
       await this.applyPlaybackRate()
     })
@@ -112,8 +131,9 @@ export class PingPongTrackController {
 
   async play(): Promise<void> {
     this.shouldPlay = true
+    const requestEpoch = this.lifecycleEpoch
     await this.enqueue(async () => {
-      if (this.disposed) {
+      if (await this.releaseIfExpired(requestEpoch)) {
         return
       }
       const active = this.getActiveSlot()
@@ -126,39 +146,63 @@ export class PingPongTrackController {
 
   async pause(): Promise<void> {
     this.shouldPlay = false
+    const requestEpoch = this.lifecycleEpoch
     await this.enqueue(async () => {
+      if (await this.releaseIfExpired(requestEpoch)) {
+        return
+      }
       await this.pauseInternal()
     })
   }
 
   async seekTo(globalMs: number): Promise<void> {
     this.pendingGlobalSeekMs = Math.max(0, Math.floor(globalMs))
+    const requestEpoch = this.lifecycleEpoch
     await this.enqueue(async () => {
-      await this.seekInternal(this.pendingGlobalSeekMs)
+      if (await this.releaseIfExpired(requestEpoch)) {
+        return
+      }
+      await this.seekInternal(this.pendingGlobalSeekMs, requestEpoch)
     })
   }
 
   async setGlobalMuted(muted: boolean): Promise<void> {
     this.globalMuted = muted
+    const requestEpoch = this.lifecycleEpoch
     await this.enqueue(async () => {
+      if (await this.releaseIfExpired(requestEpoch)) {
+        return
+      }
       await this.applyMutedAndActiveVolume()
     })
   }
 
   async setPlaybackRate(rate: number): Promise<void> {
     this.playbackRate = Math.max(0.75, Math.min(2, rate))
+    const requestEpoch = this.lifecycleEpoch
     await this.enqueue(async () => {
+      if (await this.releaseIfExpired(requestEpoch)) {
+        return
+      }
       await this.applyPlaybackRate()
     })
   }
 
   async release(): Promise<void> {
+    this.lifecycleEpoch += 1
+    const requestEpoch = this.lifecycleEpoch
     this.disposed = true
     this.shouldPlay = false
+    this.resolveSlotPendingPromises(this.slotA)
+    this.resolveSlotPendingPromises(this.slotB)
+    this.onLayerChanged = undefined
+    this.onProgressChanged = undefined
+    this.onTrackEnded = undefined
     await this.enqueue(async () => {
-      await this.releaseSlot(this.slotA)
-      await this.releaseSlot(this.slotB)
-      this.attached = false
+      if (requestEpoch !== this.lifecycleEpoch) {
+        return
+      }
+      await this.releaseAllSlots()
     })
   }
 
@@ -219,12 +263,21 @@ export class PingPongTrackController {
     if (slot.player) {
       return
     }
-    slot.player = await media.createAVPlayer()
+    try {
+      slot.player = await media.createAVPlayer()
+    } catch (_) {
+      slot.player = undefined
+      return
+    }
+    slot.prepared = false
+    slot.sourceUri = ''
+    slot.preparedResolve = undefined
+    slot.pendingSeekResolve = undefined
     this.bindSlotEvents(slot)
   }
 
-  private async seekInternal(globalMs: number): Promise<void> {
-    if (this.disposed || !this.attached) {
+  private async seekInternal(globalMs: number, requestEpoch: number): Promise<void> {
+    if (await this.releaseIfExpired(requestEpoch) || !this.attached) {
       return
     }
     const target = this.resolveSegment(globalMs)
@@ -237,16 +290,32 @@ export class PingPongTrackController {
     const standby = this.getStandbySlot()
     this.activeSegmentIndex = target.segmentIndex
     this.standbyPreparedSegmentIndex = -1
+    this.handoffTriggerSegmentIndex = -1
+    this.handoffInFlight = false
     await this.loadSlot(active, targetSegment.uri)
+    if (await this.releaseIfExpired(requestEpoch)) {
+      return
+    }
     await this.waitPrepared(active)
+    if (await this.releaseIfExpired(requestEpoch)) {
+      return
+    }
     await this.seekSlot(active, target.offsetMs)
+    if (await this.releaseIfExpired(requestEpoch)) {
+      return
+    }
     this.lastReportedGlobalMs = globalMs
     if (this.onProgressChanged) {
       this.onProgressChanged(globalMs)
     }
-    await this.prepareStandbyForNext(standby, target.segmentIndex + 1)
+    await this.prepareStandbyForNext(standby, target.segmentIndex + 1, requestEpoch)
+    if (await this.releaseIfExpired(requestEpoch)) {
+      return
+    }
     if (this.shouldPlay) {
-      active.player?.play()
+      try {
+        active.player?.play()
+      } catch (_) {}
     }
     await this.applyMutedAndActiveVolume()
   }
@@ -256,8 +325,14 @@ export class PingPongTrackController {
     if (!playerRef) {
       return
     }
-    playerRef.on('stateChange', (state: media.AVPlayerState) => {
+    slot.stateChangeHandler = (state: media.AVPlayerState) => {
       if (!slot.player || slot.player !== playerRef || this.disposed) {
+        return
+      }
+      if (state === 'error') {
+        this.enqueue(async () => {
+          await this.recoverFromPlayerError(slot, 'state_error')
+        })
         return
       }
       if (state === 'initialized') {
@@ -283,14 +358,14 @@ export class PingPongTrackController {
       if (state === 'completed' && slot.name === this.activeLayer) {
         this.handleActiveCompleted()
       }
-    })
-    playerRef.on('seekDone', () => {
+    }
+    slot.seekDoneHandler = () => {
       if (slot.pendingSeekResolve) {
         slot.pendingSeekResolve()
         slot.pendingSeekResolve = undefined
       }
-    })
-    playerRef.on('timeUpdate', (timeMs: number) => {
+    }
+    slot.timeUpdateHandler = (timeMs: number) => {
       if (slot.name !== this.activeLayer || this.disposed || this.activeSegmentIndex < 0) {
         return
       }
@@ -298,24 +373,93 @@ export class PingPongTrackController {
       if (!segment) {
         return
       }
-      const globalMs = segment.startMs + Math.max(0, timeMs)
+      const playerTimeMs = this.normalizePlayerTimeMs(timeMs, segment.durationMs)
+      const globalMs = segment.startMs + playerTimeMs
       this.lastReportedGlobalMs = globalMs
       if (this.onProgressChanged) {
         this.onProgressChanged(globalMs)
       }
-      const remaining = segment.durationMs - Math.max(0, timeMs)
-      if (remaining < 1000) {
+      const remainingMs = segment.durationMs - playerTimeMs
+      if (remainingMs < this.standbyPrepareLeadMs) {
         this.enqueue(async () => {
           const standby = this.getStandbySlot()
-          await this.prepareStandbyForNext(standby, this.activeSegmentIndex + 1)
+          await this.prepareStandbyForNext(standby, this.activeSegmentIndex + 1, this.lifecycleEpoch)
         })
       }
-      if (remaining <= 20) {
+      if (remainingMs <= this.handoffLeadMs && this.handoffTriggerSegmentIndex !== this.activeSegmentIndex) {
+        this.handoffTriggerSegmentIndex = this.activeSegmentIndex
         this.enqueue(async () => {
-          await this.tryHandoff()
+          await this.tryHandoff(false)
         })
       }
-    })
+    }
+    slot.errorHandler = (error: Object) => {
+      const message = error instanceof Error ? error.message : String(error)
+      this.enqueue(async () => {
+        await this.recoverFromPlayerError(slot, `event_error:${message}`)
+      })
+    }
+    playerRef.on('stateChange', slot.stateChangeHandler)
+    playerRef.on('seekDone', slot.seekDoneHandler)
+    playerRef.on('timeUpdate', slot.timeUpdateHandler)
+    playerRef.on('error', slot.errorHandler)
+  }
+
+  private unbindSlotEvents(slot: PlayerSlot): void {
+    if (!slot.player) {
+      slot.stateChangeHandler = undefined
+      slot.seekDoneHandler = undefined
+      slot.timeUpdateHandler = undefined
+      slot.errorHandler = undefined
+      return
+    }
+    if (slot.stateChangeHandler) {
+      try {
+        slot.player.off('stateChange', slot.stateChangeHandler)
+      } catch (_) {}
+      slot.stateChangeHandler = undefined
+    }
+    if (slot.seekDoneHandler) {
+      try {
+        slot.player.off('seekDone', slot.seekDoneHandler)
+      } catch (_) {}
+      slot.seekDoneHandler = undefined
+    }
+    if (slot.timeUpdateHandler) {
+      try {
+        slot.player.off('timeUpdate', slot.timeUpdateHandler)
+      } catch (_) {}
+      slot.timeUpdateHandler = undefined
+    }
+    if (slot.errorHandler) {
+      try {
+        slot.player.off('error', slot.errorHandler)
+      } catch (_) {}
+      slot.errorHandler = undefined
+    }
+  }
+
+  private async recoverFromPlayerError(slot: PlayerSlot, reason: string): Promise<void> {
+    if (this.disposed || !this.attached || this.recoveringPlayer) {
+      return
+    }
+    this.recoveringPlayer = true
+    const targetMs = Math.max(0, this.lastReportedGlobalMs)
+    this.pendingGlobalSeekMs = targetMs
+    debugLog('PingPongTrack', `${this.trackId} recover player error: ${reason}, seek=${targetMs}`)
+    try {
+      await this.releaseSlot(slot)
+      await this.ensureSlot(slot)
+      await this.seekInternal(this.pendingGlobalSeekMs, this.lifecycleEpoch)
+      if (this.shouldPlay) {
+        const active = this.getActiveSlot()
+        try {
+          active.player?.play()
+        } catch (_) {}
+      }
+    } finally {
+      this.recoveringPlayer = false
+    }
   }
 
   private async pauseInternal(): Promise<void> {
@@ -343,8 +487,13 @@ export class PingPongTrackController {
       return
     }
     if (uri.startsWith('file://')) {
-      const file = fs.openSync(uri, fs.OpenMode.READ_ONLY)
-      slot.player.fdSrc = { fd: file.fd }
+      try {
+        const file = fs.openSync(uri, fs.OpenMode.READ_ONLY)
+        slot.player.fdSrc = { fd: file.fd }
+      } catch (_) {
+        slot.sourceUri = ''
+        return
+      }
     } else {
       slot.player.url = uri
     }
@@ -376,7 +525,10 @@ export class PingPongTrackController {
     })
   }
 
-  private async prepareStandbyForNext(standby: PlayerSlot, nextSegmentIndex: number): Promise<void> {
+  private async prepareStandbyForNext(standby: PlayerSlot, nextSegmentIndex: number, requestEpoch: number): Promise<void> {
+    if (await this.releaseIfExpired(requestEpoch)) {
+      return
+    }
     if (nextSegmentIndex < 0 || nextSegmentIndex >= this.segments.length) {
       return
     }
@@ -386,18 +538,38 @@ export class PingPongTrackController {
     const nextSegment = this.segments[nextSegmentIndex]
     if (standby.sourceUri !== nextSegment.uri || !standby.prepared) {
       await this.loadSlot(standby, nextSegment.uri)
+      if (await this.releaseIfExpired(requestEpoch)) {
+        return
+      }
       await this.waitPrepared(standby)
+      if (await this.releaseIfExpired(requestEpoch)) {
+        return
+      }
       await this.seekSlot(standby, 0)
+      if (await this.releaseIfExpired(requestEpoch)) {
+        return
+      }
     }
     this.standbyPreparedSegmentIndex = nextSegmentIndex
   }
 
-  private async tryHandoff(): Promise<void> {
-    const standby = this.getStandbySlot()
-    if (!standby.player || !standby.prepared || this.standbyPreparedSegmentIndex !== this.activeSegmentIndex + 1) {
+  private async tryHandoff(force: boolean): Promise<void> {
+    if (this.handoffInFlight) {
       return
     }
-    await this.handoffToStandby()
+    const standby = this.getStandbySlot()
+    if (!standby.player || !standby.prepared || this.standbyPreparedSegmentIndex !== this.activeSegmentIndex + 1) {
+      if (force) {
+        this.handoffTriggerSegmentIndex = -1
+      }
+      return
+    }
+    this.handoffInFlight = true
+    try {
+      await this.handoffToStandby()
+    } finally {
+      this.handoffInFlight = false
+    }
   }
 
   private async handoffToStandby(): Promise<void> {
@@ -409,9 +581,12 @@ export class PingPongTrackController {
     this.activeLayer = standby.name
     this.activeSegmentIndex = this.activeSegmentIndex + 1
     this.standbyPreparedSegmentIndex = -1
+    this.handoffTriggerSegmentIndex = -1
     this.applyMutedAndActiveVolume()
     if (this.shouldPlay) {
-      standby.player.play()
+      try {
+        standby.player.play()
+      } catch (_) {}
     }
     try {
       await oldActive.player?.reset()
@@ -424,12 +599,30 @@ export class PingPongTrackController {
   }
 
   private async handleActiveCompleted(): Promise<void> {
-    await this.tryHandoff()
+    await this.tryHandoff(true)
     if (this.activeSegmentIndex >= this.segments.length - 1) {
       if (this.onTrackEnded) {
         this.onTrackEnded()
       }
     }
+  }
+
+  private normalizePlayerTimeMs(rawTime: number, segmentDurationMs: number): number {
+    const safeRaw = Math.max(0, Math.floor(rawTime))
+    if (segmentDurationMs <= 0) {
+      return safeRaw
+    }
+    if (safeRaw > segmentDurationMs + 2000) {
+      const scaledFromUs = Math.floor(safeRaw / 1000)
+      if (scaledFromUs <= segmentDurationMs + 2000) {
+        return scaledFromUs
+      }
+    }
+    const scaledFromSec = safeRaw * 1000
+    if (safeRaw <= Math.ceil(segmentDurationMs / 1000) + 2 && scaledFromSec <= segmentDurationMs + 2000) {
+      return scaledFromSec
+    }
+    return safeRaw
   }
 
   private async applyMutedAndActiveVolume(): Promise<void> {
@@ -472,13 +665,10 @@ export class PingPongTrackController {
   }
 
   private async releaseSlot(slot: PlayerSlot): Promise<void> {
+    this.unbindSlotEvents(slot)
     slot.prepared = false
     slot.sourceUri = ''
-    slot.preparedResolve = undefined
-    if (slot.pendingSeekResolve) {
-      slot.pendingSeekResolve()
-      slot.pendingSeekResolve = undefined
-    }
+    this.resolveSlotPendingPromises(slot)
     if (!slot.player) {
       return
     }
@@ -486,5 +676,30 @@ export class PingPongTrackController {
       await slot.player.release()
     } catch (_) {}
     slot.player = undefined
+  }
+
+  private resolveSlotPendingPromises(slot: PlayerSlot): void {
+    if (slot.preparedResolve) {
+      slot.preparedResolve()
+      slot.preparedResolve = undefined
+    }
+    if (slot.pendingSeekResolve) {
+      slot.pendingSeekResolve()
+      slot.pendingSeekResolve = undefined
+    }
+  }
+
+  private async releaseAllSlots(): Promise<void> {
+    await this.releaseSlot(this.slotA)
+    await this.releaseSlot(this.slotB)
+    this.attached = false
+  }
+
+  private async releaseIfExpired(requestEpoch: number): Promise<boolean> {
+    if (!this.disposed && requestEpoch === this.lifecycleEpoch) {
+      return false
+    }
+    await this.releaseAllSlots()
+    return true
   }
 }

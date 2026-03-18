@@ -2,19 +2,35 @@ import { ExportComposeRequest } from '../model/TripModels'
 import fs from '@ohos.file.fs'
 import smartdriveExporter from 'libsmartdrive_exporter.so'
 
-class NativeExportPipelineRequest {
-  frontUris: Array<string> = []
-  backUris: Array<string> = []
-  sideUris: Array<string> = []
-  templateId: string = ''
-  expectedDurationSec: number = 0
-  outputPath: string = ''
+interface NativeExportPipelineRequest {
+  frontUris: Array<string>
+  backUris: Array<string>
+  sideUris: Array<string>
+  templateId: string
+  expectedDurationSec: number
+  outputPath: string
+  hideSpeed: boolean
+  hideVin: boolean
+  hideTime: boolean
+}
+
+interface MaterializedUriSet {
+  inputUris: Array<string>
+  tempUris: Array<string>
 }
 
 class NativeExportPipelineResult {
   code: number = 0
   message: string = ''
   outputPath: string = ''
+}
+
+function deepCloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+function cloneRequestForExportIsolation(request: ExportComposeRequest): ExportComposeRequest {
+  return deepCloneJson(request) as ExportComposeRequest
 }
 
 export async function extractFirstFrameByService(sourceUri: string, _cacheDir: string, _cacheKey: string): Promise<string> {
@@ -70,21 +86,53 @@ async function materializeInputUris(
   outputPath: string,
   prefix: string,
   onLog: (message: string) => void
-): Promise<Array<string>> {
+): Promise<MaterializedUriSet> {
   const outputDir = resolveParentDir(outputPath)
-  const output: Array<string> = []
+  const inputUris: Array<string> = []
+  const tempUris: Array<string> = []
   for (let index = 0; index < uris.length; index++) {
     const uri = uris[index]
     if (uri.startsWith('/data/storage/')) {
-      output.push(uri)
+      inputUris.push(uri)
       continue
     }
     const targetPath = `${outputDir}/${prefix}_${Date.now()}_${index}.mp4`
     await copyUriToLocal(uri, targetPath)
     onLog(`Native导出阶段 素材落地 ${prefix}[${index}] -> ${targetPath}`)
-    output.push(targetPath)
+    inputUris.push(targetPath)
+    tempUris.push(targetPath)
   }
-  return output
+  return { inputUris, tempUris }
+}
+
+function buildNativeExportPayload(
+  request: ExportComposeRequest,
+  frontInputUris: Array<string>,
+  backInputUris: Array<string>,
+  sideInputUris: Array<string>
+): NativeExportPipelineRequest {
+  const payload: NativeExportPipelineRequest = {
+    frontUris: frontInputUris,
+    backUris: backInputUris,
+    sideUris: sideInputUris,
+    templateId: request.templateId,
+    expectedDurationSec: request.expectedDurationSec,
+    outputPath: request.outputPath,
+    hideSpeed: request.hideSpeed,
+    hideVin: request.hideVin,
+    hideTime: request.hideGps
+  }
+  return deepCloneJson(payload)
+}
+
+async function removeMaterializedTempUris(uris: Array<string>, onLog: (message: string) => void): Promise<void> {
+  for (const uri of uris) {
+    try {
+      await fs.unlink(uri)
+      onLog(`Native导出阶段 清理临时素材 ${uri}`)
+    } catch (_) {
+    }
+  }
 }
 
 export async function executeComposeByService(
@@ -92,6 +140,7 @@ export async function executeComposeByService(
   onLog: (message: string) => void,
   onProgress: (percent: number) => void
 ): Promise<string> {
+  const isolatedRequest = cloneRequestForExportIsolation(request)
   const runPipelineAsync = (smartdriveExporter as Record<string, Object | Function> | undefined)?.runExportPipelineAsync as ((payload: NativeExportPipelineRequest) => Promise<NativeExportPipelineResult>) | undefined
   let reportedProgress: number = 0
   const smoothUpperBound: number = 98
@@ -125,30 +174,29 @@ export async function executeComposeByService(
       smoothTimer = -1
     }
   }
-  if (request.frontUris.length === 0 || request.backUris.length === 0) {
+  if (isolatedRequest.frontUris.length === 0 || isolatedRequest.backUris.length === 0) {
     throw new Error('导出失败：前后路素材不足')
   }
-  const estimatedNativeMs = Math.max(45000, request.expectedDurationSec * 700)
+  const estimatedNativeMs = Math.max(45000, isolatedRequest.expectedDurationSec * 700)
   const progressStart = Date.now()
   startSmoothProgress(estimatedNativeMs, progressStart)
   const materializeStart = Date.now()
   const materialized = await Promise.all([
-    materializeInputUris(request.frontUris, request.outputPath, 'front', onLog),
-    materializeInputUris(request.backUris, request.outputPath, 'back', onLog),
-    materializeInputUris(request.sideUris, request.outputPath, 'side', onLog)
+    materializeInputUris(isolatedRequest.frontUris, isolatedRequest.outputPath, 'front', onLog),
+    materializeInputUris(isolatedRequest.backUris, isolatedRequest.outputPath, 'back', onLog),
+    materializeInputUris(isolatedRequest.sideUris, isolatedRequest.outputPath, 'side', onLog)
   ])
-  const frontInputUris = materialized[0] ?? []
-  const backInputUris = materialized[1] ?? []
-  const sideInputUris = materialized[2] ?? []
+  const frontInputUris = materialized[0]?.inputUris ?? []
+  const backInputUris = materialized[1]?.inputUris ?? []
+  const sideInputUris = materialized[2]?.inputUris ?? []
+  const tempUris = [
+    ...(materialized[0]?.tempUris ?? []),
+    ...(materialized[1]?.tempUris ?? []),
+    ...(materialized[2]?.tempUris ?? [])
+  ]
   onLog(`Native导出阶段 素材落地耗时=${Date.now() - materializeStart}ms`)
-  const payload = new NativeExportPipelineRequest()
-  payload.frontUris = frontInputUris
-  payload.backUris = backInputUris
-  payload.sideUris = sideInputUris
-  payload.templateId = request.templateId
-  payload.expectedDurationSec = request.expectedDurationSec
-  payload.outputPath = request.outputPath
-  onLog(`Native导出阶段 输入统计 Front=${request.frontUris.length} Back=${request.backUris.length} 输出=${request.outputPath}`)
+  const payload = buildNativeExportPayload(isolatedRequest, frontInputUris, backInputUris, sideInputUris)
+  onLog(`Native导出阶段 输入统计 Front=${isolatedRequest.frontUris.length} Back=${isolatedRequest.backUris.length} 输出=${isolatedRequest.outputPath}`)
   if (typeof runPipelineAsync !== 'function') {
     throw new Error('smartdrive_exporter.runExportPipelineAsync 未实现')
   }
@@ -165,6 +213,7 @@ export async function executeComposeByService(
     outputPath = String(result?.outputPath ?? '')
   } finally {
     stopSmoothProgress()
+    await removeMaterializedTempUris(tempUris, onLog)
   }
   if (outputPath.length === 0) {
     throw new Error('导出失败：native 导出返回为空')

@@ -24,32 +24,58 @@ interface TrackRenderItem {
   height: number
   zoomX: number
   hasSource: boolean
+  privacyMasks: Array<PreviewMaskRect>
   controller: PingPongTrackController
+}
+
+interface PreviewMaskRect {
+  key: string
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
 @Component
 export struct EditorPreviewArea {
   @Prop @Watch('onTemplateOrTripChanged') editorState: EditorStateModel
   @Prop @Watch('onTemplateOrTripChanged') tripSnapshot: TripSnapshot = new TripSnapshot()
+  @Prop renderVersion: number = 0
   @Prop @Watch('onPlayingChanged') playing: boolean
   @Prop @Watch('onSeekTokenChanged') seekToken: number
   @Prop playheadMs: number
+  @Prop seekBlocked: boolean = false
   @Prop @Watch('onMutedChanged') muted: boolean
   @Prop @Watch('onSpeedLabelChanged') speedLabel: string
   onPlayheadChanged?: (playheadMs: number) => void
   onPlaybackEnded?: () => void
+  onRebuildReady?: (version: number) => void
 
   @State private trackItems: Array<TrackRenderItem> = []
   private manager?: GlobalTimelineManager
   private rebuildQueue: Promise<void> = Promise.resolve()
+  private rebuildScheduled: boolean = false
+  private rebuildPending: boolean = false
   private lastRebuildKey: string = ''
+  private rebuildEpoch: number = 0
+
+  private readonly sourceAspectRatio: number = 16 / 9
+  private readonly autoSeekToleranceMs: number = 1000
 
   aboutToAppear(): void {
     this.requestRebuild(true)
   }
 
   aboutToDisappear(): void {
-    this.releaseAll()
+    this.rebuildEpoch += 1
+    this.rebuildPending = false
+    this.rebuildScheduled = false
+    this.rebuildQueue = this.rebuildQueue.then(async () => {
+      await this.releaseAll()
+    }).catch((error: Object) => {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('EditorPreviewArea', `release on disappear failed: ${message}`)
+    })
   }
 
   private toPercent(value: number): string {
@@ -145,6 +171,51 @@ export struct EditorPreviewArea {
     return Math.min(...timestamps)
   }
 
+  private buildFrontPrivacyMasksBySlot(slotWidth: number, slotHeight: number): Array<PreviewMaskRect> {
+    if (slotWidth <= 0 || slotHeight <= 0) {
+      return []
+    }
+    const masks: Array<PreviewMaskRect> = []
+    if (this.editorState.hideSpeed) {
+      masks.push({ key: 'speed', x: 0.05, y: 0.9, width: 0.12, height: 0.08 })
+    }
+    if (this.editorState.hideVin) {
+      masks.push({ key: 'vin', x: 0.28, y: 0.9, width: 0.24, height: 0.08 })
+    }
+    if (this.editorState.hideGps) {
+      masks.push({ key: 'time', x: 0.58, y: 0.9, width: 0.34, height: 0.08 })
+    }
+    if (masks.length === 0) {
+      return []
+    }
+    const containerAspect = slotWidth / slotHeight
+    let contentWidth = 1
+    let contentHeight = 1
+    let contentOffsetX = 0
+    let contentOffsetY = 0
+    if (containerAspect > this.sourceAspectRatio) {
+      contentWidth = this.sourceAspectRatio / containerAspect
+      contentOffsetX = (1 - contentWidth) / 2
+    } else if (containerAspect < this.sourceAspectRatio) {
+      contentHeight = containerAspect / this.sourceAspectRatio
+      contentOffsetY = (1 - contentHeight) / 2
+    }
+    return masks.map((mask: PreviewMaskRect) => {
+      const mappedX = contentOffsetX + mask.x * contentWidth
+      const mappedY = contentOffsetY + mask.y * contentHeight
+      const mappedWidth = mask.width * contentWidth
+      const mappedHeight = mask.height * contentHeight
+      const mappedMask: PreviewMaskRect = {
+        key: mask.key,
+        x: Math.max(0, Math.min(1, mappedX)),
+        y: Math.max(0, Math.min(1, mappedY)),
+        width: Math.max(0, Math.min(1, mappedWidth)),
+        height: Math.max(0, Math.min(1, mappedHeight))
+      }
+      return mappedMask
+    })
+  }
+
   private buildTrackSegments(snapshot: TripSnapshot, camera: string): Array<TrackSegmentSource> {
     const normalized = this.normalizeCameraName(camera)
     const clips = snapshot.clips
@@ -188,67 +259,103 @@ export struct EditorPreviewArea {
       return
     }
     this.lastRebuildKey = key
+    this.rebuildEpoch += 1
+    this.rebuildPending = true
     this.rebuild()
   }
 
   private rebuild(): void {
+    if (this.rebuildScheduled) {
+      return
+    }
+    this.rebuildScheduled = true
     this.rebuildQueue = this.rebuildQueue.then(async () => {
-      await this.releaseAll()
-      const snapshot = this.tripSnapshot
-      const manager = new GlobalTimelineManager()
-      manager.setDuration(this.editorState.totalDurationSec * 1000)
-      manager.setCallbacks(
-        (globalMs: number) => {
-          if (this.onPlayheadChanged) {
-            this.onPlayheadChanged(globalMs)
-          }
-        },
-        undefined,
-        () => {
-          if (this.onPlaybackEnded) {
-            this.onPlaybackEnded()
-          }
+      while (this.rebuildPending) {
+        this.rebuildPending = false
+        const requestEpoch = this.rebuildEpoch
+        await this.releaseAll()
+        if (requestEpoch !== this.rebuildEpoch) {
+          continue
         }
-      )
-      const definitions = this.resolveLayout(this.editorState.activeTemplateId)
-      const renderItems: Array<TrackRenderItem> = []
-      for (const definition of definitions) {
-        const camera = this.resolveSlotCamera(definition)
-        const trackSegments = snapshot.clips.length > 0 ? this.buildTrackSegments(snapshot, camera) : []
-        const controller = new PingPongTrackController(
-          `${this.editorState.tripId}_${this.editorState.activeTemplateId}_${definition.id}`,
-          camera,
-          this.isAudioMaster(this.editorState.activeTemplateId, camera)
+        const snapshot = this.tripSnapshot
+        const manager = new GlobalTimelineManager()
+        manager.setDuration(this.editorState.totalDurationSec * 1000)
+        manager.setCallbacks(
+          (globalMs: number) => {
+            if (this.onPlayheadChanged) {
+              this.onPlayheadChanged(globalMs)
+            }
+          },
+          undefined,
+          () => {
+            if (this.onPlaybackEnded) {
+              this.onPlaybackEnded()
+            }
+          }
         )
-        controller.bindSegments(trackSegments)
-        manager.registerTrack(controller)
-        const hasSource = trackSegments.length > 0
-        renderItems.push({
-          key: `${this.editorState.activeTemplateId}_${definition.id}_${camera}`,
-          camera,
-          x: definition.x,
-          y: definition.y,
-          width: definition.width,
-          height: definition.height,
-          zoomX: definition.zoomX,
-          hasSource,
-          controller
-        })
+        const definitions = this.resolveLayout(this.editorState.activeTemplateId)
+        const renderItems: Array<TrackRenderItem> = []
+        for (const definition of definitions) {
+          if (requestEpoch !== this.rebuildEpoch) {
+            await manager.release()
+            break
+          }
+          const camera = this.resolveSlotCamera(definition)
+          const trackSegments = snapshot.clips.length > 0 ? this.buildTrackSegments(snapshot, camera) : []
+          const controller = new PingPongTrackController(
+            `${this.editorState.tripId}_${this.editorState.activeTemplateId}_${definition.id}`,
+            camera,
+            this.isAudioMaster(this.editorState.activeTemplateId, camera)
+          )
+          controller.bindSegments(trackSegments)
+          manager.registerTrack(controller)
+          const hasSource = trackSegments.length > 0
+          renderItems.push({
+            key: `${this.editorState.activeTemplateId}_${definition.id}_${camera}`,
+            camera,
+            x: definition.x,
+            y: definition.y,
+            width: definition.width,
+            height: definition.height,
+            zoomX: definition.zoomX,
+            hasSource,
+            privacyMasks: hasSource && camera === 'Front'
+              ? this.buildFrontPrivacyMasksBySlot(definition.width, definition.height)
+              : [],
+            controller
+          })
+        }
+        if (requestEpoch !== this.rebuildEpoch) {
+          await manager.release()
+          continue
+        }
+        await manager.setMuted(this.muted)
+        await manager.setPlaybackRate(this.parseSpeedLabel(this.speedLabel))
+        await manager.seek(this.playheadMs)
+        if (requestEpoch !== this.rebuildEpoch) {
+          await manager.release()
+          continue
+        }
+        this.manager = manager
+        this.trackItems = renderItems
+        if (this.playing) {
+          await manager.play()
+        } else {
+          await manager.pause()
+        }
+        if (requestEpoch === this.rebuildEpoch && this.onRebuildReady) {
+          this.onRebuildReady(this.renderVersion)
+        }
+        debugLog('EditorPreviewArea', `rebuild done, template=${this.editorState.activeTemplateId}, tracks=${renderItems.length}`)
       }
-      this.manager = manager
-      this.trackItems = renderItems
-      await manager.setMuted(this.muted)
-      await manager.setPlaybackRate(this.parseSpeedLabel(this.speedLabel))
-      await manager.seek(this.playheadMs)
-      if (this.playing) {
-        await manager.play()
-      } else {
-        await manager.pause()
-      }
-      debugLog('EditorPreviewArea', `rebuild done, template=${this.editorState.activeTemplateId}, tracks=${renderItems.length}`)
     }).catch((error: Object) => {
       const message = error instanceof Error ? error.message : String(error)
       debugLog('EditorPreviewArea', `rebuild failed: ${message}`)
+    }).finally(() => {
+      this.rebuildScheduled = false
+      if (this.rebuildPending) {
+        this.rebuild()
+      }
     })
   }
 
@@ -278,6 +385,15 @@ export struct EditorPreviewArea {
   private onSeekTokenChanged(): void {
     if (!this.manager) {
       return
+    }
+    if (this.seekBlocked) {
+      return
+    }
+    if (this.manager.getPlaybackState() === 'playing') {
+      const driftMs = Math.abs(this.playheadMs - this.manager.getGlobalPlayheadMs())
+      if (driftMs < this.autoSeekToleranceMs) {
+        return
+      }
     }
     this.manager.seek(this.playheadMs)
   }
@@ -310,6 +426,13 @@ export struct EditorPreviewArea {
               .height('100%')
               .backgroundColor('#333333')
           }
+          ForEach(item.privacyMasks, (mask: PreviewMaskRect) => {
+            Column()
+              .width(this.toPercent(mask.width))
+              .height(this.toPercent(mask.height))
+              .position({ x: this.toPercent(mask.x), y: this.toPercent(mask.y) })
+              .backgroundColor('#000000')
+          }, (mask: PreviewMaskRect) => `${item.key}_${mask.key}`)
         }
           .clip(true)
           .width(this.toPercent(item.width))

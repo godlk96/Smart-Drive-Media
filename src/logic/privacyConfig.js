@@ -34,7 +34,7 @@ export function buildPrivacyPlan(config = {}, cropRatio = 0.85) {
     overlayMasks.push({ key: 'vin', x: 0.28, y: 0.9, w: 0.24, h: 0.08 })
   }
   if (hideGps) {
-    overlayMasks.push({ key: 'gps', x: 0.58, y: 0.9, w: 0.34, h: 0.08 })
+    overlayMasks.push({ key: 'time', x: 0.58, y: 0.9, w: 0.34, h: 0.08 })
   }
 
   const safeCropRatio = clampCropRatio(cropRatio)
