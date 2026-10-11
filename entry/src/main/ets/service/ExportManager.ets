@@ -63,6 +63,10 @@ function buildExportFileName(): string {
   return `SmartDrive_Export_${yyyy}${mm}${dd}_${hh}${min}${ss}.mp4`
 }
 
+function cloneExportSnapshot(snapshot: ExportSnapshot): ExportSnapshot {
+  return JSON.parse(JSON.stringify(snapshot)) as ExportSnapshot
+}
+
 export class ExportManager {
   private jobs: Map<ExportJobId, ExportJobRecord> = new Map()
 
@@ -93,10 +97,11 @@ export class ExportManager {
   }
 
   async start(snapshot: ExportSnapshot, context: common.UIAbilityContext): Promise<ExportJobId> {
-    const jobId = `${snapshot.sessionId}_${Date.now()}`
+    const isolatedSnapshot = cloneExportSnapshot(snapshot)
+    const jobId = `${isolatedSnapshot.sessionId}_${Date.now()}`
     const record: ExportJobRecord = {
       id: jobId,
-      snapshot: snapshot,
+      snapshot: isolatedSnapshot,
       listeners: [],
       cancelled: false,
       progress: 0

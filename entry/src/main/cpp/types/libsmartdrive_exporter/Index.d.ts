@@ -5,6 +5,9 @@ export interface NativeExportPipelineRequest {
   templateId: string
   expectedDurationSec: number
   outputPath: string
+  hideSpeed: boolean
+  hideVin: boolean
+  hideTime: boolean
 }
 
 export interface NativeExportPipelineResult {

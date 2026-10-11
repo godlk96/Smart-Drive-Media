@@ -12,6 +12,9 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
                                     const std::vector<std::string> &sideUris,
                                     const std::string &templateId,
                                     double expectedDurationSec,
+                                    bool hideSpeed,
+                                    bool hideVin,
+                                    bool hideTime,
                                     const std::string &outputPath);
 
 #endif

@@ -13,8 +13,8 @@ export class GlobalTimelineManager {
   private isSeeking: boolean = false
   private seekingInFlight: boolean = false
   private pendingSeekMs: number = -1
-  private ignoreProgressUntilMs: number = 0
   private seekEpoch: number = 0
+  private seekRequestGate: number = 0
   private muted: boolean = false
   private playbackRate: number = 1
   private onPlayheadChanged?: (globalMs: number) => void
@@ -69,7 +69,7 @@ export class GlobalTimelineManager {
       if (this.isSeeking) {
         return
       }
-      if (this.playbackState !== 'playing' && Date.now() < this.ignoreProgressUntilMs) {
+      if (this.playbackState !== 'playing') {
         return
       }
       this.globalPlayheadMs = Math.max(0, Math.min(globalMs, this.globalDurationMs))
@@ -88,7 +88,7 @@ export class GlobalTimelineManager {
     this.tracks = this.tracks.filter((item) => item.getId() !== trackId)
     this.trackEndedFlags.delete(trackId)
     if (trackId === this.clockMasterTrackId) {
-      this.clockMasterTrackId = this.tracks.length > 0 ? this.tracks[0].getId() : ''
+      this.clockMasterTrackId = this.resolveClockMasterTrackId()
     }
   }
 
@@ -115,6 +115,8 @@ export class GlobalTimelineManager {
 
   async seek(globalMs: number): Promise<void> {
     const targetMs = Math.max(0, Math.min(Math.floor(globalMs), this.globalDurationMs))
+    this.seekRequestGate += 1
+    const requestId = this.seekRequestGate
     if (this.seekingInFlight) {
       this.pendingSeekMs = targetMs
       return
@@ -123,21 +125,24 @@ export class GlobalTimelineManager {
     const shouldResume = this.playbackState === 'playing'
     try {
       let currentTargetMs = targetMs
+      let activeRequestId = requestId
       while (true) {
         this.pendingSeekMs = -1
         this.isSeeking = true
+        activeRequestId = this.seekRequestGate
         this.seekEpoch += 1
         const currentEpoch = this.seekEpoch
         this.resetEndedFlags()
         this.updatePlaybackState('buffering')
-        await Promise.all(this.tracks.map((item) => item.pause()))
-        await Promise.all(this.tracks.map((item) => item.seekTo(currentTargetMs)))
+        await Promise.all(this.tracks.map(async (item) => {
+          await item.pause()
+          await item.seekTo(currentTargetMs)
+        }))
         if (currentEpoch === this.seekEpoch) {
           this.globalPlayheadMs = currentTargetMs
           if (this.onPlayheadChanged) {
             this.onPlayheadChanged(currentTargetMs)
           }
-          this.ignoreProgressUntilMs = Date.now() + 260
           this.updatePlaybackState('paused')
         }
         this.isSeeking = false
@@ -146,7 +151,7 @@ export class GlobalTimelineManager {
         }
         currentTargetMs = this.pendingSeekMs
       }
-      if (shouldResume) {
+      if (shouldResume && activeRequestId === this.seekRequestGate) {
         await this.play()
       }
     } finally {
@@ -191,5 +196,16 @@ export class GlobalTimelineManager {
     if (this.onPlaybackStateChanged) {
       this.onPlaybackStateChanged(state)
     }
+  }
+
+  private resolveClockMasterTrackId(): string {
+    if (this.tracks.length === 0) {
+      return ''
+    }
+    const frontTrack = this.tracks.find((item) => item.getCamera() === 'Front')
+    if (frontTrack) {
+      return frontTrack.getId()
+    }
+    return this.tracks[0].getId()
   }
 }
