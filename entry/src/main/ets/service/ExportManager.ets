@@ -160,8 +160,8 @@ export class ExportManager {
       if (record.cancelled) {
         return
       }
-      const saveStartProgress = Math.max(86, Math.min(99, record.progress))
-      this.notify(record, `导出处理中 ${saveStartProgress}%`, saveStartProgress)
+      const saveStartProgress = Math.max(85, Math.min(99, record.progress))
+      this.notify(record, `保存相册中 ${saveStartProgress}%`, saveStartProgress)
       const albumUri = await this.saveVideoToAlbum(fileName, sourceUri, context, saveStartProgress, (progress: number) => {
         if (!record.cancelled) {
           this.notify(record, `导出处理中 ${progress}%`, progress)
@@ -210,7 +210,7 @@ export class ExportManager {
         const chunkSize: number = 1024 * 1024
         let totalSize: number = 0
         let copiedSize: number = 0
-        const baseProgress: number = Math.max(86, Math.min(99, startProgress))
+        const baseProgress: number = Math.max(85, Math.min(99, startProgress))
         let reportedProgress: number = baseProgress
         try {
           try {

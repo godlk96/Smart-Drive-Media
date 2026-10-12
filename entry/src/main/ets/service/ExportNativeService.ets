@@ -174,44 +174,13 @@ export async function executeComposeByService(
 ): Promise<string> {
   const isolatedRequest = cloneRequestForExportIsolation(request)
   const runPipelineAsync = (smartdriveExporter as Record<string, Object | Function> | undefined)?.runExportPipelineAsync as ((payload: NativeExportPipelineRequest) => Promise<NativeExportPipelineResult>) | undefined
-  let reportedProgress: number = 0
-  const smoothUpperBound: number = 98
-  let smoothTimer: number = -1
-  const emitProgress = (target: number): void => {
-    const normalized = Math.max(0, Math.min(100, Math.floor(target)))
-    while (reportedProgress < normalized) {
-      reportedProgress += 1
-      onProgress(reportedProgress)
-    }
-  }
-  const startSmoothProgress = (estimatedNativeMs: number, startedAt: number): void => {
-    if (smoothTimer >= 0) {
-      return
-    }
-    smoothTimer = setInterval(() => {
-      if (reportedProgress >= smoothUpperBound) {
-        return
-      }
-      const elapsed = Date.now() - startedAt
-      const expected = Math.min(smoothUpperBound, Math.floor((elapsed * smoothUpperBound) / estimatedNativeMs))
-      if (expected > reportedProgress) {
-        reportedProgress += 1
-        onProgress(reportedProgress)
-      }
-    }, 250)
-  }
-  const stopSmoothProgress = (): void => {
-    if (smoothTimer >= 0) {
-      clearInterval(smoothTimer)
-      smoothTimer = -1
-    }
-  }
+
   if (isolatedRequest.frontUris.length === 0 || isolatedRequest.backUris.length === 0) {
     throw new Error('导出失败：前后路素材不足')
   }
-  const estimatedNativeMs = Math.max(45000, isolatedRequest.expectedDurationSec * 700)
-  const progressStart = Date.now()
-  startSmoothProgress(estimatedNativeMs, progressStart)
+
+  // 阶段 1: 素材准备与切片物化 (10%)
+  onProgress(10)
   const materializeStart = Date.now()
   const materialized = await Promise.all([
     materializeInputUris(isolatedRequest.frontUris, isolatedRequest.outputPath, 'front', onLog),
@@ -232,7 +201,10 @@ export async function executeComposeByService(
   if (typeof runPipelineAsync !== 'function') {
     throw new Error('smartdrive_exporter.runExportPipelineAsync 未实现')
   }
-  onLog('Native导出阶段 启动 export_engine 硬编/封装管线')
+
+  // 阶段 2: 启动 Native 渲染合成 (35%)
+  onProgress(35)
+  onLog('Native导出阶段 启动 export_engine 渲染合成管线')
   const nativeStart = Date.now()
   let outputPath: string = ''
   try {
@@ -244,14 +216,15 @@ export async function executeComposeByService(
     }
     outputPath = String(result?.outputPath ?? '')
   } finally {
-    stopSmoothProgress()
     await removeMaterializedTempUris(tempUris, onLog)
   }
   if (outputPath.length === 0) {
     throw new Error('导出失败：native 导出返回为空')
   }
   onLog(`Native导出阶段 Native处理耗时=${Date.now() - nativeStart}ms`)
-  emitProgress(99)
+
+  // 阶段 3: Native 合成完成，进入相册写入 (85%)
+  onProgress(85)
   onLog(`Native导出阶段 完成 输出=${outputPath}`)
   return outputPath
 }

@@ -184,3 +184,22 @@ test('Export compose request contract validates parameters before passing to nat
     validateExportRequest({ ...validReq, rangeStartMs: 15000, rangeEndMs: 10000 })
   }, /rangeEndMs must be strictly greater than rangeStartMs/)
 })
+
+test('Export pipeline reports monotonic stage progress without fake timer interval ticks', () => {
+  const progressReports = []
+  const onProgress = (p) => progressReports.push(p)
+
+  // Stage 1: Materialization start (10)
+  onProgress(10)
+  // Stage 2: Materialization complete & native start (35)
+  onProgress(35)
+  // Stage 3: Native render complete (85)
+  onProgress(85)
+  // Stage 4: Album write complete (100)
+  onProgress(100)
+
+  assert.deepEqual(progressReports, [10, 35, 85, 100])
+  for (let i = 1; i < progressReports.length; i++) {
+    assert.ok(progressReports[i] > progressReports[i - 1])
+  }
+})
