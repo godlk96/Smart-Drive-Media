@@ -168,17 +168,17 @@
 - [ ] **Step 2: 运行测试验证失败**
   运行：`node test/preferencesAndThumbnail.test.js`
   预期：FAIL
-- [ ] **Step 3: 实现 PreferencesService 封装**
+- [x] **Step 3: 实现 PreferencesService 封装**
   创建 `entry/src/main/ets/service/PreferencesService.ets`：
   - 基于 `@ohos.data.preferences` 实现 `saveLastTripId()`, `getLastTripId()`, `saveTemplatePreference()`, `getTemplatePreference()`, `savePrivacySettings()`, `getPrivacySettings()`；
   - 在 `CoreBridge.ets` 初始化与状态变更时调用，实现冷启动状态恢复。
-- [ ] **Step 4: 替换首页封面提取桩实现与 Index.ets 卡片改造**
+- [x] **Step 4: 替换首页封面提取桩实现与 Index.ets 卡片改造**
   - 在 `ExportNativeService.ets` 的 `extractFirstFrameByService` 中，利用系统媒体元数据或图片生成能力，将首帧存为本地 `.jpg`/`.png` 缩略图；
   - 改造 `Index.ets`：卡片预览区域直接渲染 `<Image(item.previewFrameUri)>`，删除原先导致自动并发解码的 `<Video>` 组件分支。
-- [ ] **Step 5: 运行测试验证通过**
+- [x] **Step 5: 运行测试验证通过**
   运行：`node test/preferencesAndThumbnail.test.js`
   预期：PASS
-- [ ] **Step 6: Commit 变更**
+- [x] **Step 6: Commit 变更**
   ```bash
   git add entry/src/main/ets/service/PreferencesService.ets entry/src/main/ets/service/ExportNativeService.ets entry/src/main/ets/pages/Index.ets entry/src/main/ets/bridge/CoreBridge.ets test/preferencesAndThumbnail.test.js
   git commit -m "feat: add PreferencesService for settings persistence and render static cover images on Index"
@@ -204,20 +204,20 @@
   - 消除 3 重同构状态模型与数据搬运胶水类；
   - UI 隐私打码 Toggle 真实双向绑定至 `EditorStateModel`。
 
-- [ ] **Step 1: 编写领域状态模型唯一真理源变更测试**
+- [x] **Step 1: 编写领域状态模型唯一真理源变更测试**
   在 `test/unifiedAppState.test.js` 中测试直接对 `EditorStateModel` 触发修改（选区、机位、打码）能完整且一致地保留数据，无需经过任何翻译器转换。
-- [ ] **Step 2: 运行测试验证失败**
+- [x] **Step 2: 运行测试验证失败**
   运行：`node test/unifiedAppState.test.js`
   预期：FAIL
-- [ ] **Step 3: 扩充 AppState.ets 并删除胶水转换器**
+- [x] **Step 3: 扩充 AppState.ets 并删除胶水转换器**
   - 在 `model/AppState.ets` 中扩充 `EditorStateModel`，直接容纳轨道列表、切片元数据及导出配置；
   - 物理删除 `entry/src/main/ets/service/EditorTranslationEngine.ets` 与 `ExportPayloadTranslator.ets`；
   - 改造 `EditorViewModel.ets`、`Editor.ets` 和 `EditorPreviewArea.ets`，直接读写 `EditorStateModel`，并在 UI Toggle 的 `onChange` 中真实触发状态更新；
   - 修复 `maskTime` 与 `maskGps` 强耦合，使其具备独立控制来源。
-- [ ] **Step 4: 运行测试验证通过**
+- [x] **Step 4: 运行测试验证通过**
   运行：`node test/unifiedAppState.test.js`
   预期：PASS
-- [ ] **Step 5: Commit 变更**
+- [x] **Step 5: Commit 变更**
   ```bash
   git add entry/src/main/ets/model/AppState.ets entry/src/main/ets/pages/Editor.ets entry/src/main/ets/viewmodel/EditorViewModel.ets entry/src/main/ets/components/EditorPreviewArea.ets test/unifiedAppState.test.js
   git rm entry/src/main/ets/service/EditorTranslationEngine.ets entry/src/main/ets/service/ExportPayloadTranslator.ets
@@ -238,18 +238,18 @@
 - Consumes: Task 1–5 全部交付物
 - Produces: 绿灯且真实覆盖业务逻辑的自动化回归套件与验收报告。
 
-- [ ] **Step 1: 编写时间轴切片换算与选区算法测试**
+- [x] **Step 1: 编写时间轴切片换算与选区算法测试**
   在 `test/timelineAndState.test.js` 中覆盖时间轴微调、片段对齐、选区起止换算等核心纯算法。
-- [ ] **Step 2: 编写导出参数装配契约测试**
+- [x] **Step 2: 编写导出参数装配契约测试**
   在 `test/exportPipelineContract.test.js` 中覆盖空素材校验、选区起止时间传递、模板参数合法性校验等关键契约。
-- [ ] **Step 3: 更新 package.json 测试脚本**
+- [x] **Step 3: 更新 package.json 测试脚本**
   更新 `package.json` 中的 `"scripts"`，配置 `"test": "node --test test/*.test.js"`，使其成为真实可执行的回归门禁。
-- [ ] **Step 4: 运行全量测试套件**
+- [x] **Step 4: 运行全量测试套件**
   运行：`node --test test/*.test.js`
   预期：全部测试用例 PASS（非源码字符串 includes 匹配，均为真实输入输出断言）。
-- [ ] **Step 5: 最终清理与工程审查**
+- [x] **Step 5: 最终清理与工程审查**
   检查 `git status` 确认无遗留孤立未引用文件，确认 `PROJECT_INVESTIGATION_REPORT.md` 与实际代码保持同步。
-- [ ] **Step 6: Commit 变更**
+- [x] **Step 6: Commit 变更**
   ```bash
   git add package.json test/
   git commit -m "test: implement real unit tests for timeline, state transitions and export contracts"
