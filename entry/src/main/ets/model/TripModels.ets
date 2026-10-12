@@ -41,6 +41,8 @@ export class ExportComposeRequest {
   backUris: Array<string> = []
   sideUris: Array<string> = []
   expectedDurationSec: number = 0
+  rangeStartMs: number = 0
+  rangeEndMs: number = 0
   hideSpeed: boolean = true
   hideGps: boolean = true
   hideVin: boolean = true

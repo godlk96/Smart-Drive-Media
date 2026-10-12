@@ -24,6 +24,7 @@ interface PlayerSlot {
   seekDoneHandler?: () => void
   timeUpdateHandler?: (timeMs: number) => void
   errorHandler?: (error: Object) => void
+  openedFd?: number
 }
 
 interface SegmentSeekTarget {
@@ -515,10 +516,20 @@ export class PingPongTrackController {
     }
   }
 
+  private closeSlotFd(slot: PlayerSlot): void {
+    if (slot.openedFd !== undefined && slot.openedFd >= 0) {
+      try {
+        fs.closeSync(slot.openedFd)
+      } catch (_) {}
+      slot.openedFd = undefined
+    }
+  }
+
   private async loadSlot(slot: PlayerSlot, uri: string): Promise<void> {
     if (!slot.player) {
       return
     }
+    this.closeSlotFd(slot)
     this.bumpSlotTaskVersion(slot)
     slot.prepared = false
     slot.sourceUri = ''
@@ -536,6 +547,7 @@ export class PingPongTrackController {
     if (uri.startsWith('file://')) {
       try {
         const file = fs.openSync(uri, fs.OpenMode.READ_ONLY)
+        slot.openedFd = file.fd
         slot.player.fdSrc = { fd: file.fd }
       } catch (_) {
         slot.sourceUri = ''
@@ -714,6 +726,7 @@ export class PingPongTrackController {
   }
 
   private async releaseSlot(slot: PlayerSlot): Promise<void> {
+    this.closeSlotFd(slot)
     this.bumpSlotTaskVersion(slot)
     this.unbindSlotEvents(slot)
     slot.prepared = false

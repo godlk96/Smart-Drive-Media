@@ -8,6 +8,8 @@ interface NativeExportPipelineRequest {
   sideUris: Array<string>
   templateId: string
   expectedDurationSec: number
+  startMs: number
+  endMs: number
   outputPath: string
   hideSpeed: boolean
   hideVin: boolean
@@ -117,6 +119,8 @@ function buildNativeExportPayload(
     sideUris: sideInputUris,
     templateId: request.templateId,
     expectedDurationSec: request.expectedDurationSec,
+    startMs: request.rangeStartMs,
+    endMs: request.rangeEndMs,
     outputPath: request.outputPath,
     hideSpeed: request.hideSpeed,
     hideVin: request.hideVin,

@@ -131,13 +131,17 @@ export function buildComposeRequestByService(
   templateId: string,
   speedLabel: string,
   muted: boolean,
-  watermarkEnabled: boolean
+  watermarkEnabled: boolean,
+  rangeStartMs: number = 0,
+  rangeEndMs: number = 0
 ): ExportComposeRequest {
   ensureCoreApiContract()
   const request = new ExportComposeRequest()
   request.fileName = fileName
   request.outputPath = outputPath
   request.expectedDurationSec = expectedDurationSec
+  request.rangeStartMs = rangeStartMs
+  request.rangeEndMs = rangeEndMs
   request.hideSpeed = hideSpeed
   request.hideGps = hideGps
   request.hideVin = hideVin

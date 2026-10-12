@@ -69,6 +69,7 @@ function cloneExportSnapshot(snapshot: ExportSnapshot): ExportSnapshot {
 
 export class ExportManager {
   private jobs: Map<ExportJobId, ExportJobRecord> = new Map()
+  private terminalEvents: Map<ExportJobId, ExportJobEvent> = new Map()
 
   private notify(record: ExportJobRecord, status: string, progress: number): void {
     const normalizedProgress = Math.max(0, Math.min(100, Math.floor(progress)))
@@ -80,6 +81,11 @@ export class ExportManager {
   }
 
   subscribe(jobId: ExportJobId, listener: ExportListener): void {
+    const terminal = this.terminalEvents.get(jobId)
+    if (terminal) {
+      listener(terminal)
+      return
+    }
     const record = this.jobs.get(jobId)
     if (!record) {
       return
@@ -133,7 +139,9 @@ export class ExportManager {
         snapshot.selectedTemplateId,
         snapshot.playback.speedLabel,
         snapshot.playback.muted,
-        snapshot.brand.watermarkEnabled
+        snapshot.brand.watermarkEnabled,
+        snapshot.playback.rangeStartMs,
+        snapshot.playback.rangeEndMs
       )
       if (record.cancelled) {
         return
@@ -159,11 +167,15 @@ export class ExportManager {
           this.notify(record, `导出处理中 ${progress}%`, progress)
         }
       })
+      const successEvent: ExportJobEvent = { jobId: record.id, status: `相册保存成功：${albumUri}`, progress: 100 }
+      this.terminalEvents.set(record.id, successEvent)
       this.notify(record, `导出完成：${fileName}`, 100)
       this.notify(record, `相册保存成功：${albumUri}`, 100)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       debugLog('导出', `导出失败：${message}`)
+      const failureEvent: ExportJobEvent = { jobId: record.id, status: `导出失败：${message}`, progress: 0 }
+      this.terminalEvents.set(record.id, failureEvent)
       this.notify(record, `导出失败：${message}`, 0)
     } finally {
       this.jobs.delete(record.id)
