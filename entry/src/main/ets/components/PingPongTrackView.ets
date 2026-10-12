@@ -3,7 +3,7 @@ import { ActiveLayer, PingPongTrackController } from '../media/PingPongTrackCont
 @Component
 export struct PingPongTrackView {
   @Prop @Watch('onControllerChanged') controller?: PingPongTrackController
-  @Prop onSurfaceReady?: () => void
+  onSurfaceReady?: () => void
   @State private activeLayer: ActiveLayer = 'A'
   private xControllerA: XComponentController = new XComponentController()
   private xControllerB: XComponentController = new XComponentController()

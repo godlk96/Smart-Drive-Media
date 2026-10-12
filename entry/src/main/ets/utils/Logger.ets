@@ -72,7 +72,7 @@ function scheduleLogFlush(): void {
   flushTimer = setTimeout(() => {
     flushTimer = -1
     void flushLogBuffer()
-  }, 1000) as unknown as number
+  }, 1000)
 }
 
 export async function initRuntimeLog(baseDir: string): Promise<void> {

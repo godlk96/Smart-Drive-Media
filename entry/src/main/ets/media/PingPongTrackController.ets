@@ -574,7 +574,7 @@ export class PingPongTrackController {
           resolve()
         }
       }, 3000)
-      slot.preparedTimeoutId = timeoutTimer as unknown as number
+      slot.preparedTimeoutId = timeoutTimer
       const safeResolve = () => {
         if (slot.preparedTimeoutId && slot.preparedTimeoutId >= 0) {
           clearTimeout(slot.preparedTimeoutId)
@@ -719,20 +719,37 @@ export class PingPongTrackController {
     }
   }
 
+  private resolvePlaybackSpeed(rate: number): media.PlaybackSpeed {
+    if (rate <= 0.25) {
+      return media.PlaybackSpeed.SPEED_FORWARD_0_25_X
+    }
+    if (rate <= 0.5) {
+      return media.PlaybackSpeed.SPEED_FORWARD_0_50_X
+    }
+    if (rate <= 0.75) {
+      return media.PlaybackSpeed.SPEED_FORWARD_0_75_X
+    }
+    if (rate <= 1) {
+      return media.PlaybackSpeed.SPEED_FORWARD_1_00_X
+    }
+    if (rate <= 1.25) {
+      return media.PlaybackSpeed.SPEED_FORWARD_1_25_X
+    }
+    if (rate <= 1.5) {
+      return media.PlaybackSpeed.SPEED_FORWARD_1_50_X
+    }
+    if (rate <= 1.75) {
+      return media.PlaybackSpeed.SPEED_FORWARD_1_75_X
+    }
+    if (rate <= 2) {
+      return media.PlaybackSpeed.SPEED_FORWARD_2_00_X
+    }
+    return media.PlaybackSpeed.SPEED_FORWARD_3_00_X
+  }
+
   private async applyPlaybackRate(): Promise<void> {
     const slots = [this.slotA, this.slotB]
-    let speed = media.PlaybackSpeed.SPEED_FORWARD_1_00_X
-    if (this.playbackRate <= 0.75) {
-      speed = media.PlaybackSpeed.SPEED_FORWARD_0_75_X
-    } else if (this.playbackRate <= 1) {
-      speed = media.PlaybackSpeed.SPEED_FORWARD_1_00_X
-    } else if (this.playbackRate <= 1.25) {
-      speed = media.PlaybackSpeed.SPEED_FORWARD_1_25_X
-    } else if (this.playbackRate <= 1.75) {
-      speed = media.PlaybackSpeed.SPEED_FORWARD_1_75_X
-    } else {
-      speed = media.PlaybackSpeed.SPEED_FORWARD_2_00_X
-    }
+    const speed = this.resolvePlaybackSpeed(this.playbackRate)
     for (const slot of slots) {
       if (!slot.player || !slot.prepared) {
         continue

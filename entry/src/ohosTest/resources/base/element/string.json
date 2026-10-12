@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "智驾影音 测试模块"
+    },
+    {
+      "name": "TestAbility_desc",
+      "value": "智驾影音单元测试入口"
+    },
+    {
+      "name": "TestAbility_label",
+      "value": "智驾影音测试"
+    }
+  ]
+}

@@ -122,10 +122,6 @@ export class CoreBridge {
   private lastContext?: common.UIAbilityContext = undefined
   private previewFrameCache: Map<string, string> = new Map()
 
-  getJsBridgeEntry(): string {
-    return this.jsBridgeEntry
-  }
-
   getRequiredPermissions(): Array<string> {
     return [...this.requiredPermissions]
   }
@@ -243,19 +239,23 @@ export class CoreBridge {
       const cacheKey = `${trip.id}_${trip.startTs}`
       debugLog('扫描', `封面处理，行程=${trip.id}，URI=${trip.previewUri}`)
       if (!canExtractPreviewFrame(trip.previewUri)) {
-        trip.previewFrameUri = trip.previewUri
-        debugLog('扫描', `封面跳过提取，使用视频回退预览，行程=${trip.id}`)
+        trip.previewFrameUri = ''
+        debugLog('扫描', `封面无法提取（非本地文件），使用占位图，行程=${trip.id}`)
         continue
       }
       try {
         const framePath = await extractFirstFrameByService(trip.previewUri, cacheDir, cacheKey)
         trip.previewFrameUri = framePath
-        this.previewFrameCache.set(trip.previewUri, framePath)
-        debugLog('扫描', `封面提取成功，行程=${trip.id}，封面=${framePath}`)
+        if (framePath.length > 0) {
+          this.previewFrameCache.set(trip.previewUri, framePath)
+          debugLog('扫描', `封面提取成功，行程=${trip.id}，封面=${framePath}`)
+        } else {
+          debugLog('扫描', `封面提取为空，使用占位图，行程=${trip.id}`)
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        trip.previewFrameUri = trip.previewUri
-        debugLog('扫描', `提取首帧失败，回退视频预览，行程=${trip.id}，原因=${message}`)
+        trip.previewFrameUri = ''
+        debugLog('扫描', `提取首帧异常，使用占位图，行程=${trip.id}，原因=${message}`)
       }
     }
   }
@@ -468,10 +468,27 @@ export class CoreBridge {
     return merged.id
   }
 
+  /** 冷启动恢复用户上次保存的隐私打码偏好 */
+  private async restorePrivacySettings(): Promise<void> {
+    try {
+      const saved = await PreferencesService.getInstance().getPrivacySettings()
+      this.hideSpeed = saved.hideSpeed
+      this.hideVin = saved.hideVin
+      this.hideTime = saved.hideTime
+      // hideGps 与 hideTime 语义对齐（历史字段，保持同源以免出现分歧）
+      this.hideGps = saved.hideTime
+      debugLog('隐私', `已恢复打码偏好 speed=${this.hideSpeed} time=${this.hideTime} vin=${this.hideVin}`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('隐私', `恢复打码偏好失败，使用默认值，原因=${message}`)
+    }
+  }
+
   async createLibraryState(permissionGranted: boolean, context?: common.UIAbilityContext): Promise<LibraryStateModel> {
     debugLog('扫描', `开始构建行程，授权状态=${permissionGranted}`)
     this.lastContext = context
     PreferencesService.getInstance().setContext(context ?? null)
+    await this.restorePrivacySettings()
     if (!permissionGranted) {
       return {
         title: '行程库',

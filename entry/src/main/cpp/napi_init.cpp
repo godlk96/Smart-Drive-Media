@@ -358,17 +358,6 @@ static napi_value createExportResultValue(napi_env env, const NativeExportPipeli
     return output;
 }
 
-static napi_value RunExportPipeline(napi_env env, napi_callback_info info)
-{
-    NativeExportPipelineRequest request;
-    NativeExportPipelineResult error;
-    if (!parseExportPipelineRequest(env, info, request, error)) {
-        return createExportResultValue(env, error);
-    }
-    NativeExportPipelineResult result = runPipelineAndWrapResult(request);
-    return createExportResultValue(env, result);
-}
-
 struct ExportPipelineAsyncContext {
     napi_env env = nullptr;
     napi_async_work work = nullptr;
@@ -598,30 +587,6 @@ static napi_value createTimelineArray(napi_env env, const std::vector<NativeTime
     return arr;
 }
 
-static napi_value createStringArray(napi_env env, const std::vector<std::string> &items)
-{
-    napi_value arr = nullptr;
-    napi_create_array_with_length(env, items.size(), &arr);
-    for (size_t i = 0; i < items.size(); i++) {
-        napi_value v = nullptr;
-        napi_create_string_utf8(env, items[i].c_str(), items[i].length(), &v);
-        napi_set_element(env, arr, i, v);
-    }
-    return arr;
-}
-
-static napi_value createIntArray(napi_env env, const std::vector<int64_t> &items)
-{
-    napi_value arr = nullptr;
-    napi_create_array_with_length(env, items.size(), &arr);
-    for (size_t i = 0; i < items.size(); i++) {
-        napi_value v = nullptr;
-        napi_create_int64(env, items[i], &v);
-        napi_set_element(env, arr, i, v);
-    }
-    return arr;
-}
-
 static napi_value ParseDvrFileName(napi_env env, napi_callback_info info)
 {
     size_t argc = 2;
@@ -686,48 +651,6 @@ static napi_value MergeTimeline(napi_env env, napi_callback_info info)
     return createTimelineArray(env, tracks);
 }
 
-static napi_value BuildComposeRequest(napi_env env, napi_callback_info info)
-{
-    size_t argc = 4;
-    napi_value args[4] = {nullptr, nullptr, nullptr, nullptr};
-    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    std::vector<std::string> params(4, "");
-    for (size_t i = 0; i < argc && i < 4; i++) {
-        params[i] = readUtf8Arg(env, args[i]);
-    }
-    std::vector<std::string> clips = splitBy(params[0], ',');
-    std::vector<std::string> frontUris;
-    std::vector<std::string> backUris;
-    std::vector<int64_t> frontIndexes;
-    for (size_t clipIndex = 0; clipIndex < clips.size(); clipIndex++) {
-        const std::string &clip = clips[clipIndex];
-        if (clip.empty()) {
-            continue;
-        }
-        std::vector<std::string> parts = splitBy(clip, '@');
-        if (parts.size() < 3) {
-            continue;
-        }
-        const std::string &camera = parts[0];
-        const std::string &uri = parts[2];
-        if (camera == "Front") {
-            frontUris.push_back(uri);
-            frontIndexes.push_back(static_cast<int64_t>(clipIndex));
-        } else if (camera == "Back") {
-            backUris.push_back(uri);
-        }
-    }
-    napi_value output = nullptr;
-    napi_create_object(env, &output);
-    napi_value frontArr = createStringArray(env, frontUris);
-    napi_value backArr = createStringArray(env, backUris);
-    napi_value frontIndexArr = createIntArray(env, frontIndexes);
-    napi_set_named_property(env, output, "frontUris", frontArr);
-    napi_set_named_property(env, output, "backUris", backArr);
-    napi_set_named_property(env, output, "frontIndexes", frontIndexArr);
-    return output;
-}
-
 static napi_value GetCoreApiVersion(napi_env env, napi_callback_info info)
 {
     (void)info;
@@ -741,12 +664,10 @@ EXTERN_C_START
 static napi_value Init(napi_env env, napi_value exports)
 {
     napi_property_descriptor desc[] = {
-        {"runExportPipeline", nullptr, RunExportPipeline, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"runExportPipelineAsync", nullptr, RunExportPipelineAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"parseDvrFileName", nullptr, ParseDvrFileName, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"buildTimeline", nullptr, BuildTimeline, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"mergeTimeline", nullptr, MergeTimeline, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"buildComposeRequest", nullptr, BuildComposeRequest, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"getCoreApiVersion", nullptr, GetCoreApiVersion, nullptr, nullptr, nullptr, napi_default, nullptr}};
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;

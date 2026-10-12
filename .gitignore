@@ -52,5 +52,5 @@ AppScope/build/
 *.ap
 entry/src/main/cpp/.ffmpeg-src/
 logs/
-*.txt.log
+# 注意：不要使用 *.txt，会误伤 entry/src/main/cpp/CMakeLists.txt
 

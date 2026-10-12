@@ -55,7 +55,6 @@ struct Editor {
   @State private toastText: string = ''
   @State private toastVisible: boolean = false
   @State private clipMarks: Array<number> = []
-  @State private mosaicEnabledUi: boolean = true
   private toastTimer: number = -1
   private wasMutedBeforeDrag: boolean = false
   private wasPlayingBeforeDrag: boolean = false
@@ -150,7 +149,6 @@ struct Editor {
     this.hasUnsavedChanges = false
     this.backConfirmVisible = false
     this.clipMarks = []
-    this.mosaicEnabledUi = true
     const trackSummary = this.state.timeline.map((item: TimelineTrackModel) => `${item.cameraPosition}:${item.segmentCount}`).join(',')
     debugLog('剪辑诊断', `初始化完成，时长=${this.state.totalDurationSec}s，轨道数=${this.state.timeline.length}，轨道明细=${trackSummary}，预览URI长度=${this.state.previewUri.length}，预览视角=${this.state.previewCamera}`)
   }
@@ -488,12 +486,8 @@ struct Editor {
     this.backConfirmVisible = false
   }
 
-  private toggleMosaicByUi(value: boolean): void {
-    this.mosaicEnabledUi = value
-    this.togglePrivacy('speed', value)
-    this.togglePrivacy('vin', value)
-    this.togglePrivacy('time', value)
-    this.togglePrivacy('gps', value)
+  private togglePrivacyByUi(type: string, value: boolean): void {
+    this.togglePrivacy(type, value)
     this.markUnsaved()
   }
 
@@ -1094,12 +1088,30 @@ struct Editor {
                 .width('100%')
               if (this.templateSupportsMosaic(this.state.activeTemplateId)) {
                 Row() {
-                  Text('前视角固定打码')
+                  Text('打码：车速')
                     .fontSize(14)
                     .fontColor('#FFFFFF')
                   Blank()
-                  Toggle({ type: ToggleType.Switch, isOn: this.mosaicEnabledUi })
-                    .onChange((value: boolean) => this.toggleMosaicByUi(value))
+                  Toggle({ type: ToggleType.Switch, isOn: this.state.hideSpeed })
+                    .onChange((value: boolean) => this.togglePrivacyByUi('speed', value))
+                }
+                .width('100%')
+                Row() {
+                  Text('打码：时间')
+                    .fontSize(14)
+                    .fontColor('#FFFFFF')
+                  Blank()
+                  Toggle({ type: ToggleType.Switch, isOn: this.state.hideTime })
+                    .onChange((value: boolean) => this.togglePrivacyByUi('time', value))
+                }
+                .width('100%')
+                Row() {
+                  Text('打码：车牌')
+                    .fontSize(14)
+                    .fontColor('#FFFFFF')
+                  Blank()
+                  Toggle({ type: ToggleType.Switch, isOn: this.state.hideVin })
+                    .onChange((value: boolean) => this.togglePrivacyByUi('vin', value))
                 }
                 .width('100%')
               }

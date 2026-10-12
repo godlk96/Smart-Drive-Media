@@ -17,6 +17,9 @@ export interface ExportJobEvent {
 
 type ExportListener = (event: ExportJobEvent) => void
 
+/** 终态事件缓存上限：仅用于给迟到订阅者补发，超出即淘汰最旧项 */
+const TERMINAL_EVENT_KEEP: number = 8
+
 interface ExportJobRecord {
   id: ExportJobId
   snapshot: ExportSnapshot
@@ -71,6 +74,22 @@ export class ExportManager {
   private jobs: Map<ExportJobId, ExportJobRecord> = new Map()
   private terminalEvents: Map<ExportJobId, ExportJobEvent> = new Map()
 
+  private recordTerminalEvent(jobId: ExportJobId, event: ExportJobEvent): void {
+    this.terminalEvents.set(jobId, event)
+    // 有界缓存：只保留最近 TERMINAL_EVENT_KEEP 条，避免长会话无界增长
+    while (this.terminalEvents.size > TERMINAL_EVENT_KEEP) {
+      let oldestKey: ExportJobId | undefined = undefined
+      for (const key of this.terminalEvents.keys()) {
+        oldestKey = key
+        break
+      }
+      if (oldestKey === undefined) {
+        break
+      }
+      this.terminalEvents.delete(oldestKey)
+    }
+  }
+
   private notify(record: ExportJobRecord, status: string, progress: number): void {
     const normalizedProgress = Math.max(0, Math.min(100, Math.floor(progress)))
     record.progress = normalizedProgress
@@ -83,6 +102,8 @@ export class ExportManager {
   subscribe(jobId: ExportJobId, listener: ExportListener): void {
     const terminal = this.terminalEvents.get(jobId)
     if (terminal) {
+      // 迟到的订阅者：补发终态事件后即可回收该缓存项
+      this.terminalEvents.delete(jobId)
       listener(terminal)
       return
     }
@@ -99,7 +120,10 @@ export class ExportManager {
       return
     }
     record.cancelled = true
-    this.notify(record, '已取消', 0)
+    // 记录终态，保证订阅者必定 settle（否则只能等 180s 超时）
+    const cancelEvent: ExportJobEvent = { jobId: record.id, status: '导出失败：导出已取消', progress: 0 }
+    this.recordTerminalEvent(record.id, cancelEvent)
+    this.notify(record, '导出失败：导出已取消', 0)
   }
 
   async start(snapshot: ExportSnapshot, context: common.UIAbilityContext): Promise<ExportJobId> {
@@ -135,6 +159,7 @@ export class ExportManager {
         Math.max(1, (snapshot.playback.rangeEndMs - snapshot.playback.rangeStartMs) / 1000),
         snapshot.privacy.hideSpeed,
         snapshot.privacy.hideGps,
+        snapshot.privacy.hideTime ?? snapshot.privacy.hideGps,
         snapshot.privacy.hideVin,
         snapshot.selectedTemplateId,
         snapshot.playback.speedLabel,
@@ -168,14 +193,14 @@ export class ExportManager {
         }
       })
       const successEvent: ExportJobEvent = { jobId: record.id, status: `相册保存成功：${albumUri}`, progress: 100 }
-      this.terminalEvents.set(record.id, successEvent)
+      this.recordTerminalEvent(record.id, successEvent)
       this.notify(record, `导出完成：${fileName}`, 100)
       this.notify(record, `相册保存成功：${albumUri}`, 100)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       debugLog('导出', `导出失败：${message}`)
       const failureEvent: ExportJobEvent = { jobId: record.id, status: `导出失败：${message}`, progress: 0 }
-      this.terminalEvents.set(record.id, failureEvent)
+      this.recordTerminalEvent(record.id, failureEvent)
       this.notify(record, `导出失败：${message}`, 0)
     } finally {
       this.jobs.delete(record.id)

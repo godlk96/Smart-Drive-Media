@@ -1,6 +1,14 @@
 import { ExportComposeRequest } from '../model/TripModels'
 import fs from '@ohos.file.fs'
+import image from '@ohos.multimedia.image'
+import media from '@ohos.multimedia.media'
 import smartdriveExporter from 'libsmartdrive_exporter.so'
+import { debugLog } from '../utils/Logger'
+
+const THUMB_WIDTH: number = 480
+const THUMB_HEIGHT: number = 270
+const THUMB_JPEG_QUALITY: number = 80
+const THUMB_TIME_US: number = 0
 
 interface NativeExportPipelineRequest {
   frontUris: Array<string>
@@ -35,35 +43,128 @@ function cloneRequestForExportIsolation(request: ExportComposeRequest): ExportCo
   return deepCloneJson(request) as ExportComposeRequest
 }
 
+function isImagePath(uri: string): boolean {
+  const lower = uri.toLowerCase()
+  return lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png') || lower.endsWith('.webp')
+}
+
+async function isUsableThumbnail(path: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(path)
+    return Number(stat.size ?? 0) > 0
+  } catch (_) {
+    return false
+  }
+}
+
+async function writeArrayBufferToFile(targetPath: string, buffer: ArrayBuffer): Promise<void> {
+  let fd: number = -1
+  try {
+    const file = await fs.open(targetPath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC)
+    fd = file.fd
+    await fs.write(fd, buffer)
+  } finally {
+    if (fd >= 0) {
+      try {
+        await fs.close(fd)
+      } catch (_) {
+      }
+    }
+  }
+}
+
+/**
+ * 提取视频首帧并落盘为 JPEG 缩略图。
+ * 成功返回缩略图路径；任何失败均返回空字符串，由调用方回退到占位图（绝不返回视频 URI）。
+ */
 export async function extractFirstFrameByService(
   sourceUri: string,
   cacheDir: string,
   cacheKey: string
 ): Promise<string> {
-  if (!sourceUri || sourceUri.length === 0) {
+  if (!sourceUri || sourceUri.length === 0 || cacheDir.length === 0) {
     return ''
   }
-  const lower = sourceUri.toLowerCase()
-  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png') || lower.endsWith('.webp')) {
+  if (isImagePath(sourceUri)) {
     return sourceUri
   }
 
   const sanitizedKey = cacheKey.replace(/[^a-zA-Z0-9_-]/g, '_')
   const targetImagePath = `${cacheDir}/thumb_${sanitizedKey}.jpg`
 
-  try {
-    if (fs.accessSync(targetImagePath)) {
-      return targetImagePath
-    }
-  } catch (_) {
+  if (await isUsableThumbnail(targetImagePath)) {
+    return targetImagePath
   }
 
+  let generator: media.AVImageGenerator | undefined = undefined
+  let sourceFd: number = -1
+  let pixelMap: image.PixelMap | undefined = undefined
+  let packer: image.ImagePacker | undefined = undefined
   try {
-    const file = await fs.open(targetImagePath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE)
-    await fs.close(file.fd)
+    const sourceFile = await fs.open(sourceUri, fs.OpenMode.READ_ONLY)
+    sourceFd = sourceFile.fd
+
+    const created = await media.createAVImageGenerator()
+    if (!created) {
+      return ''
+    }
+    generator = created
+
+    const descriptor: media.AVFileDescriptor = { fd: sourceFd }
+    generator.fdSrc = descriptor
+
+    const params: media.PixelMapParams = { width: THUMB_WIDTH, height: THUMB_HEIGHT }
+    pixelMap = await generator.fetchFrameByTime(
+      THUMB_TIME_US,
+      media.AVImageQueryOptions.AV_IMAGE_QUERY_CLOSEST_SYNC,
+      params
+    )
+    if (!pixelMap) {
+      return ''
+    }
+
+    packer = image.createImagePacker()
+    const option: image.PackingOption = { format: 'image/jpeg', quality: THUMB_JPEG_QUALITY }
+    const packed: ArrayBuffer = await packer.packToData(pixelMap, option)
+    if (!packed || packed.byteLength === 0) {
+      return ''
+    }
+    await writeArrayBufferToFile(targetImagePath, packed)
+
+    if (!(await isUsableThumbnail(targetImagePath))) {
+      return ''
+    }
+    debugLog('封面', `首帧提取成功，封面=${targetImagePath}`)
     return targetImagePath
-  } catch (_) {
-    return targetImagePath
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    debugLog('封面', `首帧提取失败，回退占位图，原因=${message}`)
+    return ''
+  } finally {
+    if (packer) {
+      try {
+        await packer.release()
+      } catch (_) {
+      }
+    }
+    if (pixelMap) {
+      try {
+        await pixelMap.release()
+      } catch (_) {
+      }
+    }
+    if (generator) {
+      try {
+        await generator.release()
+      } catch (_) {
+      }
+    }
+    if (sourceFd >= 0) {
+      try {
+        await fs.close(sourceFd)
+      } catch (_) {
+      }
+    }
   }
 }
 
@@ -152,7 +253,7 @@ function buildNativeExportPayload(
     outputPath: request.outputPath,
     hideSpeed: request.hideSpeed,
     hideVin: request.hideVin,
-    hideTime: request.hideGps
+    hideTime: request.hideTime
   }
   return deepCloneJson(payload)
 }

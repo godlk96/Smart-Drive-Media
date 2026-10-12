@@ -96,6 +96,15 @@ struct Index {
     return this.selectionMode && this.selectedTripIds.length >= 2
   }
 
+  private hasImageCover(item: TripCardModel): boolean {
+    const uri = item.previewFrameUri
+    if (uri.length === 0) {
+      return false
+    }
+    const lower = uri.toLowerCase()
+    return lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png') || lower.endsWith('.webp')
+  }
+
   private getCompletenessText(card: TripCardModel): string {
     return this.viewModel.getCompletenessText(card)
   }
@@ -222,11 +231,12 @@ struct Index {
             GridItem() {
               Column({ space: 0 }) {
                 Stack({ alignContent: Alignment.TopStart }) {
-                  if (item.previewFrameUri.length > 0) {
+                  if (this.hasImageCover(item)) {
                     Image(item.previewFrameUri)
                       .width('100%')
                       .height('100%')
                       .objectFit(ImageFit.Cover)
+                      .alt($r('app.media.app_icon'))
                   } else {
                     Column({ space: 4 }) {
                       Text('预览')

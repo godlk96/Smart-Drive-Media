@@ -27,16 +27,16 @@
 - Modify: `test/timelineAndState.test.js`
 
 **Step 1: 编写测试断言倍速选项合法性**
-- [ ] 在 `test/timelineAndState.test.js` 中扩充针对倍速选项列表的断言，确保选项列表与 AVPlayer 原生枚举（最高 2.0X）完全一致。
+- [x] 在 `test/timelineAndState.test.js` 中扩充针对倍速选项列表的断言，确保选项列表与 AVPlayer 原生枚举（最高 2.0X）完全一致。
 
 **Step 2: 统一收敛常量与倍速映射**
-- [ ] 修改 `AppConstants.ets` 与 `CoreBridge.ets` 中的 `EDITOR_SPEEDS`：由 `['1.0X', '1.5X', '2.0X', '3.0X', '4.0X']` 改为 `['1.0X', '1.25X', '1.5X', '2.0X']`；
-- [ ] 修改 `PingPongTrackController.ets` 中的 `applyPlaybackRate`，与 `media.PlaybackSpeed` 严格映射（0.75X、1.0X、1.25X、1.5X、2.0X）；
-- [ ] 确保 `EditorViewModel.getPlaybackRate` 与 UI 标签 100% 对齐。
+- [x] 修改 `AppConstants.ets` 与 `CoreBridge.ets` 中的 `EDITOR_SPEEDS`：由 `['1.0X', '1.5X', '2.0X', '3.0X', '4.0X']` 改为 `['1.0X', '1.25X', '1.5X', '2.0X']`；
+- [x] 修改 `PingPongTrackController.ets` 中的 `applyPlaybackRate`，与 `media.PlaybackSpeed` 严格映射（0.75X、1.0X、1.25X、1.5X、2.0X）；
+- [x] 确保 `EditorViewModel.getPlaybackRate` 与 UI 标签 100% 对齐。
 
 **Step 3: 运行测试并提交**
-- [ ] 运行测试验证通过；
-- [ ] Commit 变更。
+- [x] 运行测试验证通过；
+- [x] Commit 变更。
 
 ---
 
@@ -47,15 +47,15 @@
 - Create: `test/playerPreparedTimeout.test.js`
 
 **Step 1: 编写超时保护单元测试**
-- [ ] 在 `test/playerPreparedTimeout.test.js` 中模拟 `waitPrepared` 在未收到状态时的 3000ms 超时行为。
+- [x] 在 `test/playerPreparedTimeout.test.js` 中模拟 `waitPrepared` 在未收到状态时的 3000ms 超时行为。
 
 **Step 2: 在 PingPongTrackController.ets 中增加超时防卡死**
-- [ ] 在 `waitPrepared(slot: PlayerSlot)` 中增加 `setTimeout(3000)`，超时自动 resolve 或标记错误，避免坏素材挂起整个播放器队列；
-- [ ] 在 `releaseSlot` 时清理超时定时器。
+- [x] 在 `waitPrepared(slot: PlayerSlot)` 中增加 `setTimeout(3000)`，超时自动 resolve 或标记错误，避免坏素材挂起整个播放器队列；
+- [x] 在 `releaseSlot` 时清理超时定时器。
 
 **Step 3: 运行测试并提交**
-- [ ] 运行测试验证通过；
-- [ ] Commit 变更。
+- [x] 运行测试验证通过；
+- [x] Commit 变更。
 
 ---
 
@@ -67,18 +67,18 @@
 - Modify: `test/exportPipelineContract.test.js`
 
 **Step 1: 编写阶段化进度契约测试**
-- [ ] 在 `test/exportPipelineContract.test.js` 中增加阶段化进度递进与终态通知测试。
+- [x] 在 `test/exportPipelineContract.test.js` 中增加阶段化进度递进与终态通知测试。
 
 **Step 2: 移除 smoothTimer 定时器并规范阶段进度**
-- [ ] 从 `ExportNativeService.ets` 中物理删除 `smoothTimer` / `startSmoothProgress` / `stopSmoothProgress`；
-- [ ] 导出过程按真实处理阶段向外通知：
-  - 阶段 1: `素材准备与切片物化 (15%)`
-  - 阶段 2: `Native 滤镜渲染与编码合成 (60%)`
-  - 阶段 3: `保存至系统相册 (90% -> 100%)`。
+- [x] 从 `ExportNativeService.ets` 中物理删除 `smoothTimer` / `startSmoothProgress` / `stopSmoothProgress`；
+- [x] 导出过程按真实处理阶段向外通知：
+  - 阶段 1: `素材准备与切片物化 (10%)`
+  - 阶段 2: `Native 滤镜渲染与编码合成 (35%)`
+  - 阶段 3: `保存至系统相册 (85% -> 100%)`。
 
 **Step 3: 运行测试并提交**
-- [ ] 运行测试验证通过；
-- [ ] Commit 变更。
+- [x] 运行测试验证通过；
+- [x] Commit 变更。
 
 ---
 
@@ -88,12 +88,12 @@
 - Modify: `entry/src/main/ets/utils/Logger.ets`
 
 **Step 1: 精简重复输出与优化文件落盘**
-- [ ] 在 `Logger.ets` 中删除 `console.info` 重复打印（仅保留标准的 `hilog.info`，消除 IDE 日志双份刷屏）；
-- [ ] 为文件落盘引入轻量内存批量缓冲（Buffer Array），每 1 秒或满 20 条集中写入一次，避免每次 log 都触发一次 `fs.open/write/close` 导致的无界 Promise 链与磁盘磨损。
+- [x] 在 `Logger.ets` 中删除 `console.info` 重复打印（仅保留标准的 `hilog.info`，消除 IDE 日志双份刷屏）；
+- [x] 为文件落盘引入轻量内存批量缓冲（Buffer Array），每 1 秒或满 20 条集中写入一次，避免每次 log 都触发一次 `fs.open/write/close` 导致的无界 Promise 链与磁盘磨损。
 
 **Step 2: 验证并提交**
-- [ ] 检查代码并跑通全量测试；
-- [ ] Commit 变更。
+- [x] 检查代码并跑通全量测试；
+- [x] Commit 变更。
 
 ---
 
@@ -106,13 +106,13 @@
 - Modify: `test/exportPipelineContract.test.js`
 
 **Step 1: 重构素材分类直接在 ArkTS 侧完成**
-- [ ] 消除 `ExportService.ets` 中的 `${item.camera}@${item.timestamp}@${item.uri}` 拼接逻辑；
-- [ ] `ExportService.ets` 直接利用已有的 `clips` 数组做 `Front`/`Back` 机位过滤与去重，消除对 C++ `buildComposeRequest` 的多余脆弱跨语言文本转换；
-- [ ] 保持 C++ 侧兼容或直接精简。
+- [x] 消除 `ExportService.ets` 中的 `${item.camera}@${item.timestamp}@${item.uri}` 拼接逻辑；
+- [x] `ExportService.ets` 直接利用已有的 `clips` 数组做 `Front`/`Back` 机位过滤与去重，消除对 C++ `buildComposeRequest` 的多余脆弱跨语言文本转换；
+- [x] 保持 C++ 侧兼容或直接精简。
 
 **Step 2: 运行测试并提交**
-- [ ] 运行测试验证通过；
-- [ ] Commit 变更。
+- [x] 运行测试验证通过；
+- [x] Commit 变更。
 
 ---
 
@@ -123,23 +123,23 @@
 - Create: `test/tripAggregationWindow.test.js`
 
 **Step 1: 编写多段 DVR 连续时间窗口聚类测试**
-- [ ] 在 `test/tripAggregationWindow.test.js` 中测试：相距 <= 120 秒的连续片段被自动合并到同一条行程；相距 > 120 秒的片段被拆分成不同的行程。
+- [x] 在 `test/tripAggregationWindow.test.js` 中测试：相距 <= 120 秒的连续片段被自动合并到同一条行程；相距 > 120 秒的片段被拆分成不同的行程。
 
 **Step 2: 在 CoreBridge.ets 中实现时间窗口聚类**
-- [ ] 改造 `buildTripsFromMetas`，以 120 秒为连续行程聚合窗口，消除 60 秒片段碎成单张卡片的问题。
+- [x] 改造 `buildTripsFromMetas`，以 120 秒为连续行程聚合窗口，消除 60 秒片段碎成单张卡片的问题。
 
 **Step 3: 运行测试并提交**
-- [ ] 运行测试验证通过；
-- [ ] Commit 变更。
+- [x] 运行测试验证通过；
+- [x] Commit 变更。
 
 ---
 
 ### Task 7: 全套自动化测试验证与端到端全链路验收
 
 **Step 1: 全量运行测试套件**
-- [ ] 运行：`npm test`
-- [ ] 确保全量测试 100% 通过（预计 22+ 项用例全部 PASS）。
+- [x] 运行：`npm test`
+- [x] 确保全量测试 100% 通过（26 项用例全部 PASS）。
 
 **Step 2: 审查 git 状态与分支合并**
-- [ ] 检查 `git status` 无遗留未提交文件；
-- [ ] 合并并向用户报告结果。
+- [x] 检查 `git status` 无遗留未提交文件；
+- [x] 合并并向用户报告结果。
