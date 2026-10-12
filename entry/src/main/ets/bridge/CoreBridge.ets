@@ -19,12 +19,12 @@ import { DvrMeta, TripSnapshot } from '../model/TripModels'
 import { parseDvrFileName, pickPreviewSource } from '../service/DvrScannerService'
 import { buildTimeline, mergeTimeline } from '../service/TimelineService'
 import { extractFirstFrameByService } from '../service/ExportNativeService'
+import { PreferencesService } from '../service/PreferencesService'
 import { debugLog } from '../utils/Logger'
 import photoAccessHelper from '@ohos.file.photoAccessHelper'
 import dataSharePredicates from '@ohos.data.dataSharePredicates'
 import common from '@ohos.app.ability.common'
 
-const JS_BRIDGE_ENTRY: string = 'entry/src/main/js/harmonyBridge.mjs'
 const HUAWEI_SHARE_ALBUM_NAMES: Array<string> = ['华为分享', 'Huawei Share']
 const CLIP_DURATION_SEC: number = 60
 const EDITOR_SPEEDS: Array<string> = ['1.0X', '1.5X', '2.0X', '3.0X', '4.0X']
@@ -94,7 +94,6 @@ export interface SlotUriResult {
 
 export class CoreBridge {
   private readonly requiredPermissions: Array<string> = ['ohos.permission.READ_MEDIA', 'ohos.permission.READ_IMAGEVIDEO', 'ohos.permission.WRITE_MEDIA']
-  private readonly jsBridgeEntry: string = JS_BRIDGE_ENTRY
   private cards: Array<TripCardModel> = []
   private trips: Map<string, TripSnapshot> = new Map()
   private tripId: string = ''
@@ -437,6 +436,7 @@ export class CoreBridge {
   async createLibraryState(permissionGranted: boolean, context?: common.UIAbilityContext): Promise<LibraryStateModel> {
     debugLog('扫描', `开始构建行程，授权状态=${permissionGranted}`)
     this.lastContext = context
+    PreferencesService.getInstance().setContext(context ?? null)
     if (!permissionGranted) {
       return {
         title: '行程库',
@@ -482,11 +482,18 @@ export class CoreBridge {
         const tripSummary = tripSnapshots.map((item: TripSnapshot) => `${item.id}:${item.subtitle}`).join(' | ')
         debugLog('扫描', `分组明细=${tripSummary}`)
         const first = tripSnapshots[0]
-        this.tripId = first.id
-        this.tripTitle = first.tripTitle
-        this.tripRange = first.tripRange
-        this.tripDurationSec = first.durationSec
-        this.tripTimeline = first.timeline
+        const lastTripId = await PreferencesService.getInstance().getLastTripId()
+        const preferred = (lastTripId.length > 0 && this.trips.get(lastTripId)) ? this.trips.get(lastTripId)! : first
+        this.tripId = preferred.id
+        this.tripTitle = preferred.tripTitle
+        this.tripRange = preferred.tripRange
+        this.tripDurationSec = preferred.durationSec
+        this.tripTimeline = preferred.timeline
+
+        const savedTemplate = await PreferencesService.getInstance().getTemplatePreference(DEFAULT_TEMPLATE_ID)
+        if (savedTemplate) {
+          this.activeTemplateId = normalizeTemplateIdValue(savedTemplate)
+        }
       } else {
         this.tripId = ''
         this.tripTitle = '夜间行车'
@@ -639,6 +646,7 @@ export class CoreBridge {
     this.watermarkEnabled = true
     this.exportStatusText = '待导出'
     if (selected) {
+      PreferencesService.getInstance().saveLastTripId(selected.id)
       this.selectionEndSec = selected.durationSec
       const trackSummary = selected.timeline.map((item: TimelineTrackModel) => `${item.cameraPosition}:${item.segmentCount}`).join(',')
       debugLog('剪辑', `命中缓存行程，范围=${selected.tripRange}，时长=${selected.durationSec}s，轨道=${trackSummary}，预览视角=${selected.previewCamera}，预览URI长度=${selected.previewUri.length}`)
@@ -691,6 +699,7 @@ export class CoreBridge {
 
   selectTemplate(templateId: string): EditorStateModel {
     this.activeTemplateId = normalizeTemplateIdValue(templateId)
+    PreferencesService.getInstance().saveTemplatePreference(this.activeTemplateId)
     debugLog('剪辑', `选择模板，模板ID=${this.activeTemplateId}`)
     const snapshot = this.trips.get(this.tripId)
     return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)

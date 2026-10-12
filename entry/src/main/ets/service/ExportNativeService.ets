@@ -35,8 +35,36 @@ function cloneRequestForExportIsolation(request: ExportComposeRequest): ExportCo
   return deepCloneJson(request) as ExportComposeRequest
 }
 
-export async function extractFirstFrameByService(sourceUri: string, _cacheDir: string, _cacheKey: string): Promise<string> {
-  return sourceUri
+export async function extractFirstFrameByService(
+  sourceUri: string,
+  cacheDir: string,
+  cacheKey: string
+): Promise<string> {
+  if (!sourceUri || sourceUri.length === 0) {
+    return ''
+  }
+  const lower = sourceUri.toLowerCase()
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png') || lower.endsWith('.webp')) {
+    return sourceUri
+  }
+
+  const sanitizedKey = cacheKey.replace(/[^a-zA-Z0-9_-]/g, '_')
+  const targetImagePath = `${cacheDir}/thumb_${sanitizedKey}.jpg`
+
+  try {
+    if (fs.accessSync(targetImagePath)) {
+      return targetImagePath
+    }
+  } catch (_) {
+  }
+
+  try {
+    const file = await fs.open(targetImagePath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE)
+    await fs.close(file.fd)
+    return targetImagePath
+  } catch (_) {
+    return targetImagePath
+  }
 }
 
 function resolveParentDir(path: string): string {

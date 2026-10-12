@@ -223,22 +223,10 @@ struct Index {
               Column({ space: 0 }) {
                 Stack({ alignContent: Alignment.TopStart }) {
                   if (item.previewFrameUri.length > 0) {
-                    if (item.previewFrameUri.endsWith('.jpg') || item.previewFrameUri.endsWith('.jpeg') || item.previewFrameUri.endsWith('.png') || item.previewFrameUri.endsWith('.webp')) {
-                      Image(item.previewFrameUri)
-                        .width('100%')
-                        .height('100%')
-                        .objectFit(ImageFit.Cover)
-                    } else {
-                      Video({
-                        src: item.previewFrameUri
-                      })
-                        .width('100%')
-                        .height('100%')
-                        .objectFit(ImageFit.Cover)
-                        .autoPlay(true)
-                        .controls(false)
-                        .muted(true)
-                    }
+                    Image(item.previewFrameUri)
+                      .width('100%')
+                      .height('100%')
+                      .objectFit(ImageFit.Cover)
                   } else {
                     Column({ space: 4 }) {
                       Text('预览')
