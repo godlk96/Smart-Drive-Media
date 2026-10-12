@@ -51,3 +51,6 @@ AppScope/build/
 *.abc
 *.ap
 entry/src/main/cpp/.ffmpeg-src/
+logs/
+*.txt.log
+
