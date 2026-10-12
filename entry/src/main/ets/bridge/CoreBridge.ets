@@ -27,6 +27,7 @@ import common from '@ohos.app.ability.common'
 
 const HUAWEI_SHARE_ALBUM_NAMES: Array<string> = ['华为分享', 'Huawei Share']
 const CLIP_DURATION_SEC: number = 60
+const TRIP_GAP_THRESHOLD_MS: number = 120 * 1000
 const EDITOR_SPEEDS: Array<string> = ['1.0X', '1.25X', '1.5X', '2.0X']
 const DVR_FILE_PATTERN: RegExp = /^(?:.+_)?DVR_LoopRecording_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_.+_camera\.(mp4|mov|ts)$/i
 const LOCAL_FILE_VIDEO_PATTERN: RegExp = /^(file:\/\/\/data\/storage\/.+|\/data\/storage\/.+)\.(mp4|mov|ts)(\?.*)?$/i
@@ -346,27 +347,60 @@ export class CoreBridge {
       return []
     }
     metas.sort((a: DvrMeta, b: DvrMeta) => a.timestamp - b.timestamp)
-    const groupsMap: Map<number, Array<DvrMeta>> = new Map()
+    const slicesMap: Map<number, Array<DvrMeta>> = new Map()
     metas.forEach((item: DvrMeta) => {
-      const list = groupsMap.get(item.timestamp) ?? []
+      const list = slicesMap.get(item.timestamp) ?? []
       list.push(item)
-      groupsMap.set(item.timestamp, list)
+      slicesMap.set(item.timestamp, list)
     })
-    const sortedKeys = Array.from(groupsMap.keys()).sort((a: number, b: number) => a - b)
-    const groups: Array<Array<DvrMeta>> = sortedKeys.map((key: number) => groupsMap.get(key) ?? [])
+    const sortedTimestamps = Array.from(slicesMap.keys()).sort((a: number, b: number) => a - b)
+
+    const tripSliceGroups: Array<Array<Array<DvrMeta>>> = []
+    let currentGroup: Array<Array<DvrMeta>> = []
+    let lastSliceEndTs: number = -1
+
+    sortedTimestamps.forEach((ts: number) => {
+      const slice = slicesMap.get(ts) ?? []
+      const sliceEndTs = ts + CLIP_DURATION_SEC * 1000
+      if (currentGroup.length === 0) {
+        currentGroup.push(slice)
+        lastSliceEndTs = sliceEndTs
+      } else {
+        if (ts - lastSliceEndTs <= TRIP_GAP_THRESHOLD_MS) {
+          currentGroup.push(slice)
+          lastSliceEndTs = sliceEndTs
+        } else {
+          tripSliceGroups.push(currentGroup)
+          currentGroup = [slice]
+          lastSliceEndTs = sliceEndTs
+        }
+      }
+    })
+    if (currentGroup.length > 0) {
+      tripSliceGroups.push(currentGroup)
+    }
 
     const trips: Array<TripSnapshot> = []
-    groups.forEach((group: Array<DvrMeta>, index: number) => {
-      const startTs = group[0].timestamp
-      const endTs = startTs + CLIP_DURATION_SEC * 1000
+    tripSliceGroups.forEach((sliceGroup: Array<Array<DvrMeta>>, index: number) => {
+      const allClips: Array<DvrMeta> = []
+      sliceGroup.forEach((slice: Array<DvrMeta>) => {
+        slice.forEach((item: DvrMeta) => {
+          allClips.push(item)
+        })
+      })
+      const firstSlice = sliceGroup[0]
+      const lastSlice = sliceGroup[sliceGroup.length - 1]
+      const startTs = firstSlice[0].timestamp
+      const endTs = lastSlice[0].timestamp + CLIP_DURATION_SEC * 1000
+      const durationSec = Math.max(CLIP_DURATION_SEC, Math.round((endTs - startTs) / 1000))
       const startDate = new Date(startTs)
       const endDate = new Date(endTs)
-      const title = group[0].date
+      const title = firstSlice[0].date
       const startText = toTimeText(startDate)
       const endText = toTimeText(endDate)
-      const cameraSet = new Set(group.map((item: DvrMeta) => item.camera))
-      const durationSec = CLIP_DURATION_SEC
-      const preview = pickPreviewSource(group)
+      const cameraSet = new Set(allClips.map((item: DvrMeta) => item.camera))
+      const preview = pickPreviewSource(allClips)
+
       const trip = new TripSnapshot()
       trip.id = `trip-${title}-${startText.replace(/:/g, '')}-${index}`
       trip.title = title
@@ -377,8 +411,8 @@ export class CoreBridge {
       trip.previewUri = preview.uri
       trip.previewFrameUri = preview.frameUri
       trip.previewCamera = preview.camera
-      trip.clips = [...group]
-      trip.timeline = buildTimeline(group)
+      trip.clips = allClips
+      trip.timeline = buildTimeline(allClips)
       trip.startTs = startTs
       trip.endTs = endTs
       trips.push(trip)
