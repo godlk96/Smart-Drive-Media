@@ -133,6 +133,8 @@ struct NativeExportPipelineRequest {
     bool hideSpeed = true;
     bool hideVin = true;
     bool hideTime = true;
+    double startMs = 0.0;
+    double endMs = 0.0;
 };
 
 struct NativeExportPipelineResult {
@@ -281,6 +283,20 @@ static bool parseExportPipelineRequest(napi_env env, napi_callback_info info, Na
         error = makeErrorResult(EXPORT_ERR_INVALID_ARG, "ERR_HIDE_TIME_INVALID");
         return false;
     }
+    napi_value startMsValue = nullptr;
+    if (getNamedProperty(env, args[0], "startMs", startMsValue) && startMsValue != nullptr) {
+        double val = 0.0;
+        if (napi_get_value_double(env, startMsValue, &val) == napi_ok && !std::isnan(val) && !std::isinf(val) && val >= 0.0) {
+            request.startMs = val;
+        }
+    }
+    napi_value endMsValue = nullptr;
+    if (getNamedProperty(env, args[0], "endMs", endMsValue) && endMsValue != nullptr) {
+        double val = 0.0;
+        if (napi_get_value_double(env, endMsValue, &val) == napi_ok && !std::isnan(val) && !std::isinf(val) && val >= 0.0) {
+            request.endMs = val;
+        }
+    }
     if (request.frontUris.empty()) {
         error = makeErrorResult(EXPORT_ERR_FRONT_URIS_EMPTY, "ERR_FRONT_URIS_EMPTY");
         return false;
@@ -311,7 +327,9 @@ static NativeExportPipelineResult runPipelineAndWrapResult(const NativeExportPip
         request.hideSpeed,
         request.hideVin,
         request.hideTime,
-        request.outputPath);
+        request.outputPath,
+        request.startMs,
+        request.endMs);
     if (output.empty()) {
         return makeErrorResult(EXPORT_ERR_NATIVE_EMPTY, "ERR_NATIVE_EMPTY");
     }
