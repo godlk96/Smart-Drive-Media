@@ -25,6 +25,7 @@ interface PlayerSlot {
   timeUpdateHandler?: (timeMs: number) => void
   errorHandler?: (error: Object) => void
   openedFd?: number
+  preparedTimeoutId?: number
 }
 
 interface SegmentSeekTarget {
@@ -222,7 +223,8 @@ export class PingPongTrackController {
       sourceUri: '',
       surfaceId: '',
       callbackTaskVersion: 0,
-      pendingSeekTaskVersion: -1
+      pendingSeekTaskVersion: -1,
+      preparedTimeoutId: -1
     }
   }
 
@@ -564,7 +566,23 @@ export class PingPongTrackController {
       return Promise.resolve()
     }
     return new Promise((resolve) => {
-      slot.preparedResolve = resolve
+      const timeoutTimer = setTimeout(() => {
+        debugLog('播放器', `插槽 ${slot.name} waitPrepared 超时(3000ms)，主动解锁避免挂起`)
+        if (slot.preparedResolve === safeResolve) {
+          slot.preparedResolve = undefined
+          slot.preparedTimeoutId = -1
+          resolve()
+        }
+      }, 3000)
+      slot.preparedTimeoutId = timeoutTimer as unknown as number
+      const safeResolve = () => {
+        if (slot.preparedTimeoutId && slot.preparedTimeoutId >= 0) {
+          clearTimeout(slot.preparedTimeoutId)
+          slot.preparedTimeoutId = -1
+        }
+        resolve()
+      }
+      slot.preparedResolve = safeResolve
     })
   }
 
@@ -743,6 +761,10 @@ export class PingPongTrackController {
   }
 
   private resolveSlotPendingPromises(slot: PlayerSlot): void {
+    if (slot.preparedTimeoutId && slot.preparedTimeoutId >= 0) {
+      clearTimeout(slot.preparedTimeoutId)
+      slot.preparedTimeoutId = -1
+    }
     if (slot.preparedResolve) {
       slot.preparedResolve()
       slot.preparedResolve = undefined
