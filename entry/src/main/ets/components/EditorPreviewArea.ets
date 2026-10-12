@@ -173,7 +173,7 @@ export struct EditorPreviewArea {
     if (this.editorState.hideVin) {
       masks.push({ key: 'vin', x: 0.28, y: 0.9, width: 0.24, height: 0.08 })
     }
-    if (this.editorState.hideGps) {
+    if (this.editorState.hideTime ?? this.editorState.hideGps) {
       masks.push({ key: 'time', x: 0.58, y: 0.9, width: 0.34, height: 0.08 })
     }
     if (masks.length === 0) {

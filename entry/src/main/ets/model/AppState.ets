@@ -77,6 +77,7 @@ export interface EditorStateModel {
   watermarkEnabled: boolean
   hideSpeed: boolean
   hideGps: boolean
+  hideTime: boolean
   hideVin: boolean
   exportStatusText: string
 }

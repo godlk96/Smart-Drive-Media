@@ -107,6 +107,7 @@ export class CoreBridge {
   private currentClipTotal: number = 0
   private hideSpeed: boolean = true
   private hideGps: boolean = true
+  private hideTime: boolean = true
   private hideVin: boolean = true
   private playheadMs: number = 0
   private selectionStartSec: number = 0
@@ -628,6 +629,7 @@ export class CoreBridge {
       watermarkEnabled: this.watermarkEnabled,
       hideSpeed: this.hideSpeed,
       hideGps: this.hideGps,
+      hideTime: this.hideTime,
       hideVin: this.hideVin,
       exportStatusText: this.exportStatusText
     }
@@ -743,7 +745,14 @@ export class CoreBridge {
       this.hideGps = enabled
     } else if (type === 'vin') {
       this.hideVin = enabled
+    } else if (type === 'time') {
+      this.hideTime = enabled
     }
+    PreferencesService.getInstance().savePrivacySettings({
+      hideSpeed: this.hideSpeed,
+      hideVin: this.hideVin,
+      hideTime: this.hideTime
+    })
     const snapshot = this.trips.get(this.tripId)
     return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
   }

@@ -1,11 +1,8 @@
 import { EditorPreviewArea } from '../components/EditorPreviewArea'
 import { sharedCoreBridge } from '../bridge/CoreBridge'
 import { EditorStateModel, TemplateCardModel, TimelineMarkerModel, TimelineTrackModel } from '../model/AppState'
-import { EditorConfig } from '../model/EditorConfig'
-import { createEditorStateFromSnapshot, deepCloneExportSnapshot, ExportSnapshot, resolveTemplateDefinition } from '../model/Models'
 import { TripSnapshot } from '../model/TripModels'
 import { startNativeExport } from '../NativeExportManager'
-import { sharedEditorTranslationEngine } from '../service/EditorTranslationEngine'
 import { debugLog } from '../utils/Logger'
 import common from '@ohos.app.ability.common'
 import { EditorViewModel } from '../viewmodel/EditorViewModel'
@@ -15,8 +12,6 @@ import { EditorViewModel } from '../viewmodel/EditorViewModel'
 struct Editor {
   private viewModel: EditorViewModel = new EditorViewModel()
   private bridge = sharedCoreBridge
-  private translationEngine = sharedEditorTranslationEngine
-  private editorConfig: EditorConfig = new EditorConfig()
   private exportSessionSeed: string = ''
   private controlsTimer: number = -1
   private lastLoggedSecond: number = -1
@@ -92,19 +87,18 @@ struct Editor {
     hideSpeed: true,
     hideGps: true,
     hideVin: true,
+    hideTime: true,
     exportStatusText: '待导出'
   }
 
   private applyState(nextState: EditorStateModel): void {
-    const translated = this.translationEngine.translateState(nextState)
-    this.state = translated.state
-    this.editorConfig = translated.config
+    this.state = nextState
   }
 
   private updatePlayheadText(text: string): void {
-    const translated = this.translationEngine.translatePlayheadText(this.state, text)
-    this.state = translated.state
-    this.editorConfig = translated.config
+    const next = this.state
+    next.playheadText = text
+    this.state = next
   }
 
   private updatePlayheadSec(sec: number): void {
@@ -200,11 +194,11 @@ struct Editor {
   }
 
   private getPreviewAspectRatio(): number {
-    return this.editorConfig.previewAspectRatio || this.viewModel.getPreviewAspectRatio(this.state.activeTemplateId)
+    return this.viewModel.getPreviewAspectRatio(this.state.activeTemplateId)
   }
 
   private hasPreviewSource(): boolean {
-    return this.editorConfig.hasPreviewSource
+    return this.state.previewSlots.some((slot) => slot.uri.length > 0)
   }
 
   private startAllPreview(): void {
@@ -244,7 +238,7 @@ struct Editor {
   }
 
   private getPlaybackRate(): number {
-    return this.editorConfig.playbackRate || this.viewModel.getPlaybackRate(this.state.speedLabel)
+    return this.viewModel.getPlaybackRate(this.state.speedLabel)
   }
 
   private syncGlobalPlayhead(second: number, fromUser: boolean, commitSeek: boolean = true): void {
@@ -496,6 +490,10 @@ struct Editor {
 
   private toggleMosaicByUi(value: boolean): void {
     this.mosaicEnabledUi = value
+    this.togglePrivacy('speed', value)
+    this.togglePrivacy('vin', value)
+    this.togglePrivacy('time', value)
+    this.togglePrivacy('gps', value)
     this.markUnsaved()
   }
 
@@ -633,8 +631,6 @@ struct Editor {
     this.exportLoadingVisible = true
     this.exportLoadingText = '导出处理中...'
     this.updateExportStatus('导出处理中...')
-    const ffmpegArgs = this.viewModel.buildFfmpegArgs(this.state, this.exportSessionSeed)
-    debugLog('导出', `FFmpeg参数预览=${ffmpegArgs.join(' ')}`)
     try {
       const outputPath = await startNativeExport(exportSnapshot, context, (event) => {
         this.updateExportStatus(event.status)
@@ -917,7 +913,7 @@ struct Editor {
                     seekToken: this.seekToken,
                     switchTaskId: this.switchTaskId,
                     seekBlocked: this.isTimelineDragging,
-                    playheadMs: this.viewModel.buildPreviewPayload(this.state).playheadMs,
+                    playheadMs: Math.floor(this.state.playheadSec * 1000),
                     muted: this.state.muted,
                     speedLabel: this.state.speedLabel,
                     onPlayheadChanged: (playheadMs: number) => this.handlePreviewPlayheadChanged(playheadMs),

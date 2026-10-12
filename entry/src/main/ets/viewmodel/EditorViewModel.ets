@@ -6,11 +6,8 @@ import {
   getTemplateUiNameById,
   normalizeCameraNameById
 } from '../constants/AppConstants'
-import { ExportPayloadTranslator } from '../core/translator/ExportPayloadTranslator'
-import { FFmpegCommandTranslator } from '../core/translator/FFmpegCommandTranslator'
-import { PreviewPayload, PreviewPayloadTranslator } from '../core/translator/PreviewPayloadTranslator'
 import { EditorStateModel, TemplateCardModel, TimelineTrackModel } from '../model/AppState'
-import { ExportSnapshot, resolveTemplateDefinition, TemplateId } from '../model/Models'
+import { createEditorStateFromSnapshot, deepCloneExportSnapshot, ExportSnapshot, resolveTemplateDefinition, TemplateId } from '../model/Models'
 import { TripSnapshot } from '../model/TripModels'
 import { debugLog } from '../utils/Logger'
 
@@ -22,9 +19,6 @@ export interface EditorHydrateResult {
 
 export class EditorViewModel {
   private bridge: CoreBridge
-  private exportPayloadTranslator = new ExportPayloadTranslator()
-  private previewPayloadTranslator = new PreviewPayloadTranslator()
-  private ffmpegTranslator = new FFmpegCommandTranslator()
   private templateSwitchSeed: number = 0
   private switchTaskId: number = 0
   private isTemplateSwitching: boolean = false
@@ -129,23 +123,30 @@ export class EditorViewModel {
 
   buildExportSnapshot(state: EditorStateModel, exportSessionSeed: string): ExportSnapshot | undefined {
     const tripSnapshot = this.bridge.getTripSnapshotClone(state.tripId)
-    return this.exportPayloadTranslator.translate({
-      tripSnapshot,
-      editorState: state,
-      sessionId: exportSessionSeed
-    })
-  }
-
-  buildFfmpegArgs(state: EditorStateModel, exportSessionSeed: string): Array<string> {
-    const snapshot = this.buildExportSnapshot(state, exportSessionSeed)
-    if (!snapshot) {
-      return []
+    if (!tripSnapshot) {
+      return undefined
     }
-    return this.ffmpegTranslator.translate(snapshot)
-  }
-
-  buildPreviewPayload(state: EditorStateModel): PreviewPayload {
-    return this.previewPayloadTranslator.translate(state)
+    const draft = createEditorStateFromSnapshot(
+      tripSnapshot,
+      exportSessionSeed,
+      state.activeTemplateId,
+      state.speedLabel,
+      state.muted,
+      state.watermarkEnabled,
+      state.hideSpeed,
+      state.hideGps,
+      state.hideVin,
+      state.drawerExpanded,
+      state.exportStatusText
+    )
+    const startMs = Math.floor(state.selectionStartSec * 1000)
+    const endMs = Math.floor(state.selectionEndSec * 1000)
+    const playheadMs = Math.floor(state.playheadSec * 1000)
+    draft.playback.rangeStartMs = startMs
+    draft.playback.rangeEndMs = endMs
+    draft.playback.playheadMs = Math.max(startMs, Math.min(playheadMs, endMs))
+    draft.privacy.hideTime = state.hideTime ?? state.hideGps
+    return deepCloneExportSnapshot(draft)
   }
 
   getTripSnapshot(tripId: string): TripSnapshot {
@@ -246,7 +247,6 @@ export class EditorViewModel {
   }
 
   logPreviewPayload(state: EditorStateModel): void {
-    const payload = this.buildPreviewPayload(state)
-    debugLog('剪辑VM', `预览翻译结果 template=${payload.templateId} slots=${payload.slots.length}`)
+    debugLog('剪辑VM', `预览状态 template=${state.activeTemplateId} slots=${state.previewSlots.length}`)
   }
 }
