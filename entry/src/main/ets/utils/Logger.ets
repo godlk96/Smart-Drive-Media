@@ -5,7 +5,6 @@ const LOG_DOMAIN: number = 0x3200
 const LOG_TAG: string = '智驾影音'
 let runtimeLogFile: string = ''
 let runtimeLogReady: boolean = false
-let runtimeLogChain: Promise<void> = Promise.resolve()
 
 function nowText(): string {
   const date = new Date()
@@ -33,15 +32,24 @@ async function ensureDir(path: string): Promise<boolean> {
   }
 }
 
-async function appendRuntimeLog(line: string): Promise<void> {
-  if (!runtimeLogReady || runtimeLogFile.length === 0) {
+const LOG_BUFFER_FLUSH_THRESHOLD: number = 20
+const LOG_BUFFER_MAX_SIZE: number = 200
+const logBuffer: Array<string> = []
+let isFlushing: boolean = false
+let flushTimer: number = -1
+
+async function flushLogBuffer(): Promise<void> {
+  if (isFlushing || logBuffer.length === 0 || !runtimeLogReady || runtimeLogFile.length === 0) {
     return
   }
+  isFlushing = true
+  const linesToWrite = logBuffer.splice(0, logBuffer.length)
   let fd: number = -1
   try {
     const file = await fs.open(runtimeLogFile, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.APPEND)
     fd = file.fd
-    await fs.write(fd, `${line}\n`)
+    const content = linesToWrite.join('\n') + '\n'
+    await fs.write(fd, content)
   } catch (_) {
   } finally {
     if (fd >= 0) {
@@ -50,7 +58,21 @@ async function appendRuntimeLog(line: string): Promise<void> {
       } catch (_) {
       }
     }
+    isFlushing = false
+    if (logBuffer.length >= LOG_BUFFER_FLUSH_THRESHOLD) {
+      void flushLogBuffer()
+    }
   }
+}
+
+function scheduleLogFlush(): void {
+  if (flushTimer >= 0) {
+    return
+  }
+  flushTimer = setTimeout(() => {
+    flushTimer = -1
+    void flushLogBuffer()
+  }, 1000) as unknown as number
 }
 
 export async function initRuntimeLog(baseDir: string): Promise<void> {
@@ -83,7 +105,7 @@ export async function initRuntimeLog(baseDir: string): Promise<void> {
       }
     }
   }
-  await appendRuntimeLog(`${nowText()} [系统] 日志文件=${runtimeLogFile}`)
+  debugLog('系统', `日志文件初始化完成：${runtimeLogFile}`)
 }
 
 export function getRuntimeLogPath(): string {
@@ -93,10 +115,15 @@ export function getRuntimeLogPath(): string {
 export function debugLog(scope: string, message: string): void {
   const text = `【${scope}】${message}`
   hilog.info(LOG_DOMAIN, LOG_TAG, '%{public}s', text)
-  console.info(text)
-  const line = `${nowText()} ${text}`
-  runtimeLogChain = runtimeLogChain
-    .then(() => appendRuntimeLog(line))
-    .catch(() => {
-    })
+  if (!runtimeLogReady || runtimeLogFile.length === 0) {
+    return
+  }
+  if (logBuffer.length < LOG_BUFFER_MAX_SIZE) {
+    logBuffer.push(`${nowText()} ${text}`)
+  }
+  if (logBuffer.length >= LOG_BUFFER_FLUSH_THRESHOLD) {
+    void flushLogBuffer()
+  } else {
+    scheduleLogFlush()
+  }
 }
