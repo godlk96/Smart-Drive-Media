@@ -1,13 +1,6 @@
 import { DvrMeta, ExportComposeRequest } from '../model/TripModels'
-import smartdriveExporter from 'libsmartdrive_exporter.so'
 import { ensureCoreApiContract } from './CoreApiContract'
 import { resolveTemplateDefinition, toLegacyCamera } from '../model/Models'
-
-class NativeComposeRequestResult {
-  frontUris: Array<string> = []
-  backUris: Array<string> = []
-  frontIndexes: Array<number> = []
-}
 
 class TemplateTrackSelection {
   frontUris: Array<string> = []
@@ -149,21 +142,18 @@ export function buildComposeRequestByService(
   request.speedLabel = speedLabel
   request.muted = muted
   request.watermarkEnabled = watermarkEnabled
-  const nativeBuild = (smartdriveExporter as Record<string, Object | Function> | undefined)?.buildComposeRequest as ((
-    clipsCsv: string,
-    fileName: string,
-    outputPath: string,
-    flags: string
-  ) => NativeComposeRequestResult) | undefined
-  if (typeof nativeBuild !== 'function') {
-    throw new Error('smartdrive_exporter.buildComposeRequest 未实现')
-  }
-  const clipsCsv = clips.map((item: DvrMeta) => `${item.camera}@${item.timestamp}@${item.uri}`).join(',')
-  const flags = `${hideSpeed ? 1 : 0},${hideGps ? 1 : 0},${hideVin ? 1 : 0}`
-  const data = nativeBuild(clipsCsv, fileName, outputPath, flags)
-  const nativeFrontUris = data.frontUris ?? []
-  const nativeBackUris = data.backUris ?? []
-  const nativeFrontIndexes = data.frontIndexes ?? []
+  const nativeFrontUris: Array<string> = []
+  const nativeBackUris: Array<string> = []
+  const nativeFrontIndexes: Array<number> = []
+  clips.forEach((item: DvrMeta, index: number) => {
+    if (item.camera === 'Front' && item.uri.length > 0) {
+      nativeFrontUris.push(item.uri)
+      nativeFrontIndexes.push(index)
+    } else if (item.camera === 'Back' && item.uri.length > 0) {
+      nativeBackUris.push(item.uri)
+    }
+  })
+
   const templateTracks = resolveTemplateTracks(clips, templateId, nativeFrontUris, nativeBackUris, nativeFrontIndexes)
   request.frontUris = templateTracks.frontUris
   request.backUris = templateTracks.backUris
