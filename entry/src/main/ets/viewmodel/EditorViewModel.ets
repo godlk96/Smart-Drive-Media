@@ -222,7 +222,7 @@ export class EditorViewModel {
   getPlaybackRate(speedLabel: string): number {
     const normalized = speedLabel.replace('X', '')
     const parsed = Number(normalized)
-    if (parsed >= 1.0 && parsed <= 4) {
+    if (parsed >= 0.75 && parsed <= 2.0) {
       return parsed
     }
     return 1.0

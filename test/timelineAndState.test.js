@@ -23,7 +23,7 @@ function formatTimelineTick(seconds) {
 function getPlaybackRate(speedLabel) {
   const normalized = speedLabel.replace('X', '')
   const parsed = Number(normalized)
-  if (parsed >= 1.0 && parsed <= 4.0) {
+  if (parsed >= 0.75 && parsed <= 2.0) {
     return parsed
   }
   return 1.0
@@ -98,13 +98,18 @@ test('formatTimelineTick properly formats seconds into mm:ss clock text', () => 
   assert.equal(formatTimelineTick(3605), '60:05')
 })
 
-test('Playback rate parser safely parses valid multipliers and falls back on invalid values', () => {
+test('Playback rate parser safely parses valid multipliers within AVPlayer 2.0X limit and falls back on invalid values', () => {
+  const EDITOR_SPEEDS = ['1.0X', '1.25X', '1.5X', '2.0X']
+  assert.ok(EDITOR_SPEEDS.every((s) => getPlaybackRate(s) <= 2.0))
+
   assert.equal(getPlaybackRate('1.0X'), 1.0)
+  assert.equal(getPlaybackRate('1.25X'), 1.25)
   assert.equal(getPlaybackRate('1.5X'), 1.5)
   assert.equal(getPlaybackRate('2.0X'), 2.0)
-  assert.equal(getPlaybackRate('4.0X'), 4.0)
 
-  // Out of range or corrupted labels fall back to 1.0
+  // 3.0X and 4.0X exceed hardware AVPlayer enum and fall back
+  assert.equal(getPlaybackRate('3.0X'), 1.0)
+  assert.equal(getPlaybackRate('4.0X'), 1.0)
   assert.equal(getPlaybackRate('0.5X'), 1.0)
   assert.equal(getPlaybackRate('8.0X'), 1.0)
   assert.equal(getPlaybackRate('INVALID'), 1.0)
