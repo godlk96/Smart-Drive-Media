@@ -1,7 +1,7 @@
 import { Segment, createFullSegment, canSplitAt, canToggleSegment, cycleSpeedLabel, enabledCount,
   exportDurationSec, formatSegmentDuration, isAllDisabled, outputDurationSec, playbackSkipTargetSec,
-  segmentDurationSec, segmentIndexAtSec, setSegmentMuted, setSegmentSpeed, speedFactor, splitSegmentAt,
-  toExportSegments, toggleSegmentEnabled }
+  segmentDurationSec, segmentIndexAtSec, setSegmentMuted, setSegmentSpeed, speedEnumForRate, speedFactor,
+  splitSegmentAt, toExportSegments, toggleSegmentEnabled }
   from '../../../main/ets/model/SegmentModel'
 import { TimelineCase, expectNumber, expectString, expectTrue, firstError } from './TestSupport'
 
@@ -295,6 +295,17 @@ export function segmentModelCases(): Array<TimelineCase> {
     return firstError([
       expectNumber(exportDurationSec(toExportSegments(tuned)), 45, '30 + 30/2'),
       expectNumber(exportDurationSec(toExportSegments(createFullSegment(12))), 12, '单段 1.0x')
+    ])
+  }))
+
+  cases.push(makeCase('倍速枚举映射覆盖五档（含 1.5X）', () => {
+    return firstError([
+      expectNumber(speedEnumForRate(0.75), 0, '0.75X'),
+      expectNumber(speedEnumForRate(1.0), 1, '1.0X'),
+      expectNumber(speedEnumForRate(1.25), 2, '1.25X'),
+      expectNumber(speedEnumForRate(1.75), 3, '1.75X'),
+      expectNumber(speedEnumForRate(2.0), 4, '2.0X'),
+      expectNumber(speedEnumForRate(1.5), 6, '1.5X 必须走 SPEED_FORWARD_1_50_X')
     ])
   }))
 

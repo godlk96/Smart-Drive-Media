@@ -93,6 +93,33 @@ export function speedFactor(speedLabel: string): number {
   return parsed
 }
 
+/**
+ * 倍速因子 → `media.PlaybackSpeed` 枚举值。
+ *
+ * 为什么放在这里：`SingleTrackController` 原来自己写了一段 if/else，漏了 1.5x
+ * （`PlaybackSpeed.SPEED_FORWARD_1_50_X = 6`），1.5 既不到 1.6 也不到 1.9，
+ * 于是掉进 1.2 分支被当成 1.25x 播放——这是「预览与导出不一致」的根源。
+ * 阈值从大到小判，1.5x 单独走 1.4 这一档。
+ */
+export function speedEnumForRate(rate: number): number {
+  if (rate >= 1.9) {
+    return 4
+  }
+  if (rate >= 1.6) {
+    return 3
+  }
+  if (rate >= 1.4) {
+    return 6
+  }
+  if (rate >= 1.2) {
+    return 2
+  }
+  if (rate <= 0.8) {
+    return 0
+  }
+  return 1
+}
+
 /** 成片时长：只累加启用段，逐段按各自倍速换算。 */
 export function outputDurationSec(segments: Array<Segment>): number {
   let total = 0

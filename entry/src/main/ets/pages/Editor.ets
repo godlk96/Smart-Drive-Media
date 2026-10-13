@@ -4,7 +4,7 @@ import { PreviewOverlay, SegmentTrack } from '../components/SegmentTrack'
 import { TemplateStrip } from '../components/TemplateStrip'
 import { sharedCoreBridge } from '../bridge/CoreBridge'
 import { EditorStateModel, PreviewSeekRequest, TemplateCardModel, TimelineTrackModel } from '../model/AppState'
-import { Segment, MAX_SEGMENTS, canToggleSegment, createFullSegment, enabledCount, segmentIndexAtSec } from '../model/SegmentModel'
+import { Segment, MAX_SEGMENTS, canToggleSegment, createFullSegment, enabledCount, playbackSkipTargetSec, segmentIndexAtSec } from '../model/SegmentModel'
 import { TripSnapshot } from '../model/TripModels'
 import { startNativeExport } from '../NativeExportManager'
 import { debugLog } from '../utils/Logger'
@@ -339,10 +339,16 @@ struct Editor {
     return canToggleSegment(this.state.segments, this.selectedSegmentId())
   }
 
-  /** 预览区要按播放头所在段的倍速/静音出画（所见即所得，spec §5.4）。 */
-  private currentSegment(): Segment {
+  /** 预览区要按播放头所在段的倍速出画（所见即所得，spec §5.4）；落在空档就用默认 1.0x。 */
+  private previewSpeedLabel(): string {
     const index = segmentIndexAtSec(this.state.segments, this.state.playheadSec)
-    return index >= 0 ? this.state.segments[index] : this.state.segments[0]
+    return index >= 0 ? this.state.segments[index].speedLabel : '1.0X'
+  }
+
+  /** 同上，静音；落在空档按有声处理。 */
+  private previewMuted(): boolean {
+    const index = segmentIndexAtSec(this.state.segments, this.state.playheadSec)
+    return index >= 0 ? this.state.segments[index].muted : false
   }
 
   private handleBack(): void {
@@ -377,6 +383,12 @@ struct Editor {
       return
     }
     const nextSec = Math.max(0, Math.min(this.state.totalDurationSec, playheadMs / 1000))
+    // 播放跳过灰段与空档：落点不在活段内就直接跳到下一个活段起点（spec §5.4）。
+    const skipTarget = playbackSkipTargetSec(this.state.segments, nextSec, this.state.totalDurationSec)
+    if (Math.abs(skipTarget - nextSec) > 1e-6) {
+      this.syncGlobalPlayhead(skipTarget, false)
+      return
+    }
     this.updatePlayheadSec(nextSec)
     this.updatePlayheadText(this.viewModel.updatePlayheadText(nextSec))
   }
@@ -562,8 +574,8 @@ struct Editor {
             activeTemplateId: this.state.activeTemplateId,
             tripSnapshot: this.tripSnapshot,
             playing: this.previewPlaying,
-            muted: this.currentSegment().muted,
-            speedLabel: this.currentSegment().speedLabel,
+            muted: this.previewMuted(),
+            speedLabel: this.previewSpeedLabel(),
             seekRequest: this.previewSeek,
             onPlayheadChanged: (playheadMs: number) => this.handlePreviewPlayheadChanged(playheadMs),
             onPlaybackEnded: () => this.handlePreviewEnded()

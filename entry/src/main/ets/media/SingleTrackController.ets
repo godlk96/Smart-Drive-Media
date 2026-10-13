@@ -24,6 +24,7 @@
 import media from '@ohos.multimedia.media'
 import fs from '@ohos.file.fs'
 import { debugLog } from '../utils/Logger'
+import { speedEnumForRate } from '../model/SegmentModel'
 import {
   SegmentKind,
   SegmentSpan,
@@ -1403,16 +1404,9 @@ export class SingleTrackController {
       return
     }
     try {
-      let speedEnum: media.PlaybackSpeed = 1 as media.PlaybackSpeed
-      if (this.playbackRate <= 0.8) {
-        speedEnum = 0 as media.PlaybackSpeed
-      } else if (this.playbackRate >= 1.9) {
-        speedEnum = 4 as media.PlaybackSpeed
-      } else if (this.playbackRate >= 1.6) {
-        speedEnum = 3 as media.PlaybackSpeed
-      } else if (this.playbackRate >= 1.2) {
-        speedEnum = 2 as media.PlaybackSpeed
-      }
+      // 映射表在 SegmentModel 里（纯模块，带离线用例）：原来这里自己写 if/else，
+      // 漏了 1.5x（SPEED_FORWARD_1_50_X = 6），1.5 被当成 1.25x 播，导致预览与导出不一致。
+      const speedEnum = speedEnumForRate(this.playbackRate) as media.PlaybackSpeed
       await player.setSpeed(speedEnum)
     } catch (_) {}
   }
