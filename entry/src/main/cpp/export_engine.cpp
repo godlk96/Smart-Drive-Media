@@ -18,6 +18,7 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/error.h>
+#include <libavutil/pixdesc.h>
 #include <libavfilter/avfilter.h>
 #include <libavfilter/buffersink.h>
 #include <libavfilter/buffersrc.h>
@@ -211,7 +212,8 @@ std::string buildTemplateFilterDesc(const std::string &templateId,
                                     double speed,
                                     const AVRational &frameRate,
                                     const std::string &labelPrefix,
-                                    const std::string &outLabel)
+                                    const std::string &outLabel,
+                                    const std::string &pixFmt = "yuv420p")
 {
     // labelPrefix 让同一张图里的多段（多段剪辑）各自拥有不冲突的内部标签。
     const std::string top = labelPrefix + "top";
@@ -222,18 +224,19 @@ std::string buildTemplateFilterDesc(const std::string &templateId,
     const std::string bottomLeft = labelPrefix + "bl";
     const std::string bottomRight = labelPrefix + "br";
     const std::string out = "[" + outLabel + "]";
+    const std::string formatFilter = ",format=pix_fmts=" + (pixFmt.empty() ? "yuv420p" : pixFmt) + ",setsar=1";
     if (templateId == "T1") {
         std::ostringstream oss;
         oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << top << "];"
             << buildMovieSourceFilter(backPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << bottom << "];"
-            << "[" << top << "][" << bottom << "]vstack=inputs=2,format=pix_fmts=yuv420p,setsar=1" << out;
+            << "[" << top << "][" << bottom << "]vstack=inputs=2" << formatFilter << out;
         return oss.str();
     }
     if (templateId == "T3") {
         std::ostringstream oss;
         oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << left << "];"
             << buildMovieSourceFilter(backPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << right << "];"
-            << "[" << left << "][" << right << "]hstack=inputs=2,format=pix_fmts=yuv420p,setsar=1" << out;
+            << "[" << left << "][" << right << "]hstack=inputs=2" << formatFilter << out;
         return oss.str();
     }
     if (templateId == "T4") {
@@ -241,7 +244,7 @@ std::string buildTemplateFilterDesc(const std::string &templateId,
         oss << buildMovieSourceFilter(sidePath, "crop=960:1080:960:0", startSec, endSec, speed, frameRate) << "[" << left << "];"
             << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << middle << "];"
             << buildMovieSourceFilter(backPath, "crop=960:1080:0:0", startSec, endSec, speed, frameRate) << "[" << right << "];"
-            << "[" << left << "][" << middle << "][" << right << "]hstack=inputs=3,format=pix_fmts=yuv420p,setsar=1" << out;
+            << "[" << left << "][" << middle << "][" << right << "]hstack=inputs=3" << formatFilter << out;
         return oss.str();
     }
     if (templateId == "T2") {
@@ -250,13 +253,13 @@ std::string buildTemplateFilterDesc(const std::string &templateId,
             << buildMovieSourceFilter(sidePath, "scale=960:540", startSec, endSec, speed, frameRate) << "[" << bottomLeft << "];"
             << buildMovieSourceFilter(backPath, "scale=960:540", startSec, endSec, speed, frameRate) << "[" << bottomRight << "];"
             << "[" << bottomLeft << "][" << bottomRight << "]hstack=inputs=2[" << bottom << "];"
-            << "[" << top << "][" << bottom << "]vstack=inputs=2,format=pix_fmts=yuv420p,setsar=1" << out;
+            << "[" << top << "][" << bottom << "]vstack=inputs=2" << formatFilter << out;
         return oss.str();
     }
     if (templateId == "T5") {
         std::ostringstream oss;
         oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec, speed, frameRate)
-            << ",format=pix_fmts=yuv420p,setsar=1" << out;
+            << formatFilter << out;
         return oss.str();
     }
     return "";
@@ -268,7 +271,8 @@ std::string buildSegmentsVideoDesc(const std::string &templateId,
                                    const std::string &backPath,
                                    const std::string &sidePath,
                                    const std::vector<NativeExportSegment> &segments,
-                                   const AVRational &frameRate)
+                                   const AVRational &frameRate,
+                                   const std::string &pixFmt = "yuv420p")
 {
     std::ostringstream oss;
     for (size_t i = 0; i < segments.size(); i++) {
@@ -282,7 +286,8 @@ std::string buildSegmentsVideoDesc(const std::string &templateId,
                                                         segments[i].speed,
                                                         frameRate,
                                                         "s" + std::to_string(i) + "_",
-                                                        label);
+                                                        label,
+                                                        pixFmt);
         if (one.empty()) {
             return "";
         }
@@ -352,36 +357,6 @@ bool composeTemplateToMp4(const std::string &templateId,
                           const std::string &outputPath,
                           std::string &error)
 {
-    // 编码器选择：优先 OpenHarmony 硬件编码器（ohcodec，走 OH_VideoEncoder，LGPL），
-    // 再退回软件编码器。旧版 ffmpeg 只编了 mpeg4，导致成片是 MPEG-4 Part 2、兼容性差。
-    AVCodecID selectedCodecId = AV_CODEC_ID_H264;
-    const AVCodec *encoder = avcodec_find_encoder_by_name("h264_oh");
-    if (encoder == nullptr) {
-        selectedCodecId = AV_CODEC_ID_HEVC;
-        encoder = avcodec_find_encoder_by_name("hevc_oh");
-    }
-    if (encoder == nullptr) {
-        selectedCodecId = AV_CODEC_ID_H264;
-        encoder = avcodec_find_encoder(AV_CODEC_ID_H264);
-    }
-    if (encoder == nullptr) {
-        selectedCodecId = AV_CODEC_ID_MPEG4;
-        encoder = avcodec_find_encoder(selectedCodecId);
-    }
-    if (encoder == nullptr) {
-        error = "encoder_not_found";
-        return false;
-    }
-    const char *encoderName = encoder->name != nullptr ? encoder->name : "unknown";
-    std::ostringstream encoderLog;
-    encoderLog << "selected encoder=" << encoderName << " codec_id=" << static_cast<int>(selectedCodecId)
-               << " hevc_encoder_available=" << (avcodec_find_encoder(AV_CODEC_ID_HEVC) != nullptr ? 1 : 0)
-               << " h264_encoder_available=" << (avcodec_find_encoder(AV_CODEC_ID_H264) != nullptr ? 1 : 0)
-               << " mpeg4_encoder_available=" << (avcodec_find_encoder(AV_CODEC_ID_MPEG4) != nullptr ? 1 : 0);
-    if (selectedCodecId != AV_CODEC_ID_HEVC) {
-        encoderLog << " fallback_from_hevc=1";
-    }
-    logPipeline("mux", encoderLog.str());
     const NativeTemplateContract &templateContract = resolveTemplateContract(templateId);
     const std::pair<int, int> targetResolution = resolveTemplateTargetResolution(templateContract);
     const int width = evenValue(targetResolution.first);
@@ -392,26 +367,137 @@ bool composeTemplateToMp4(const std::string &templateId,
         error = "compose_alloc_output_context_failed";
         return false;
     }
-    AVCodecContext *encoderCtx = avcodec_alloc_context3(encoder);
-    if (encoderCtx == nullptr) {
-        avformat_free_context(outputFmt);
-        error = "compose_alloc_encoder_ctx_failed";
-        return false;
-    }
-    encoderCtx->codec_id = selectedCodecId;
-    encoderCtx->codec_type = AVMEDIA_TYPE_VIDEO;
-    encoderCtx->pix_fmt = AV_PIX_FMT_YUV420P;
-    encoderCtx->width = width;
-    encoderCtx->height = height;
-    encoderCtx->time_base = av_inv_q(frameRate);
-    encoderCtx->framerate = frameRate;
+
+    struct EncoderCandidate {
+        std::string lookupName;
+        AVCodecID codecId;
+        bool isOhCodec;
+    };
+    const std::vector<EncoderCandidate> candidates = {
+        {"h264_ohcodec", AV_CODEC_ID_H264, true},
+        {"hevc_ohcodec", AV_CODEC_ID_HEVC, true},
+        {"h264_oh", AV_CODEC_ID_H264, true},
+        {"hevc_oh", AV_CODEC_ID_HEVC, true},
+        {"", AV_CODEC_ID_H264, false},
+        {"", AV_CODEC_ID_MPEG4, false}
+    };
+
+    const AVCodec *selectedEncoder = nullptr;
+    AVCodecContext *encoderCtx = nullptr;
     const int threadCount = resolveThreadCount();
-    encoderCtx->thread_count = threadCount;
-    encoderCtx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
-    encoderCtx->slices = threadCount;
     const int64_t sourceBitRate = probe.bitRate > 0 ? probe.bitRate : (12LL * 1000LL * 1000LL);
     const int64_t targetBitRate = sourceBitRate > (10LL * 1000LL * 1000LL) ? sourceBitRate : (10LL * 1000LL * 1000LL);
-    encoderCtx->bit_rate = targetBitRate;
+    std::vector<const AVCodec *> triedEncoders;
+
+    for (const auto &candidate : candidates) {
+        const AVCodec *enc = nullptr;
+        if (!candidate.lookupName.empty()) {
+            enc = avcodec_find_encoder_by_name(candidate.lookupName.c_str());
+        }
+        if (enc == nullptr) {
+            enc = avcodec_find_encoder(candidate.codecId);
+        }
+        if (enc == nullptr) {
+            continue;
+        }
+        bool alreadyTried = false;
+        for (const AVCodec *tried : triedEncoders) {
+            if (tried == enc) {
+                alreadyTried = true;
+                break;
+            }
+        }
+        if (alreadyTried) {
+            continue;
+        }
+        triedEncoders.push_back(enc);
+
+        enum AVPixelFormat targetPixFmt = AV_PIX_FMT_YUV420P;
+        const enum AVPixelFormat *pixFmts = nullptr;
+        int numPixFmts = 0;
+        avcodec_get_supported_config(nullptr, enc, AV_CODEC_CONFIG_PIX_FORMAT, 0,
+                                     reinterpret_cast<const void **>(&pixFmts), &numPixFmts);
+        if (pixFmts != nullptr) {
+            bool hasNv12 = false;
+            bool hasYuv420p = false;
+            for (int p = 0; p < numPixFmts && pixFmts[p] != AV_PIX_FMT_NONE; ++p) {
+                if (pixFmts[p] == AV_PIX_FMT_NV12) {
+                    hasNv12 = true;
+                }
+                if (pixFmts[p] == AV_PIX_FMT_YUV420P) {
+                    hasYuv420p = true;
+                }
+            }
+            if (hasNv12 && !hasYuv420p) {
+                targetPixFmt = AV_PIX_FMT_NV12;
+            } else if (hasYuv420p) {
+                targetPixFmt = AV_PIX_FMT_YUV420P;
+            } else if (numPixFmts > 0) {
+                targetPixFmt = pixFmts[0];
+            }
+        }
+
+        AVCodecContext *ctx = avcodec_alloc_context3(enc);
+        if (ctx == nullptr) {
+            continue;
+        }
+        ctx->codec_id = enc->id;
+        ctx->codec_type = AVMEDIA_TYPE_VIDEO;
+        ctx->pix_fmt = targetPixFmt;
+        ctx->width = width;
+        ctx->height = height;
+        ctx->time_base = av_inv_q(frameRate);
+        ctx->framerate = frameRate;
+        ctx->thread_count = threadCount;
+        ctx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+        ctx->slices = threadCount;
+        ctx->bit_rate = targetBitRate;
+        ctx->gop_size = 30;
+        ctx->max_b_frames = 0;
+        ctx->flags2 |= AV_CODEC_FLAG2_FAST;
+        if (outputFmt->oformat->flags & AVFMT_GLOBALHEADER) {
+            ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+        }
+
+        AVDictionary *opts = nullptr;
+        if (candidate.isOhCodec) {
+            av_dict_set(&opts, "allow_sw", "1", 0);
+            av_dict_set(&opts, "bitrate_mode", "vbr", 0);
+        } else if (enc->id == AV_CODEC_ID_HEVC || enc->id == AV_CODEC_ID_H264) {
+            av_dict_set(&opts, "preset", "veryfast", 0);
+            av_dict_set(&opts, "crf", "24", 0);
+        }
+
+        const int openRet = avcodec_open2(ctx, enc, &opts);
+        av_dict_free(&opts);
+        if (openRet < 0) {
+            const char *encName = enc->name != nullptr ? enc->name : "unknown";
+            logPipeline("mux", "encoder candidate " + std::string(encName) + " open failed: " +
+                               avErrorText(openRet) + " (ret=" + std::to_string(openRet) + "), trying next");
+            avcodec_free_context(&ctx);
+            continue;
+        }
+
+        selectedEncoder = enc;
+        encoderCtx = ctx;
+        break;
+    }
+
+    if (encoderCtx == nullptr || selectedEncoder == nullptr) {
+        avformat_free_context(outputFmt);
+        error = "compose_open_encoder_failed:no_usable_encoder";
+        return false;
+    }
+
+    const char *encoderName = selectedEncoder->name != nullptr ? selectedEncoder->name : "unknown";
+    std::ostringstream encoderLog;
+    encoderLog << "selected encoder=" << encoderName << " codec_id=" << static_cast<int>(selectedEncoder->id)
+               << " pix_fmt=" << av_get_pix_fmt_name(encoderCtx->pix_fmt)
+               << " hevc_encoder_available=" << (avcodec_find_encoder(AV_CODEC_ID_HEVC) != nullptr ? 1 : 0)
+               << " h264_encoder_available=" << (avcodec_find_encoder(AV_CODEC_ID_H264) != nullptr ? 1 : 0)
+               << " mpeg4_encoder_available=" << (avcodec_find_encoder(AV_CODEC_ID_MPEG4) != nullptr ? 1 : 0);
+    logPipeline("mux", encoderLog.str());
+
     {
         std::ostringstream encoderDetail;
         encoderDetail << "resolution=" << width << "x" << height << " fps=" << frameRate.num << "/"
@@ -420,28 +506,6 @@ bool composeTemplateToMp4(const std::string &templateId,
                       << " threads=" << threadCount;
         logPipeline("mux.encoder", encoderDetail.str());
     }
-    encoderCtx->gop_size = 30;
-    encoderCtx->max_b_frames = 0;
-    encoderCtx->flags2 |= AV_CODEC_FLAG2_FAST;
-    if (outputFmt->oformat->flags & AVFMT_GLOBALHEADER) {
-        encoderCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-    }
-    AVDictionary *encoderOptions = nullptr;
-    if (selectedCodecId == AV_CODEC_ID_HEVC || selectedCodecId == AV_CODEC_ID_H264) {
-        av_dict_set(&encoderOptions, "preset", "veryfast", 0);
-        av_dict_set(&encoderOptions, "crf", "24", 0);
-    }
-    {
-        const int openRet = avcodec_open2(encoderCtx, encoder, &encoderOptions);
-        if (openRet < 0) {
-            av_dict_free(&encoderOptions);
-            avcodec_free_context(&encoderCtx);
-            avformat_free_context(outputFmt);
-            error = "compose_open_encoder_failed:" + std::string(encoderName) + ":" + avErrorText(openRet);
-            return false;
-        }
-    }
-    av_dict_free(&encoderOptions);
     AVStream *outVideoStream = avformat_new_stream(outputFmt, nullptr);
     if (outVideoStream == nullptr) {
         avcodec_free_context(&encoderCtx);
@@ -623,8 +687,9 @@ bool composeTemplateToMp4(const std::string &templateId,
     inputs->filter_ctx = bufferSink;
     inputs->pad_idx = 0;
     inputs->next = nullptr;
+    const char *outPixFmt = av_get_pix_fmt_name(encoderCtx->pix_fmt);
     const std::string filterDesc = buildSegmentsVideoDesc(
-        templateId, frontPath, backPath, sidePath, segments, frameRate);
+        templateId, frontPath, backPath, sidePath, segments, frameRate, outPixFmt != nullptr ? outPixFmt : "yuv420p");
     {
         std::ostringstream filterInfo;
         filterInfo << "template=" << templateId << " " << width << "x" << height
