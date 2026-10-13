@@ -464,6 +464,35 @@ function checkStateMemberAccess() {
     : { name, ok: true }
 }
 
+/**
+ * 代码里 $r('app.color.X') 引用的令牌必须在 color.json 里真实存在。
+ *
+ * 缺令牌时 DevEco 报资源找不到，而 tsc 看不见 $r()。
+ * checkColorTokens 只保证 REQUIRED_COLOR_TOKENS 在色板里，管不了反向引用。
+ */
+function checkColorReferences() {
+  const name = '颜色令牌引用都存在'
+  const colorsPath = join(ROOT, 'entry/src/main/resources/base/element/color.json')
+  const parsed = JSON.parse(readFileSync(colorsPath, 'utf8'))
+  const have = new Set((parsed.color ?? []).map((item) => item.name))
+  const problems = []
+  for (const file of listEtsFiles(join(ROOT, 'entry/src/main/ets'))) {
+    const src = readFileSync(file, 'utf8')
+    const rel = relative(ROOT, file).replace(/\\/g, '/')
+    const reRef = /\$r\(\s*['"]app\.color\.([A-Za-z0-9_]+)['"]\s*\)/g
+    let match
+    while ((match = reRef.exec(src)) !== null) {
+      if (!have.has(match[1])) {
+        const line = src.slice(0, match.index).split('\n').length
+        problems.push(`${rel}:${line} 引用了不存在的颜色令牌 app.color.${match[1]}`)
+      }
+    }
+  }
+  return problems.length > 0
+    ? { name, detail: Array.from(new Set(problems)).join('; ') }
+    : { name, ok: true }
+}
+
 async function main() {
   rmSync(BUILD_DIR, { recursive: true, force: true })
   const modules = collectModules()
@@ -548,6 +577,14 @@ async function main() {
     passed += 1
   } else {
     failures.push({ name: stateMembers.name, detail: stateMembers.detail })
+  }
+
+  // 8) $r('app.color.X') 引用的令牌必须真实存在
+  const colorRefs = checkColorReferences()
+  if (colorRefs.ok) {
+    passed += 1
+  } else {
+    failures.push({ name: colorRefs.name, detail: colorRefs.detail })
   }
 
   const total = passed + failures.length
