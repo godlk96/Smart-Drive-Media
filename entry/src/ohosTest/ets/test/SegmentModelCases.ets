@@ -1,6 +1,6 @@
 import { Segment, createFullSegment, canSplitAt, canToggleSegment, cycleSpeedLabel, enabledCount,
-  isAllDisabled, outputDurationSec, playbackSkipTargetSec, segmentDurationSec, segmentIndexAtSec,
-  setSegmentMuted, setSegmentSpeed, speedFactor, splitSegmentAt, toggleSegmentEnabled }
+  formatSegmentDuration, isAllDisabled, outputDurationSec, playbackSkipTargetSec, segmentDurationSec,
+  segmentIndexAtSec, setSegmentMuted, setSegmentSpeed, speedFactor, splitSegmentAt, toggleSegmentEnabled }
   from '../../../main/ets/model/SegmentModel'
 import { TimelineCase, expectNumber, expectString, expectTrue, firstError } from './TestSupport'
 
@@ -238,6 +238,20 @@ export function segmentModelCases(): Array<TimelineCase> {
       expectTrue(!canToggleSegment(two, two[1].id), '只剩 1 个启用段时不可再关'),
       expectTrue(stillTwo[1].enabled, '第二次关不掉'),
       expectTrue(!isAllDisabled(stillTwo), '永远至少 1 个启用段')
+    ])
+  }))
+
+  cases.push(makeCase('段时长文案向上取整到秒', () => {
+    const whole = new Segment()
+    whole.startSec = 0
+    whole.endSec = 15
+    const fractional = new Segment()
+    fractional.startSec = 0
+    fractional.endSec = 15.4
+    return firstError([
+      expectString(formatSegmentDuration(whole), '15s', '整数秒'),
+      expectString(formatSegmentDuration(fractional), '16s', '向上取整'),
+      expectString(formatSegmentDuration(createFullSegment(59.4)[0]), '60s', '非整数片长')
     ])
   }))
 

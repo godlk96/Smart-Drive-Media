@@ -306,3 +306,8 @@ export function playbackSkipTargetSec(segments: Array<Segment>, sec: number, tot
 export function isAllDisabled(segments: Array<Segment>): boolean {
   return enabledCount(segments) === 0
 }
+
+/** 段时长文案：只写时长不写起止（spec D9/D10），向上取整到秒，如 '15s'。 */
+export function formatSegmentDuration(segment: Segment): string {
+  return `${Math.ceil(segmentDurationSec(segment))}s`
+}

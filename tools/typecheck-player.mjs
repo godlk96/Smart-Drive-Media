@@ -42,6 +42,7 @@ const DEPS = [
   'entry/src/main/ets/media/TimelineClock.ets',
   'entry/src/main/ets/utils/Logger.ets',
   'entry/src/main/ets/model/TripModels.ets',
+  'entry/src/main/ets/model/SegmentModel.ets',
   'entry/src/main/ets/model/AppState.ets'
 ]
 

@@ -1,3 +1,5 @@
+import { Segment } from './SegmentModel'
+
 export interface TripCardModel {
   id: string
   title: string
@@ -82,15 +84,13 @@ export interface EditorStateModel {
   totalDurationSec: number
   timeline: Array<TimelineTrackModel>
   layers: Array<EditorLayerModel>
-  selectionStartSec: number
-  selectionEndSec: number
   boundaryMarkers: Array<TimelineMarkerModel>
   templateCards: Array<TemplateCardModel>
   previewSlots: Array<PreviewSlotModel>
   activeTemplateId: string
   drawerExpanded: boolean
-  speedLabel: string
-  muted: boolean
+  /** 片段列表：整条源片切成首尾相接的段，每段自带倍速与声音开关。 */
+  segments: Array<Segment>
   watermarkEnabled: boolean
   exportStatusText: string
 }

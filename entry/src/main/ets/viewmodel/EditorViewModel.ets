@@ -8,6 +8,7 @@ import {
 } from '../constants/AppConstants'
 import { EditorStateModel, TemplateCardModel, TimelineTrackModel } from '../model/AppState'
 import { createEditorStateFromSnapshot, deepCloneExportSnapshot, ExportSnapshot, resolveTemplateDefinition, TemplateId } from '../model/Models'
+import { formatSegmentDuration as segmentDurationText, outputDurationSec, segmentIndexAtSec, Segment } from '../model/SegmentModel'
 import { TripSnapshot } from '../model/TripModels'
 import { debugLog } from '../utils/Logger'
 
@@ -97,18 +98,13 @@ export class EditorViewModel {
       tripSnapshot,
       exportSessionSeed,
       state.activeTemplateId,
-      state.speedLabel,
-      state.muted,
+      state.segments,
       state.watermarkEnabled,
       state.drawerExpanded,
       state.exportStatusText
     )
-    const startMs = Math.floor(state.selectionStartSec * 1000)
-    const endMs = Math.floor(state.selectionEndSec * 1000)
     const playheadMs = Math.floor(state.playheadSec * 1000)
-    draft.playback.rangeStartMs = startMs
-    draft.playback.rangeEndMs = endMs
-    draft.playback.playheadMs = Math.max(startMs, Math.min(playheadMs, endMs))
+    draft.playback.playheadMs = Math.max(0, Math.min(playheadMs, draft.playback.rangeEndMs))
     return deepCloneExportSnapshot(draft)
   }
 
@@ -203,6 +199,25 @@ export class EditorViewModel {
     const min = Math.floor(seconds / 60)
     const sec = Math.floor(seconds % 60)
     return `${min}:${sec.toString().padStart(2, '0')}`
+  }
+
+  /** 播放头所在的那一段（即选中段）；不在任何段内返回 undefined。 */
+  getSelectedSegment(state: EditorStateModel): Segment | undefined {
+    const at = segmentIndexAtSec(state.segments, state.playheadSec)
+    if (at < 0) {
+      return undefined
+    }
+    return state.segments[at]
+  }
+
+  /** 段时长文案，只写时长不写起止（spec D9/D10）。 */
+  formatSegmentDuration(segment: Segment): string {
+    return segmentDurationText(segment)
+  }
+
+  /** 成片时长：各启用段按各自倍速换算后求和。 */
+  getOutputDurationSec(state: EditorStateModel): number {
+    return outputDurationSec(state.segments)
   }
 
   logPreviewPayload(state: EditorStateModel): void {

@@ -1,4 +1,5 @@
 import { DvrMeta, TripSnapshot } from './TripModels'
+import { enabledSegments, Segment } from './SegmentModel'
 
 export enum CameraPosition {
   FRONT = 'FRONT',
@@ -378,24 +379,25 @@ export function createEditorStateFromSnapshot(
   snapshot: TripSnapshot,
   sessionId: string,
   templateId: string,
-  speedLabel: string,
-  muted: boolean,
+  segments: Array<Segment>,
   watermarkEnabled: boolean,
   drawerExpanded: boolean,
   exportStatus: string
 ): EditorState {
   const trip = tripFromSnapshot(snapshot)
-  const endMs = Math.max(0, trip.durationSec * 1000)
+  const enabled = enabledSegments(segments)
+  const first = enabled.length > 0 ? enabled[0] : undefined
+  const last = enabled.length > 0 ? enabled[enabled.length - 1] : undefined
   return {
     sessionId: sessionId,
     trip: trip,
     selectedTemplateId: toTemplateId(templateId),
     playback: {
       playheadMs: 0,
-      rangeStartMs: 0,
-      rangeEndMs: endMs,
-      speedLabel: speedLabel,
-      muted: muted
+      rangeStartMs: first ? Math.max(0, Math.round(first.startSec * 1000)) : 0,
+      rangeEndMs: last ? Math.max(0, Math.round(last.endSec * 1000)) : Math.max(0, trip.durationSec * 1000),
+      speedLabel: first ? first.speedLabel : '1.0X',
+      muted: first ? first.muted : false
     },
     brand: {
       watermarkEnabled: watermarkEnabled
