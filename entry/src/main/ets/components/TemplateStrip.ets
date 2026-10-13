@@ -1,6 +1,11 @@
 import { TemplateCardModel, TimelineTrackModel } from '../model/AppState'
-import { getTemplateIconById, getTemplateUiNameById, resolveTemplateDefinition } from '../model/Models'
-import { getCameraZhNameById, normalizeCameraNameById } from '../constants/AppConstants'
+import { resolveTemplateDefinition } from '../model/Models'
+import {
+  getCameraZhNameById,
+  getTemplateIconById,
+  getTemplateUiNameById,
+  normalizeCameraNameById
+} from '../constants/AppConstants'
 
 /**
  * 模板行（spec §5.8 / §6.7）：横向滚动、卡宽 72、缩略图 72×46、标签 10。

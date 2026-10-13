@@ -21,7 +21,7 @@
  * 这里会**明确报错**而不是静默跳过——静默跳过会让"本地全绿"变成假象。
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -316,9 +316,156 @@ function checkNoLegacyColors() {
   return problems.length > 0 ? { name, detail: problems.join('; ') } : { name, ok: true }
 }
 
+/**
+ * 相对导入一致性守卫。
+ *
+ * 为什么需要它：ArkUI 文件（@Entry / @Component / @Builder）的装饰器让 tsc 解析不了，
+ * 所以 `typecheck-player.mjs` 覆盖不到 `pages/` 与 `components/`；而「import 了一个
+ * 目标模块并不存在的具名导出」正是 DevEco 构建报 10505001 的那一类错误。
+ * 这个守卫只用正则扫文本，不依赖解析器，因此能覆盖 ArkUI 文件。
+ */
+function listEtsFiles(dir) {
+  const out = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      out.push(...listEtsFiles(full))
+    } else if (entry.name.endsWith('.ets')) {
+      out.push(full)
+    }
+  }
+  return out
+}
+
+function exportedNames(src) {
+  const names = new Set()
+  const declared = /\bexport\s+(?:declare\s+)?(?:abstract\s+)?(?:async\s+)?(?:class|interface|enum|struct|function|const|let|var|type)\s+([A-Za-z_$][\w$]*)/g
+  let match
+  while ((match = declared.exec(src)) !== null) {
+    names.add(match[1])
+  }
+  const listed = /\bexport\s*(?:type\s*)?\{([^}]*)\}/g
+  while ((match = listed.exec(src)) !== null) {
+    for (const part of match[1].split(',')) {
+      const piece = part.trim().replace(/^type\s+/, '')
+      if (piece.length === 0) {
+        continue
+      }
+      const alias = piece.match(/\bas\s+([A-Za-z_$][\w$]*)$/)
+      names.add(alias ? alias[1] : piece)
+    }
+  }
+  return names
+}
+
+function checkImportConsistency() {
+  const name = '相对导入的具名符号都存在'
+  const problems = []
+  for (const file of listEtsFiles(join(ROOT, 'entry/src/main/ets'))) {
+    const src = readFileSync(file, 'utf8')
+    const rel = relative(ROOT, file).replace(/\\/g, '/')
+    const reImport = /\bimport\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g
+    let match
+    while ((match = reImport.exec(src)) !== null) {
+      const spec = match[2]
+      if (!spec.startsWith('.')) {
+        continue
+      }
+      const target = resolve(dirname(file), spec)
+      const candidate = existsSync(`${target}.ets`)
+        ? `${target}.ets`
+        : (existsSync(join(target, 'index.ets')) ? join(target, 'index.ets') : '')
+      if (candidate === '') {
+        problems.push(`${rel} 找不到模块 ${spec}`)
+        continue
+      }
+      const targetSrc = readFileSync(candidate, 'utf8')
+      // 目标里有 `export *` 时无法静态判定，跳过以免误报。
+      if (/\bexport\s*\*\s*from\b/.test(targetSrc)) {
+        continue
+      }
+      const available = exportedNames(targetSrc)
+      const targetRel = relative(ROOT, candidate).replace(/\\/g, '/')
+      for (const part of match[1].split(',')) {
+        const piece = part.trim().replace(/^type\s+/, '')
+        if (piece.length === 0) {
+          continue
+        }
+        const aliasParts = piece.split(/\s+as\s+/)
+        const original = aliasParts[0].trim()
+        if (!available.has(original)) {
+          problems.push(`${rel} 从 ${targetRel} 导入了不存在的 ${original}${aliasParts.length > 1 ? ` (as ${aliasParts[1].trim()})` : ''}`)
+        }
+      }
+    }
+  }
+  return problems.length > 0 ? { name, detail: problems.join('; ') } : { name, ok: true }
+}
+
+/**
+ * 页面访问的 EditorStateModel 字段必须真实存在。
+ *
+ * DevEco 的 ArkTS 编译器会报 `Property 'x' does not exist on type 'EditorStateModel'`，
+ * 而 tsc 解析不了 ArkUI 文件（装饰器与 build() 的 DSL 语法都不是合法 TS），
+ * 所以这里手工对账一次：从 AppState.ets 取出接口字段，再扫声明了
+ * `@State state: EditorStateModel` 的文件里的 `state.<name>` 访问。
+ */
+function checkStateMemberAccess() {
+  const name = '页面访问的 EditorStateModel 字段都存在'
+  const appStatePath = join(ROOT, 'entry/src/main/ets/model/AppState.ets')
+  const appStateSrc = readFileSync(appStatePath, 'utf8')
+  const header = 'export interface EditorStateModel {'
+  const headerAt = appStateSrc.indexOf(header)
+  if (headerAt < 0) {
+    return { name, detail: `在 ${relative(ROOT, appStatePath).replace(/\\/g, '/')} 里找不到 ${header}` }
+  }
+  const bodyStart = headerAt + header.length
+  let depth = 1
+  let bodyEnd = bodyStart
+  for (let i = bodyStart; i < appStateSrc.length; i += 1) {
+    if (appStateSrc[i] === '{') {
+      depth += 1
+    } else if (appStateSrc[i] === '}') {
+      depth -= 1
+      if (depth === 0) {
+        bodyEnd = i
+        break
+      }
+    }
+  }
+  const body = appStateSrc.slice(bodyStart, bodyEnd)
+  const fields = new Set()
+  const reField = /^\s*([A-Za-z_$][\w$]*)\s*[?:]/gm
+  let fieldMatch
+  while ((fieldMatch = reField.exec(body)) !== null) {
+    fields.add(fieldMatch[1])
+  }
+  if (fields.size === 0) {
+    return { name, detail: 'EditorStateModel 没解析出任何字段，守卫会失效' }
+  }
+  const problems = []
+  for (const file of listEtsFiles(join(ROOT, 'entry/src/main/ets'))) {
+    const src = readFileSync(file, 'utf8')
+    if (!/@State\s+(?:private\s+|protected\s+|public\s+)?state\s*:\s*EditorStateModel/.test(src)) {
+      continue
+    }
+    const rel = relative(ROOT, file).replace(/\\/g, '/')
+    const reUse = /\bstate\.([A-Za-z_$][\w$]*)/g
+    let useMatch
+    while ((useMatch = reUse.exec(src)) !== null) {
+      if (!fields.has(useMatch[1])) {
+        const line = src.slice(0, useMatch.index).split('\n').length
+        problems.push(`${rel}:${line} 访问了不存在的 state.${useMatch[1]}`)
+      }
+    }
+  }
+  return problems.length > 0
+    ? { name, detail: Array.from(new Set(problems)).join('; ') }
+    : { name, ok: true }
+}
+
 async function main() {
   rmSync(BUILD_DIR, { recursive: true, force: true })
-
   const modules = collectModules()
   for (const relPath of modules) {
     transpileModule(relPath)
@@ -385,6 +532,22 @@ async function main() {
     passed += 1
   } else {
     failures.push({ name: uiColors.name, detail: uiColors.detail })
+  }
+
+  // 6) 相对导入的具名符号必须真实存在（覆盖 tsc 解析不了的 ArkUI 文件）
+  const imports = checkImportConsistency()
+  if (imports.ok) {
+    passed += 1
+  } else {
+    failures.push({ name: imports.name, detail: imports.detail })
+  }
+
+  // 7) 页面访问的 state 字段必须真实存在（同样覆盖 ArkUI 文件）
+  const stateMembers = checkStateMemberAccess()
+  if (stateMembers.ok) {
+    passed += 1
+  } else {
+    failures.push({ name: stateMembers.name, detail: stateMembers.detail })
   }
 
   const total = passed + failures.length

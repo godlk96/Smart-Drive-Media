@@ -172,7 +172,7 @@ struct Editor {
   }
 
   private getPlaybackRate(): number {
-    return this.viewModel.getPlaybackRate(this.state.speedLabel)
+    return this.viewModel.getPlaybackRate(this.previewSpeedLabel())
   }
 
   private syncGlobalPlayhead(second: number, fromUser: boolean, commitSeek: boolean = true): void {
