@@ -1,5 +1,7 @@
-import { Segment, createFullSegment, canSplitAt, enabledCount, outputDurationSec, segmentDurationSec,
-  segmentIndexAtSec, speedFactor, splitSegmentAt, toggleSegmentEnabled } from '../../../main/ets/model/SegmentModel'
+import { Segment, createFullSegment, canSplitAt, canToggleSegment, cycleSpeedLabel, enabledCount,
+  isAllDisabled, outputDurationSec, playbackSkipTargetSec, segmentDurationSec, segmentIndexAtSec,
+  setSegmentMuted, setSegmentSpeed, speedFactor, splitSegmentAt, toggleSegmentEnabled }
+  from '../../../main/ets/model/SegmentModel'
 import { TimelineCase, expectNumber, expectString, expectTrue, firstError } from './TestSupport'
 
 function makeCase(name: string, run: () => string): TimelineCase {
@@ -173,6 +175,69 @@ export function segmentModelCases(): Array<TimelineCase> {
     return firstError([
       expectTrue(!canSplitAt(two, 30, 60), '边界处应拒绝'),
       expectNumber(splitSegmentAt(two, 30, 60).length, 2, '结构不变')
+    ])
+  }))
+
+  cases.push(makeCase('倍速按五档循环', () => {
+    return firstError([
+      expectString(cycleSpeedLabel('1.0X'), '1.25X', '1.0X 后'),
+      expectString(cycleSpeedLabel('1.5X'), '2.0X', '1.5X 后'),
+      expectString(cycleSpeedLabel('2.0X'), '0.75X', '2.0X 回绕'),
+      expectString(cycleSpeedLabel('0.75X'), '1.0X', '0.75X 后'),
+      expectString(cycleSpeedLabel('乱码'), '1.0X', '非法输入')
+    ])
+  }))
+
+  cases.push(makeCase('只剩一段时 ✕ 不生效', () => {
+    const segments = createFullSegment(60)
+    return firstError([
+      expectTrue(!canToggleSegment(segments, 0), '单段不可关'),
+      expectTrue(toggleSegmentEnabled(segments, 0)[0].enabled, '仍启用')
+    ])
+  }))
+
+  cases.push(makeCase('✕ 变灰、再点恢复', () => {
+    const two = splitSegmentAt(createFullSegment(60), 30, 60)
+    const off = toggleSegmentEnabled(two, two[0].id)
+    const back = toggleSegmentEnabled(off, off[0].id)
+    return firstError([
+      expectTrue(!off[0].enabled, '第一次关'),
+      expectTrue(off[1].enabled, '邻段不受影响'),
+      expectTrue(back[0].enabled, '第二次恢复'),
+      expectNumber(outputDurationSec(off), 30, '关掉后成片只剩后半段')
+    ])
+  }))
+
+  cases.push(makeCase('每段倍速与静音互不影响', () => {
+    const two = splitSegmentAt(createFullSegment(60), 30, 60)
+    const tuned = setSegmentMuted(setSegmentSpeed(two, two[1].id, '2.0X'), two[1].id, true)
+    return firstError([
+      expectString(tuned[0].speedLabel, '1.0X', '第一段倍速不变'),
+      expectTrue(!tuned[0].muted, '第一段不受静音影响'),
+      expectString(tuned[1].speedLabel, '2.0X', '第二段倍速'),
+      expectTrue(tuned[1].muted, '第二段静音'),
+      expectNumber(outputDurationSec(tuned), 45, '成片时长=30+15')
+    ])
+  }))
+
+  cases.push(makeCase('播放跳过灰段与空档', () => {
+    const two = splitSegmentAt(createFullSegment(60), 30, 60)
+    const off = toggleSegmentEnabled(two, two[0].id)
+    return firstError([
+      expectNumber(playbackSkipTargetSec(off, 10, 60), 30, '灰段跳到段尾'),
+      expectNumber(playbackSkipTargetSec(off, 40, 60), 40, '启用段原地不动'),
+      expectNumber(playbackSkipTargetSec(off, 60, 60), 60, '片尾')
+    ])
+  }))
+
+  cases.push(makeCase('关不到 0 个启用段（不存在空成片路径）', () => {
+    let two = splitSegmentAt(createFullSegment(60), 30, 60)
+    two = toggleSegmentEnabled(two, two[0].id)
+    const stillTwo = toggleSegmentEnabled(two, two[1].id)
+    return firstError([
+      expectTrue(!canToggleSegment(two, two[1].id), '只剩 1 个启用段时不可再关'),
+      expectTrue(stillTwo[1].enabled, '第二次关不掉'),
+      expectTrue(!isAllDisabled(stillTwo), '永远至少 1 个启用段')
     ])
   }))
 

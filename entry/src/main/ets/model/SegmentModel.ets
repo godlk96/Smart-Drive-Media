@@ -217,14 +217,27 @@ export function splitSegmentAt(segments: Array<Segment>, sec: number, totalDurat
   return rawSplit(segments, sec, totalDurationSec)
 }
 
-/** 只剩一段时不许再关（spec §5.7），因此「0 个启用段」不可达。 */
-export function canToggleSegment(segments: Array<Segment>): boolean {
-  return enabledCount(segments) > 1
+/**
+ * 目标段能否翻转。
+ * - 目标已是灰段 → 总能恢复（spec D13「可恢复」）。
+ * - 目标是启用段 → 只在还有别的启用段时才允许关掉（spec §5.7「只剩一段时 ✕ 不再生效」），
+ *   因此「0 个启用段」不可达。
+ */
+export function canToggleSegment(segments: Array<Segment>, id: number): boolean {
+  for (let i = 0; i < segments.length; i++) {
+    if (segments[i].id === id) {
+      if (!segments[i].enabled) {
+        return true
+      }
+      return enabledCount(segments) > 1
+    }
+  }
+  return false
 }
 
 /** 翻转目标段的 enabled；再点一次就是恢复。 */
 export function toggleSegmentEnabled(segments: Array<Segment>, id: number): Array<Segment> {
-  if (!canToggleSegment(segments)) {
+  if (!canToggleSegment(segments, id)) {
     return segments
   }
   const out: Array<Segment> = []
@@ -236,4 +249,60 @@ export function toggleSegmentEnabled(segments: Array<Segment>, id: number): Arra
     out.push(copy)
   }
   return out
+}
+
+/** 沿 SPEED_CYCLE 前进一格，'2.0X' 回绕到 '0.75X'。入参不在表里则返回 '1.0X'。 */
+export function cycleSpeedLabel(label: string): string {
+  const at = SPEED_CYCLE.indexOf(label)
+  if (at < 0) {
+    return DEFAULT_SPEED_LABEL
+  }
+  return SPEED_CYCLE[(at + 1) % SPEED_CYCLE.length]
+}
+
+export function setSegmentSpeed(segments: Array<Segment>, id: number, speedLabel: string): Array<Segment> {
+  const out: Array<Segment> = []
+  for (let i = 0; i < segments.length; i++) {
+    const copy = cloneSegment(segments[i])
+    if (copy.id === id) {
+      copy.speedLabel = speedLabel
+    }
+    out.push(copy)
+  }
+  return out
+}
+
+export function setSegmentMuted(segments: Array<Segment>, id: number, muted: boolean): Array<Segment> {
+  const out: Array<Segment> = []
+  for (let i = 0; i < segments.length; i++) {
+    const copy = cloneSegment(segments[i])
+    if (copy.id === id) {
+      copy.muted = muted
+    }
+    out.push(copy)
+  }
+  return out
+}
+
+/**
+ * 播放到 sec 时应该跳到哪一秒（所见即所得：预览与成片都跳过灰段与空档）。
+ * 落在启用段内原地不动；落在灰段内跳到该段终点；落在空档里跳到空档终点
+ * （之后第一个段的起点，没有则片尾）。
+ */
+export function playbackSkipTargetSec(segments: Array<Segment>, sec: number, totalDurationSec: number): number {
+  const at = segmentIndexAtSec(segments, sec)
+  if (at >= 0) {
+    const segment = segments[at]
+    return segment.enabled ? sec : segment.endSec
+  }
+  for (let i = 0; i < segments.length; i++) {
+    if (segments[i].startSec > sec) {
+      return segments[i].startSec
+    }
+  }
+  return totalDurationSec
+}
+
+export function isAllDisabled(segments: Array<Segment>): boolean {
+  return enabledCount(segments) === 0
 }
