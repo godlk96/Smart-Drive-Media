@@ -651,9 +651,18 @@ bool composeTemplateToMp4(const std::string &templateId,
         }
     };
 
+    int64_t encodedFrameCount = 0;
+    int sinkBreakRet = 0;
+    {
+        std::ostringstream encodeBegin;
+        encodeBegin << "begin cutoffPts=" << videoCutoffPts << " fps=" << frameRate.num << "/" << frameRate.den
+                    << " expectFrames=" << (frameRate.den > 0 ? (effectiveDurationSec * frameRate.num / frameRate.den) : 0.0);
+        logPipeline("encode", encodeBegin.str());
+    }
     while (true) {
         int sinkRet = av_buffersink_get_frame(bufferSink, frame);
         if (sinkRet == AVERROR_EOF || sinkRet == AVERROR(EAGAIN)) {
+            sinkBreakRet = sinkRet;
             break;
         }
         if (sinkRet < 0) {
@@ -663,6 +672,12 @@ bool composeTemplateToMp4(const std::string &templateId,
             return false;
         }
         frame->pts = nextPts++;
+        ++encodedFrameCount;
+        if (encodedFrameCount % 100 == 0) {
+            std::ostringstream encodeProgress;
+            encodeProgress << "progress frames=" << encodedFrameCount << " pts=" << frame->pts;
+            logPipeline("encode", encodeProgress.str());
+        }
         if (avcodec_send_frame(encoderCtx, frame) < 0) {
             av_frame_unref(frame);
             av_packet_free(&audioPkt);
@@ -705,6 +720,14 @@ bool composeTemplateToMp4(const std::string &templateId,
             av_packet_unref(packet);
         }
     }
+    {
+        std::ostringstream encodeLoopEnd;
+        encodeLoopEnd << "loop end frames=" << encodedFrameCount << " breakRet="
+                      << (sinkBreakRet == AVERROR_EOF ? "eof" : (sinkBreakRet == AVERROR(EAGAIN) ? "eagain" : "other"))
+                      << " videoEndPts=" << videoEndPts
+                      << " bytesWritten=" << (outputFmt->pb != nullptr ? avio_tell(outputFmt->pb) : -1);
+        logPipeline("encode", encodeLoopEnd.str());
+    }
     avcodec_send_frame(encoderCtx, nullptr);
     while (avcodec_receive_packet(encoderCtx, packet) == 0) {
         packet->stream_index = outVideoStream->index;
@@ -746,6 +769,12 @@ bool composeTemplateToMp4(const std::string &templateId,
         audioPktPending = false;
     }
     av_packet_free(&audioPkt);
+    {
+        std::ostringstream composeFinish;
+        composeFinish << "finish frames=" << encodedFrameCount << " videoEndPts=" << videoEndPts
+                      << " bytesWritten=" << (outputFmt->pb != nullptr ? avio_tell(outputFmt->pb) : -1);
+        logPipeline("encode", composeFinish.str());
+    }
     av_write_trailer(outputFmt);
     cleanupComposeResources();
     return true;
