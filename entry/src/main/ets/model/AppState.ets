@@ -50,6 +50,23 @@ export interface PreviewSlotModel {
   height: number
 }
 
+/**
+ * 一次**显式跳转**请求（点时间轴、拖拽松手、播完后回到开头）。
+ *
+ * 为什么 token 与 targetMs 必须放在同一个对象里：
+ * 旧代码用两个独立 @Prop（seekToken 数字 + playheadMs 数字）传递跳转意图，
+ * 而 playheadMs 同时又被"播放推进"每秒改写。ArkUI 不保证两个 @Prop 的更新顺序，
+ * 于是会出现"新 token 配旧位置"的错跳；预览区还不得不加 settle 窗口（260ms）
+ * 与 0.55s 差值阈值去猜哪个回调是"自己引起的"，修一个冒一个。
+ *
+ * 现在 token 与 targetMs 一次赋值同时送达，@Watch 里读到的必然是配对的。
+ * token 只在显式跳转时递增；播放推进、切模板重建都不递增。
+ */
+export class PreviewSeekRequest {
+  token: number = 0
+  targetMs: number = 0
+}
+
 export interface EditorStateModel {
   tripId: string
   tripTitle: string

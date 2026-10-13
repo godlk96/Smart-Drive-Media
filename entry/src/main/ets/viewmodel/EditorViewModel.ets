@@ -19,9 +19,6 @@ export interface EditorHydrateResult {
 
 export class EditorViewModel {
   private bridge: CoreBridge
-  private templateSwitchSeed: number = 0
-  private switchTaskId: number = 0
-  private isTemplateSwitching: boolean = false
 
   constructor(bridge: CoreBridge = sharedCoreBridge) {
     this.bridge = bridge
@@ -53,39 +50,13 @@ export class EditorViewModel {
     return this.bridge.selectTemplate(templateId)
   }
 
-  beginTemplateSwitchTask(): number {
-    if (this.isTemplateSwitching) {
-      return -1
-    }
-    this.templateSwitchSeed += 1
-    this.switchTaskId = this.templateSwitchSeed
-    this.isTemplateSwitching = true
-    return this.switchTaskId
-  }
-
-  isTemplateSwitchTaskValid(taskId: number): boolean {
-    return taskId > 0 && this.isTemplateSwitching && this.switchTaskId === taskId
-  }
-
-  finishTemplateSwitchTask(taskId: number): void {
-    if (this.switchTaskId === taskId) {
-      this.switchTaskId = 0
-      this.isTemplateSwitching = false
-    }
-  }
-
-  getTemplateSwitchTaskId(): number {
-    return this.switchTaskId
-  }
-
-  getIsTemplateSwitching(): boolean {
-    return this.isTemplateSwitching
-  }
-
-  changeTemplate(templateId: string, taskId: number): EditorStateModel | undefined {
-    if (!this.isTemplateSwitchTaskValid(taskId)) {
-      return undefined
-    }
+  /**
+   * 切换模板。这里曾经是一个 taskId 状态机（beginTemplateSwitchTask /
+   * isTemplateSwitchTaskValid / finishTemplateSwitchTask + 三个私有字段），
+   * 用途是与预览区做"就绪"握手。预览区的布局与段绑定现在是同步的，
+   * 握手不再有存在理由 —— 切换就是一个同步的状态变更。
+   */
+  changeTemplate(templateId: string): EditorStateModel {
     return this.bridge.selectTemplate(templateId)
   }
 

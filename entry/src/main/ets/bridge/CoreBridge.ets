@@ -21,16 +21,21 @@ import { buildTimeline, mergeTimeline } from '../service/TimelineService'
 import { extractFirstFrameByService } from '../service/ExportNativeService'
 import { PreferencesService } from '../service/PreferencesService'
 import { debugLog } from '../utils/Logger'
+import { RUN_GAP_MS, SLICE_MS } from '../media/TimelineMath'
 import photoAccessHelper from '@ohos.file.photoAccessHelper'
 import dataSharePredicates from '@ohos.data.dataSharePredicates'
 import common from '@ohos.app.ability.common'
 
 const HUAWEI_SHARE_ALBUM_NAMES: Array<string> = ['华为分享', 'Huawei Share']
-const CLIP_DURATION_SEC: number = 60
-const TRIP_GAP_THRESHOLD_MS: number = 120 * 1000
+// 切片时长与"行程分组阈值"都必须与预览时间轴（TimelineMath）**同源**：
+//   - CLIP_DURATION_SEC 决定行程时长 = 切片数 × 该值；
+//   - TRIP_GAP_THRESHOLD_MS 决定"多远算断开"，而 TimelineMath 用同一个阈值把切片
+//     切成"连续录制段"再拼接。两者一旦不一致，合并行程的时间轴就会错位。
+const CLIP_DURATION_SEC: number = SLICE_MS / 1000
+const TRIP_GAP_THRESHOLD_MS: number = RUN_GAP_MS
 const EDITOR_SPEEDS: Array<string> = ['1.0X', '1.25X', '1.5X', '2.0X']
 const DVR_FILE_PATTERN: RegExp = /^(?:.+_)?DVR_LoopRecording_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_.+_camera\.(mp4|mov|ts)$/i
-const LOCAL_FILE_VIDEO_PATTERN: RegExp = /^(file:\/\/\/data\/storage\/.+|\/data\/storage\/.+)\.(mp4|mov|ts)(\?.*)?$/i
+const VIDEO_FILE_URI_PATTERN: RegExp = /^((file|datashare):\/\/.+|\/data\/storage\/.+)\.(mp4|mov|ts)(\?.*)?$/i
 
 function toTimeText(date: Date): string {
   const hh = date.getHours().toString().padStart(2, '0')
@@ -52,7 +57,15 @@ function isDvrCandidateName(name: string): boolean {
 }
 
 function canExtractPreviewFrame(uri: string): boolean {
-  return LOCAL_FILE_VIDEO_PATTERN.test(uri)
+  if (!uri || uri.length === 0) {
+    return false
+  }
+  const lower = uri.toLowerCase()
+  return VIDEO_FILE_URI_PATTERN.test(uri) ||
+    lower.includes('/photo/') ||
+    lower.endsWith('.mp4') ||
+    lower.endsWith('.mov') ||
+    lower.endsWith('.ts')
 }
 
 function resolvePreviewTrack(track: string, availableTracks: Array<string>): string {
@@ -240,7 +253,7 @@ export class CoreBridge {
       debugLog('扫描', `封面处理，行程=${trip.id}，URI=${trip.previewUri}`)
       if (!canExtractPreviewFrame(trip.previewUri)) {
         trip.previewFrameUri = ''
-        debugLog('扫描', `封面无法提取（非本地文件），使用占位图，行程=${trip.id}`)
+        debugLog('扫描', `封面格式不支持提取，使用占位图，行程=${trip.id}`)
         continue
       }
       try {
@@ -659,7 +672,7 @@ export class CoreBridge {
       timeRange: this.tripRange,
       previewUri: this.previewUri,
       previewCamera: this.previewCamera,
-      playheadSec: Math.floor(this.playheadMs / 1000),
+      playheadSec: this.playheadMs / 1000,
       canPlayPrev: this.currentClipTotal > 0 && this.currentClipIndex > 0,
       canPlayNext: this.currentClipTotal > 0 && this.currentClipIndex < this.currentClipTotal - 1,
       currentClipIndex: this.currentClipTotal === 0 ? 0 : this.currentClipIndex + 1,

@@ -105,6 +105,13 @@ struct Index {
     return lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png') || lower.endsWith('.webp')
   }
 
+  private formatCoverUri(uri: string): string {
+    if (uri.startsWith('file://') || uri.startsWith('http://') || uri.startsWith('https://')) {
+      return uri
+    }
+    return `file://${uri}`
+  }
+
   private getCompletenessText(card: TripCardModel): string {
     return this.viewModel.getCompletenessText(card)
   }
@@ -232,7 +239,7 @@ struct Index {
               Column({ space: 0 }) {
                 Stack({ alignContent: Alignment.TopStart }) {
                   if (this.hasImageCover(item)) {
-                    Image(item.previewFrameUri)
+                    Image(this.formatCoverUri(item.previewFrameUri))
                       .width('100%')
                       .height('100%')
                       .objectFit(ImageFit.Cover)

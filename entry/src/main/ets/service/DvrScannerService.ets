@@ -14,22 +14,16 @@ class NativeDvrMetaResult {
 
 function normalizeCamera(cameraRaw: string): string {
   const normalized = cameraRaw.toLowerCase()
-  if (normalized === 'front') {
+  if (normalized === 'front' || normalized === 'ft') {
     return 'Front'
   }
-  if (normalized === 'back') {
+  if (normalized === 'back' || normalized === 'rear' || normalized === 'rr') {
     return 'Back'
   }
-  if (normalized === 'left') {
+  if (normalized === 'left' || normalized === 'left_rear' || normalized === 'lt') {
     return 'Left'
   }
-  if (normalized === 'left_rear') {
-    return 'Left'
-  }
-  if (normalized === 'right') {
-    return 'Right'
-  }
-  if (normalized === 'right_rear') {
+  if (normalized === 'right' || normalized === 'right_rear' || normalized === 'rt') {
     return 'Right'
   }
   if (normalized === 'left_front') {
@@ -42,8 +36,12 @@ function normalizeCamera(cameraRaw: string): string {
 }
 
 function parseDvrFileNameByJs(name: string, uri: string): DvrMeta | null {
-  const pattern: RegExp = /^(?:.+_)?DVR_LoopRecording_(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})_([a-z_]+)_camera\.(mp4|mov|ts)$/i
-  const match = name.match(pattern)
+  const loopPattern: RegExp = /^(?:.+_)?DVR_LoopRecording_(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})_([a-z_]+)_camera\.(mp4|mov|ts)$/i
+  let match = name.match(loopPattern)
+  if (!match) {
+    const sentryPattern: RegExp = /^(?:.+_)?Sentry_(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})_([a-z]+)\.(mp4|mov|ts)$/i
+    match = name.match(sentryPattern)
+  }
   if (!match) {
     return null
   }

@@ -54,3 +54,7 @@ entry/src/main/cpp/.ffmpeg-src/
 logs/
 # 注意：不要使用 *.txt，会误伤 entry/src/main/cpp/CMakeLists.txt
 
+# 本地生成物 / 大体积样本（不入库）
+.offline-test-build/
+.player-typecheck/
+media_resource/

@@ -1,24 +1,16 @@
-import { EditorStateModel, PreviewSlotModel } from '../model/AppState'
+import { PreviewSeekRequest } from '../model/AppState'
 import { normalizeCameraNameById } from '../constants/AppConstants'
-import { TemplateId } from '../model/Models'
 import { DvrMeta, TripSnapshot } from '../model/TripModels'
 import { GlobalTimelineManager } from '../media/GlobalTimelineManager'
-import { PingPongTrackController, TrackSegmentSource } from '../media/PingPongTrackController'
-import { PingPongTrackView } from './PingPongTrackView'
+import { SingleTrackController } from '../media/SingleTrackController'
+import { SegmentSpan, TimeGrid, buildSegmentSpans, buildTimeGrid } from '../media/TimelineMath'
+import { MAX_PREVIEW_SLOTS, SlotGeometry, buildSlotGeometry, templateAspectRatio } from '../media/PreviewLayout'
+import { SingleTrackView } from './SingleTrackView'
 import { debugLog } from '../utils/Logger'
 
-interface LayoutSlotDefinition {
-  id: string
-  camera: string
-  x: number
-  y: number
-  width: number
-  height: number
-  zoomX: number
-}
-
-interface TrackRenderItem {
-  key: string
+interface PersistentSlotState {
+  index: number
+  visible: boolean
   camera: string
   x: number
   y: number
@@ -27,7 +19,7 @@ interface TrackRenderItem {
   zoomX: number
   hasSource: boolean
   privacyMasks: Array<PreviewMaskRect>
-  controller: PingPongTrackController
+  controller: SingleTrackController
 }
 
 interface PreviewMaskRect {
@@ -38,53 +30,125 @@ interface PreviewMaskRect {
   height: number
 }
 
+/**
+ * 预览区 —— 只做两件事：
+ *   1. 把「模板 + 行程切片」**同步翻译**成 3 个常驻槽位的状态（纯函数层 PreviewLayout / TimelineMath）；
+ *   2. 把宿主的播放意图转交给 GlobalTimelineManager。
+ *
+ * 与上一版的区别（都是"删机制"而不是"加机制"）：
+ *   - **不再接收 editorState**。上一版 watch 整个 EditorStateModel，而宿主每播放 tick 都会替换 state，
+ *     于是布局重建（setDuration / updateClockMaster / setMuted / setPlaybackRate / play|pause 全量重放）
+ *     每秒被执行约 10 次。现在只接收 8 个**事件级**标量：模板 id、行程、3 个遮罩开关、播放/静音/倍速，
+ *     以及一次性的跳转请求。没有任何一个字段会被每秒改写。
+ *   - **seekToken + playheadMs 合并成 PreviewSeekRequest**。旧版用两个独立 @Prop 表达"跳到哪里"，
+ *     而 playheadMs 同时又被播放推进改写，二者更新顺序不受 ArkUI 保证 → "新 token 配旧位置"错跳。
+ *     现在 token 与 targetMs 一次赋值同时到达。
+ *   - **ForEach 换成三个显式槽位**。上一版把 activeTemplateId / switchTaskId / 机位编进 ForEach 的 key，
+ *     好让切模板时重建子组件拿到新的相机；代价是 XComponent 与 Surface 每次切模板都被销毁重建。
+ *     现在每个槽位的 controller 身份终身不变（slot_0/1/2 各自持有），切模板只改 controller 的机位与段，
+ *     XComponent 永不重建；几何由显式索引读取 @State，不依赖 key 变化来刷新。
+ *
+ * 注意：@Builder 的 index 参数是常量字面量，UI 刷新依赖的是 `this.slots`（本组件 @State）本身，
+ * 因此不涉及"@Builder 按值传参不刷新"的限制。
+ */
 @Component
 export struct EditorPreviewArea {
-  @Prop @Watch('onTemplateOrTripChanged') editorState: EditorStateModel
+  @Prop @Watch('onTemplateOrTripChanged') activeTemplateId: string = ''
   @Prop @Watch('onTemplateOrTripChanged') tripSnapshot: TripSnapshot = new TripSnapshot()
-  @Prop @Watch('onTemplateSwitchingChanged') isTemplateSwitching: boolean = false
-  @Prop renderVersion: number = 0
-  @Prop @Watch('onPlayingChanged') playing: boolean
-  @Prop @Watch('onSeekTokenChanged') seekToken: number
-  @Prop @Watch('onSwitchTaskIdChanged') switchTaskId: number
-  @Prop playheadMs: number
-  @Prop seekBlocked: boolean = false
-  @Prop @Watch('onMutedChanged') muted: boolean
-  @Prop @Watch('onSpeedLabelChanged') speedLabel: string
+  /** 隐私遮罩开关。与原生一致：只有 speed / vin / time 三个矩形，hideGps 原生不使用（见 export_engine.cpp:178-190）。 */
+  @Prop @Watch('onPrivacyChanged') hideSpeed: boolean = false
+  @Prop @Watch('onPrivacyChanged') hideVin: boolean = false
+  @Prop @Watch('onPrivacyChanged') hideTime: boolean = false
+  @Prop @Watch('onPlayingChanged') playing: boolean = false
+  @Prop @Watch('onMutedChanged') muted: boolean = false
+  @Prop @Watch('onSpeedLabelChanged') speedLabel: string = '1.0X'
+  /**
+   * 显式跳转请求。**只有**用户主动跳转（点时间轴 / 拖拽松手 / 播完回到开头）才会让 token 递增；
+   * 播放推进、切模板、换机位都不走这里——位置由 TimelineClock 唯一持有。
+   */
+  @Prop @Watch('onSeekRequestChanged') seekRequest: PreviewSeekRequest = new PreviewSeekRequest()
   onPlayheadChanged?: (playheadMs: number) => void
   onPlaybackEnded?: () => void
-  onTemplateSwitchStageReady?: (taskId: number, stage: string) => void
-  onRebuildReady?: (version: number) => void
 
-  @State private trackItems: Array<TrackRenderItem> = []
-  private manager?: GlobalTimelineManager
-  private rebuildQueue: Promise<void> = Promise.resolve()
-  private rebuildScheduled: boolean = false
-  private rebuildPending: boolean = false
-  private lastRebuildKey: string = ''
-  private rebuildEpoch: number = 0
+  @State private slots: Array<PersistentSlotState> = []
+  private manager: GlobalTimelineManager = new GlobalTimelineManager()
   private disposed: boolean = false
-  private pendingSurfaceTrackKeys: Array<string> = []
-  private readySurfaceTrackKeys: Array<string> = []
-  private surfaceReadyResolve?: () => void
-  private surfaceReadyTimer: number = -1
 
+  /**
+   * 每个 @Watch 处理器都先与"已生效的值"比较，只有真正变化才做事。
+   *
+   * 这是本组件**唯一**的并发防线，也是它能做到"重复调用无害"的原因：
+   * ArkUI 不保证 @Watch 只在值变化时触发（父组件重渲染也可能再次派发），
+   * 一旦依赖"框架只在我变化时叫我"，就会出现每秒十几次的布局重建 —— 那正是上一版的病。
+   * 现在无论框架叫多少次，token / key / 布尔值不变就立刻返回。
+   */
+  private appliedSeekToken: number = 0
+  private appliedApplyKey: string = ''
+  private appliedPrivacyKey: string = ''
+  private appliedPlaying: boolean = false
+  private appliedMuted: boolean = false
+  private appliedSpeedLabel: string = ''
+
+  /** 隐私遮罩的坐标系：源画面固定 16:9，遮罩按 letterbox 映射到实际槽位。 */
   private readonly sourceAspectRatio: number = 16 / 9
-  private readonly autoSeekToleranceMs: number = 1000
 
   aboutToAppear(): void {
     this.disposed = false
-    this.requestRebuild(true)
+    this.initPersistentSlots()
+    this.manager.setCallbacks(
+      (globalMs: number) => {
+        if (!this.disposed && this.onPlayheadChanged) {
+          this.onPlayheadChanged(globalMs)
+        }
+      },
+      undefined,
+      () => {
+        if (!this.disposed && this.onPlaybackEnded) {
+          this.onPlaybackEnded()
+        }
+      }
+    )
+    this.applyTemplateAndTrip()
+    // @Watch 不会在变量**初始化**时触发，所以挂载时可能已经有一个待处理的跳转请求（宿主在
+    // 子组件创建前就写好了播放头）。这里主动消费一次，避免"画面停在 0 而播放头在 90s"。
+    this.onSeekRequestChanged()
   }
 
   aboutToDisappear(): void {
     this.disposed = true
-    this.rebuildEpoch += 1
-    this.rebuildPending = false
-    this.rebuildScheduled = false
-    this.enqueueManagerTask(async () => {
-      await this.releaseAll()
-    })
+    this.manager.release()
+  }
+
+  /**
+   * 3 个常驻槽位只建一次。controller 与槽位下标**终身绑定**（slot_0 永远是第 0 个 XComponent），
+   * 切模板时只调用 controller.setCamera / bindSegments —— 这是 XComponent 不被重建的前提。
+   */
+  private initPersistentSlots(): void {
+    const initialSlots: Array<PersistentSlotState> = []
+    const defaultCameras = ['Front', 'Back', 'Left']
+    for (let i = 0; i < MAX_PREVIEW_SLOTS; i++) {
+      const camera = defaultCameras[i]
+      // 出声轨**不再**由这里按槽位下标决定（曾经是 `i === 0`）：槽位下标与机位不是一回事，
+      // 只有 front 文件带音轨，而 T4 的槽位顺序是 LeftFront/Front/RightFront，
+      // 按 `i === 0` 会让 T4 预览没有声音（缺陷 7.2）。
+      // 现在由 SingleTrackController 按机位（camera === 'Front'）自行判断。
+      const controller = new SingleTrackController(`slot_${i}`, camera)
+      this.manager.registerTrack(controller)
+      initialSlots.push({
+        index: i,
+        visible: i === 0,
+        camera,
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+        zoomX: 1,
+        hasSource: false,
+        privacyMasks: [],
+        controller
+      })
+    }
+    this.slots = initialSlots
   }
 
   private toPercent(value: number): string {
@@ -93,73 +157,32 @@ export struct EditorPreviewArea {
   }
 
   private parseSpeedLabel(label: string): number {
-    const parsed = Number(label.replace('X', ''))
+    const parsed = Number(label.replace('X', '').replace('x', ''))
     if (parsed >= 0.75 && parsed <= 2) {
       return parsed
     }
     return 1
   }
 
-  private normalizeCameraName(camera: string): string {
-    return normalizeCameraNameById(camera)
-  }
-
-  private resolveLayout(templateId: string): Array<LayoutSlotDefinition> {
-    if (templateId === TemplateId.T1) {
-      return [
-        { id: 'top', camera: 'Front', x: 0, y: 0, width: 1, height: 0.5, zoomX: 1 },
-        { id: 'bottom', camera: 'Back', x: 0, y: 0.5, width: 1, height: 0.5, zoomX: 1 }
-      ]
+  /** 行程切片：机位名归一化后交给纯函数层（构造副本，绝不改 @Prop）。 */
+  private buildNormalizedClips(): Array<DvrMeta> {
+    const source = this.tripSnapshot.clips
+    const result: Array<DvrMeta> = []
+    for (let i = 0; i < source.length; i++) {
+      const item = source[i]
+      if (item.uri.length === 0) {
+        continue
+      }
+      const copy = new DvrMeta()
+      copy.fileName = item.fileName
+      copy.uri = item.uri
+      copy.date = item.date
+      copy.time = item.time
+      copy.camera = normalizeCameraNameById(item.camera)
+      copy.timestamp = item.timestamp
+      result.push(copy)
     }
-    if (templateId === TemplateId.T2) {
-      return [
-        { id: 'top', camera: 'Front', x: 0, y: 0, width: 1, height: 0.6667, zoomX: 1 },
-        { id: 'bottomLeft', camera: 'Left', x: 0, y: 0.6667, width: 0.5, height: 0.3333, zoomX: 1 },
-        { id: 'bottomRight', camera: 'Right', x: 0.5, y: 0.6667, width: 0.5, height: 0.3333, zoomX: 1 }
-      ]
-    }
-    if (templateId === TemplateId.T3) {
-      return [
-        { id: 'left', camera: 'Left', x: 0, y: 0, width: 0.5, height: 1, zoomX: 1 },
-        { id: 'right', camera: 'Right', x: 0.5, y: 0, width: 0.5, height: 1, zoomX: 1 }
-      ]
-    }
-    if (templateId === TemplateId.T4) {
-      return [
-        { id: 'left', camera: 'LeftFront', x: 0, y: 0, width: 0.3333, height: 1, zoomX: 1.35 },
-        { id: 'center', camera: 'Front', x: 0.3333, y: 0, width: 0.3334, height: 1, zoomX: 1 },
-        { id: 'right', camera: 'RightFront', x: 0.6667, y: 0, width: 0.3333, height: 1, zoomX: 1.35 }
-      ]
-    }
-    return [
-      { id: 'top', camera: 'Front', x: 0, y: 0, width: 1, height: 1, zoomX: 1 }
-    ]
-  }
-
-  private resolveSlotCamera(definition: LayoutSlotDefinition): string {
-    const matched = this.editorState.previewSlots.find((slot: PreviewSlotModel) => slot.id === definition.id)
-    if (!matched) {
-      return definition.camera
-    }
-    return this.normalizeCameraName(matched.camera)
-  }
-
-  private isAudioMaster(templateId: string, camera: string): boolean {
-    if (templateId === TemplateId.T3) {
-      return false
-    }
-    return camera === 'Front'
-  }
-
-  private getSnapshotBaseTimestamp(snapshot: TripSnapshot): number {
-    if (snapshot.startTs > 0) {
-      return snapshot.startTs
-    }
-    const timestamps = snapshot.clips.map((item: DvrMeta) => item.timestamp).filter((value: number) => value > 0)
-    if (timestamps.length === 0) {
-      return 0
-    }
-    return Math.min(...timestamps)
+    return result
   }
 
   private buildFrontPrivacyMasksBySlot(slotWidth: number, slotHeight: number): Array<PreviewMaskRect> {
@@ -167,13 +190,13 @@ export struct EditorPreviewArea {
       return []
     }
     const masks: Array<PreviewMaskRect> = []
-    if (this.editorState.hideSpeed) {
+    if (this.hideSpeed) {
       masks.push({ key: 'speed', x: 0.05, y: 0.9, width: 0.12, height: 0.08 })
     }
-    if (this.editorState.hideVin) {
+    if (this.hideVin) {
       masks.push({ key: 'vin', x: 0.28, y: 0.9, width: 0.24, height: 0.08 })
     }
-    if (this.editorState.hideTime ?? this.editorState.hideGps) {
+    if (this.hideTime) {
       masks.push({ key: 'time', x: 0.58, y: 0.9, width: 0.34, height: 0.08 })
     }
     if (masks.length === 0) {
@@ -192,355 +215,221 @@ export struct EditorPreviewArea {
       contentOffsetY = (1 - contentHeight) / 2
     }
     return masks.map((mask: PreviewMaskRect) => {
-      const mappedX = contentOffsetX + mask.x * contentWidth
-      const mappedY = contentOffsetY + mask.y * contentHeight
-      const mappedWidth = mask.width * contentWidth
-      const mappedHeight = mask.height * contentHeight
-      const mappedMask: PreviewMaskRect = {
+      const mapped: PreviewMaskRect = {
         key: mask.key,
-        x: Math.max(0, Math.min(1, mappedX)),
-        y: Math.max(0, Math.min(1, mappedY)),
-        width: Math.max(0, Math.min(1, mappedWidth)),
-        height: Math.max(0, Math.min(1, mappedHeight))
+        x: Math.max(0, Math.min(1, contentOffsetX + mask.x * contentWidth)),
+        y: Math.max(0, Math.min(1, contentOffsetY + mask.y * contentHeight)),
+        width: Math.max(0, Math.min(1, mask.width * contentWidth)),
+        height: Math.max(0, Math.min(1, mask.height * contentHeight))
       }
-      return mappedMask
+      return mapped
     })
   }
 
-  private buildTrackSegments(snapshot: TripSnapshot, camera: string): Array<TrackSegmentSource> {
-    const normalized = this.normalizeCameraName(camera)
-    const clips = snapshot.clips
-      .filter((item: DvrMeta) => this.normalizeCameraName(item.camera) === normalized && item.uri.length > 0)
-      .sort((a: DvrMeta, b: DvrMeta) => a.timestamp - b.timestamp)
-    if (clips.length === 0) {
+  /** 遮罩只画在"有源且机位是 Front"的槽位上（原生也只给前摄叠加遮罩）。 */
+  private masksForSlot(slot: PersistentSlotState): Array<PreviewMaskRect> {
+    if (!slot.visible || !slot.hasSource || slot.camera !== 'Front') {
       return []
     }
-    const baseTs = this.getSnapshotBaseTimestamp(snapshot)
-    const totalMs = Math.max(0, this.editorState.totalDurationSec * 1000)
-    const segments: Array<TrackSegmentSource> = []
-    for (let i = 0; i < clips.length; i++) {
-      const current = clips[i]
-      const next = i + 1 < clips.length ? clips[i + 1] : undefined
-      const startMs = Math.max(0, current.timestamp - baseTs)
-      let durationMs = 60000
-      if (next) {
-        durationMs = Math.max(1000, next.timestamp - current.timestamp)
-      } else if (totalMs > startMs) {
-        durationMs = Math.max(1000, totalMs - startMs)
-      }
-      segments.push({
-        uri: current.uri,
-        startMs,
-        durationMs
-      })
-    }
-    return segments
+    return this.buildFrontPrivacyMasksBySlot(slot.width, slot.height)
   }
 
-  private buildRebuildKey(): string {
-    const clips = this.tripSnapshot.clips
-    const firstTs = clips.length > 0 ? clips[0].timestamp : 0
-    const lastTs = clips.length > 0 ? clips[clips.length - 1].timestamp : 0
-    return `${this.editorState.tripId}_${this.editorState.activeTemplateId}_${this.switchTaskId}_${clips.length}_${firstTs}_${lastTs}`
+  /** 布局重算的去重键：只有模板、行程内容或时长真的变了才需要重建。 */
+  private buildApplyKey(): string {
+    const snapshot = this.tripSnapshot
+    return `${this.activeTemplateId}|${snapshot.id}|${snapshot.clips.length}|${snapshot.durationSec}`
   }
 
-  private enqueueManagerTask(task: () => Promise<void>, contextTaskId: number = this.switchTaskId): void {
-    this.rebuildQueue = this.rebuildQueue.then(task).catch((error: Object) => {
-      const message = error instanceof Error ? error.message : String(error)
-      debugLog('EditorPreviewArea', `manager task failed: ${message}`)
-      if (contextTaskId > 0 && this.switchTaskId === contextTaskId && this.onTemplateSwitchStageReady) {
-        this.onTemplateSwitchStageReady(contextTaskId, 'failed')
-      }
-    })
-  }
-
-  private requestRebuild(force: boolean): void {
-    const key = this.buildRebuildKey()
-    if (!force && key === this.lastRebuildKey) {
+  /**
+   * 模板/行程变化：**同步**重算几何与段绑定，然后交给协调器。
+   * 这里刻意不做 seek —— 时钟位置由 TimelineClock 持有，绑定新段后协调器会按当前位置载入正确的段。
+   */
+  private applyTemplateAndTrip(): void {
+    if (this.disposed) {
       return
     }
-    this.lastRebuildKey = key
-    this.rebuildEpoch += 1
-    this.rebuildPending = true
-    this.rebuild()
-  }
+    this.appliedApplyKey = this.buildApplyKey()
+    this.appliedPrivacyKey = `${this.hideSpeed}|${this.hideVin}|${this.hideTime}`
+    const templateId = this.activeTemplateId
+    const geometries: Array<SlotGeometry> = buildSlotGeometry(templateId)
+    const clips = this.buildNormalizedClips()
+    const grid: TimeGrid = buildTimeGrid(clips)
 
-  private rebuild(): void {
-    const currentTaskId = this.switchTaskId
-    this.enqueueManagerTask(async () => {
-      if (this.disposed) {
-        await this.releaseAll()
-        return
-      }
-      this.rebuildEpoch += 1
-      const currentEpoch = this.rebuildEpoch
-      await this.releaseAll()
-      if (this.disposed || currentEpoch !== this.rebuildEpoch) {
-        return
-      }
-      const snapshot = this.tripSnapshot
-      const manager = new GlobalTimelineManager()
-      manager.setDuration(this.editorState.totalDurationSec * 1000)
-      manager.setCallbacks(
-        (globalMs: number) => {
-          if (this.disposed || currentEpoch !== this.rebuildEpoch || !this.onPlayheadChanged) {
-            return
-          }
-          this.onPlayheadChanged(globalMs)
-        },
-        undefined,
-        () => {
-          if (this.disposed || currentEpoch !== this.rebuildEpoch || !this.onPlaybackEnded) {
-            return
-          }
-          this.onPlaybackEnded()
-        }
-      )
-      const definitions = this.resolveLayout(this.editorState.activeTemplateId)
-      const renderItems: Array<TrackRenderItem> = []
-      for (const definition of definitions) {
-        if (this.disposed || currentEpoch !== this.rebuildEpoch) {
-          await manager.release()
-          return
-        }
-        const camera = this.resolveSlotCamera(definition)
-        const trackSegments = snapshot.clips.length > 0 ? this.buildTrackSegments(snapshot, camera) : []
-        const controller = new PingPongTrackController(
-          `${this.editorState.tripId}_${this.editorState.activeTemplateId}_${this.switchTaskId}_${definition.id}`,
-          camera,
-          this.isAudioMaster(this.editorState.activeTemplateId, camera)
-        )
-        controller.bindSegments(trackSegments)
-        manager.registerTrack(controller)
-        const hasSource = trackSegments.length > 0
-        renderItems.push({
-          key: `${this.editorState.activeTemplateId}_${this.switchTaskId}_${definition.id}_${camera}`,
-          camera,
-          x: definition.x,
-          y: definition.y,
-          width: definition.width,
-          height: definition.height,
-          zoomX: definition.zoomX,
-          hasSource,
-          privacyMasks: hasSource && camera === 'Front'
-            ? this.buildFrontPrivacyMasksBySlot(definition.width, definition.height)
-            : [],
-          controller
-        })
-      }
-      if (this.disposed || currentEpoch !== this.rebuildEpoch) {
-        await manager.release()
-        return
-      }
-      this.manager = manager
-      this.trackItems = renderItems
-      this.startSurfaceHandshake(renderItems)
-      await this.waitSurfaceHandshake(1800)
-      if (this.disposed || currentEpoch !== this.rebuildEpoch) {
-        return
-      }
-      await manager.setMuted(this.muted)
-      await manager.setPlaybackRate(this.parseSpeedLabel(this.speedLabel))
-      await manager.seek(this.playheadMs)
-      if (this.playing) {
-        await manager.play()
-        this.notifyTemplateSwitchStageReady(currentTaskId, 'playing')
+    const nextSlots: Array<PersistentSlotState> = []
+    for (let i = 0; i < MAX_PREVIEW_SLOTS && i < this.slots.length; i++) {
+      const slot = this.slots[i]
+      if (i < geometries.length) {
+        const geometry = geometries[i]
+        const camera = normalizeCameraNameById(geometry.camera)
+        const segments: Array<SegmentSpan> = buildSegmentSpans(clips, camera, grid)
+        slot.visible = true
+        slot.camera = camera
+        slot.x = geometry.x
+        slot.y = geometry.y
+        slot.width = geometry.width
+        slot.height = geometry.height
+        slot.zoomX = geometry.zoomX
+        slot.hasSource = segments.length > 0
+        slot.controller.setCamera(camera)
+        slot.controller.bindSegments(segments)
       } else {
-        await manager.pause()
-        this.notifyTemplateSwitchStageReady(currentTaskId, 'prepared')
+        slot.visible = false
+        slot.hasSource = false
+        slot.controller.bindSegments([])
       }
-      if (this.onRebuildReady) {
-        this.onRebuildReady(this.renderVersion)
-      }
-      debugLog('EditorPreviewArea', `rebuild done, template=${this.editorState.activeTemplateId}, tracks=${renderItems.length}`)
-    }, currentTaskId)
-  }
-
-  private notifyTemplateSwitchStageReady(taskId: number, stage: string): void {
-    if (taskId <= 0 || taskId !== this.switchTaskId || !this.onTemplateSwitchStageReady) {
-      return
+      slot.privacyMasks = this.masksForSlot(slot)
+      nextSlots.push(slot)
     }
-    this.onTemplateSwitchStageReady(taskId, stage)
+
+    this.slots = nextSlots
+
+    this.manager.setDuration(grid.durationMs)
+    this.manager.updateClockMaster()
+    this.syncTransport()
+    debugLog('EditorPreviewArea', `applied template=${templateId} slots=${geometries.length} durationMs=${grid.durationMs}`)
   }
 
-  private clearSurfaceReadyTimer(): void {
-    if (this.surfaceReadyTimer < 0) {
-      return
-    }
-    clearTimeout(this.surfaceReadyTimer)
-    this.surfaceReadyTimer = -1
+  /** 只同步"播放意图 / 音量 / 速率"，不改变时钟位置。 */
+  private syncTransport(): void {
+    this.appliedPlaying = this.playing
+    this.appliedMuted = this.muted
+    this.appliedSpeedLabel = this.speedLabel
+    void this.applyTransport()
   }
 
-  private startSurfaceHandshake(renderItems: Array<TrackRenderItem>): void {
-    this.clearSurfaceReadyTimer()
-    this.pendingSurfaceTrackKeys = renderItems.filter((item: TrackRenderItem) => item.hasSource).map((item: TrackRenderItem) => item.key)
-    this.readySurfaceTrackKeys = []
-    this.surfaceReadyResolve = undefined
-  }
-
-  private isAllSurfaceReady(): boolean {
-    return this.pendingSurfaceTrackKeys.length === this.readySurfaceTrackKeys.length
-  }
-
-  private markTrackSurfaceReady(trackKey: string): void {
-    if (!this.pendingSurfaceTrackKeys.some((item: string) => item === trackKey)) {
-      return
-    }
-    if (this.readySurfaceTrackKeys.some((item: string) => item === trackKey)) {
-      return
-    }
-    this.readySurfaceTrackKeys.push(trackKey)
-    if (!this.surfaceReadyResolve || !this.isAllSurfaceReady()) {
-      return
-    }
-    const resolve = this.surfaceReadyResolve
-    this.surfaceReadyResolve = undefined
-    this.clearSurfaceReadyTimer()
-    resolve()
-  }
-
-  private waitSurfaceHandshake(timeoutMs: number): Promise<void> {
-    if (this.pendingSurfaceTrackKeys.length === 0 || this.isAllSurfaceReady()) {
-      return Promise.resolve()
-    }
-    return new Promise((resolve) => {
-      this.surfaceReadyResolve = resolve
-      this.clearSurfaceReadyTimer()
-      this.surfaceReadyTimer = setTimeout(() => {
-        if (!this.surfaceReadyResolve) {
-          return
-        }
-        const done = this.surfaceReadyResolve
-        this.surfaceReadyResolve = undefined
-        this.surfaceReadyTimer = -1
-        done()
-      }, timeoutMs)
-    })
-  }
-
-  private async releaseAll(): Promise<void> {
-    this.clearSurfaceReadyTimer()
-    this.pendingSurfaceTrackKeys = []
-    this.readySurfaceTrackKeys = []
-    this.surfaceReadyResolve = undefined
-    if (this.manager) {
-      await this.manager.release()
-      this.manager = undefined
-    }
-    this.trackItems = []
-  }
-
-  private onTemplateOrTripChanged(): void {
-    this.requestRebuild(false)
-  }
-
-  private onTemplateSwitchingChanged(): void {
-    if (!this.isTemplateSwitching) {
-      return
-    }
-    const currentTaskId = this.switchTaskId
-    this.enqueueManagerTask(async () => {
-      if (this.disposed) {
-        return
-      }
-      if (this.manager) {
-        await this.manager.pause()
-      }
-      await this.releaseAll()
-      this.notifyTemplateSwitchStageReady(currentTaskId, 'released')
-    }, currentTaskId)
-  }
-
-  private onSwitchTaskIdChanged(): void {
-    if (this.switchTaskId <= 0 || this.isTemplateSwitching) {
-      return
-    }
-    this.requestRebuild(false)
-  }
-
-  private onPlayingChanged(): void {
-    const currentTaskId = this.switchTaskId
-    this.enqueueManagerTask(async () => {
-      if (this.disposed || currentTaskId !== this.switchTaskId || !this.manager) {
-        return
-      }
+  private async applyTransport(): Promise<void> {
+    try {
+      await this.manager.setMuted(this.muted)
+      await this.manager.setPlaybackRate(this.parseSpeedLabel(this.speedLabel))
       if (this.playing) {
         await this.manager.play()
-        return
+      } else {
+        await this.manager.pause()
       }
-      await this.manager.pause()
-    })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('EditorPreviewArea', `transport sync failed: ${message}`)
+    }
   }
 
-  private onSeekTokenChanged(): void {
-    const currentTaskId = this.switchTaskId
-    this.enqueueManagerTask(async () => {
-      if (this.disposed || currentTaskId !== this.switchTaskId || !this.manager) {
-        return
-      }
-      if (this.seekBlocked) {
-        return
-      }
-      if (this.manager.getPlaybackState() === 'playing') {
-        const driftMs = Math.abs(this.playheadMs - this.manager.getGlobalPlayheadMs())
-        if (driftMs < this.autoSeekToleranceMs) {
-          return
+  onTemplateOrTripChanged(): void {
+    if (this.disposed) {
+      return
+    }
+    if (this.buildApplyKey() === this.appliedApplyKey) {
+      return
+    }
+    this.applyTemplateAndTrip()
+  }
+
+  /** 遮罩开关只影响 Front 槽位的叠加层，不需要重新绑定媒体源。 */
+  onPrivacyChanged(): void {
+    if (this.disposed) {
+      return
+    }
+    const key = `${this.hideSpeed}|${this.hideVin}|${this.hideTime}`
+    if (key === this.appliedPrivacyKey) {
+      return
+    }
+    this.appliedPrivacyKey = key
+    const nextSlots: Array<PersistentSlotState> = []
+    for (let i = 0; i < this.slots.length; i++) {
+      const slot = this.slots[i]
+      slot.privacyMasks = this.masksForSlot(slot)
+      nextSlots.push(slot)
+    }
+    this.slots = nextSlots
+  }
+
+  onPlayingChanged(): void {
+    if (this.playing === this.appliedPlaying) {
+      return
+    }
+    this.appliedPlaying = this.playing
+    this.syncTransport()
+  }
+
+  onMutedChanged(): void {
+    if (this.disposed) {
+      return
+    }
+    if (this.muted === this.appliedMuted) {
+      return
+    }
+    this.appliedMuted = this.muted
+    void this.manager.setMuted(this.muted)
+  }
+
+  onSpeedLabelChanged(): void {
+    if (this.disposed) {
+      return
+    }
+    if (this.speedLabel === this.appliedSpeedLabel) {
+      return
+    }
+    this.appliedSpeedLabel = this.speedLabel
+    void this.manager.setPlaybackRate(this.parseSpeedLabel(this.speedLabel))
+  }
+
+  onSeekRequestChanged(): void {
+    if (this.disposed) {
+      return
+    }
+    if (this.seekRequest.token === this.appliedSeekToken) {
+      return
+    }
+    this.appliedSeekToken = this.seekRequest.token
+    void this.manager.seek(this.seekRequest.targetMs)
+  }
+
+  @Builder
+  slotAt(index: number) {
+    if (index < this.slots.length) {
+      Stack({ alignContent: Alignment.Center }) {
+        // 常驻挂载：XComponent 与 Surface 终身不销毁重建。
+        SingleTrackView({
+          controller: this.slots[index].controller
+        })
+          .width(this.slots[index].zoomX > 1 ? `${this.slots[index].zoomX * 100}%` : '100%')
+          .height('100%')
+          .visibility(Visibility.Visible)
+
+        if (!this.slots[index].hasSource && this.slots[index].visible) {
+          Column()
+            .width('100%')
+            .height('100%')
+            .backgroundColor('#333333')
         }
-      }
-      await this.manager.seek(this.playheadMs)
-    })
-  }
 
-  private onMutedChanged(): void {
-    const currentTaskId = this.switchTaskId
-    this.enqueueManagerTask(async () => {
-      if (this.disposed || currentTaskId !== this.switchTaskId || !this.manager) {
-        return
-      }
-      await this.manager.setMuted(this.muted)
-    })
-  }
-
-  private onSpeedLabelChanged(): void {
-    const currentTaskId = this.switchTaskId
-    this.enqueueManagerTask(async () => {
-      if (this.disposed || currentTaskId !== this.switchTaskId || !this.manager) {
-        return
-      }
-      await this.manager.setPlaybackRate(this.parseSpeedLabel(this.speedLabel))
-    })
-  }
-
-  build() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      ForEach(this.trackItems, (item: TrackRenderItem) => {
-        Stack({ alignContent: Alignment.Center }) {
-          if (item.hasSource) {
-            PingPongTrackView({
-              controller: item.controller,
-              onSurfaceReady: () => this.markTrackSurfaceReady(item.key)
-            })
-              .width(item.zoomX > 1 ? `${item.zoomX * 100}%` : '100%')
-              .height('100%')
-          } else {
-            Column()
-              .width('100%')
-              .height('100%')
-              .backgroundColor('#333333')
-          }
-          ForEach(item.privacyMasks, (mask: PreviewMaskRect) => {
+        if (this.slots[index].visible && this.slots[index].hasSource) {
+          ForEach(this.slots[index].privacyMasks, (mask: PreviewMaskRect) => {
             Column()
               .width(this.toPercent(mask.width))
               .height(this.toPercent(mask.height))
               .position({ x: this.toPercent(mask.x), y: this.toPercent(mask.y) })
               .backgroundColor('#000000')
-          }, (mask: PreviewMaskRect) => `${item.key}_${mask.key}`)
+          }, (mask: PreviewMaskRect) => mask.key)
         }
-          .clip(true)
-          .width(this.toPercent(item.width))
-          .height(this.toPercent(item.height))
-          .position({ x: this.toPercent(item.x), y: this.toPercent(item.y) })
-      }, (item: TrackRenderItem) => item.key)
+      }
+      .clip(true)
+      .width(this.toPercent(this.slots[index].width))
+      .height(this.toPercent(this.slots[index].height))
+      .position({ x: this.toPercent(this.slots[index].x), y: this.toPercent(this.slots[index].y) })
+      .visibility(this.slots[index].visible ? Visibility.Visible : Visibility.Hidden)
+    }
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.Center }) {
+      Stack({ alignContent: Alignment.TopStart }) {
+        this.slotAt(0)
+        this.slotAt(1)
+        this.slotAt(2)
+      }
+      .aspectRatio(templateAspectRatio(this.activeTemplateId))
+      .width(templateAspectRatio(this.activeTemplateId) >= 16 / 9 ? '100%' : undefined)
+      .height(templateAspectRatio(this.activeTemplateId) < 16 / 9 ? '100%' : undefined)
+      .backgroundColor('#000000')
     }
     .width('100%')
     .height('100%')

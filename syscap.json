@@ -1,0 +1,23 @@
+{
+  "devices": {
+    "general": [
+      "default"
+    ]
+  },
+  "development": {
+    "addedSysCaps": [
+      "SystemCapability.Multimedia.Media.Core",
+      "SystemCapability.Multimedia.Media.AVPlayer",
+      "SystemCapability.Multimedia.Media.AVImageGenerator",
+      "SystemCapability.Multimedia.Media.VideoPlayer"
+    ]
+  },
+  "production": {
+    "addedSysCaps": [
+      "SystemCapability.Multimedia.Media.Core",
+      "SystemCapability.Multimedia.Media.AVPlayer",
+      "SystemCapability.Multimedia.Media.AVImageGenerator",
+      "SystemCapability.Multimedia.Media.VideoPlayer"
+    ]
+  }
+}

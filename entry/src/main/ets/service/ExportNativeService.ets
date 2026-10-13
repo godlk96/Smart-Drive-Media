@@ -63,6 +63,9 @@ async function writeArrayBufferToFile(targetPath: string, buffer: ArrayBuffer): 
     const file = await fs.open(targetPath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC)
     fd = file.fd
     await fs.write(fd, buffer)
+  } catch (err) {
+    debugLog('ExportNative', `writeArrayBufferToFile failed: ${String(err)}`)
+    throw new Error(String(err))
   } finally {
     if (fd >= 0) {
       try {
@@ -77,6 +80,7 @@ async function writeArrayBufferToFile(targetPath: string, buffer: ArrayBuffer): 
  * 提取视频首帧并落盘为 JPEG 缩略图。
  * 成功返回缩略图路径；任何失败均返回空字符串，由调用方回退到占位图（绝不返回视频 URI）。
  */
+// @SuppressWarnings syscap
 export async function extractFirstFrameByService(
   sourceUri: string,
   cacheDir: string,
@@ -104,6 +108,10 @@ export async function extractFirstFrameByService(
     const sourceFile = await fs.open(sourceUri, fs.OpenMode.READ_ONLY)
     sourceFd = sourceFile.fd
 
+    if (!canIUse('SystemCapability.Multimedia.Media.AVImageGenerator')) {
+      return ''
+    }
+    // @SuppressWarnings syscap
     const created = await media.createAVImageGenerator()
     if (!created) {
       return ''
@@ -116,7 +124,7 @@ export async function extractFirstFrameByService(
     const params: media.PixelMapParams = { width: THUMB_WIDTH, height: THUMB_HEIGHT }
     pixelMap = await generator.fetchFrameByTime(
       THUMB_TIME_US,
-      media.AVImageQueryOptions.AV_IMAGE_QUERY_CLOSEST_SYNC,
+      2 as media.AVImageQueryOptions,
       params
     )
     if (!pixelMap) {

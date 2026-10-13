@@ -27,13 +27,13 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "certpath": "C:\\Users\\gzr\\.ohos\\config\\default_Smart-Drive-Media_B3TNfu5BG5JSHmBIuZ_NISWru5mk0zGcZX2r4Bn7Ytk=.cer",
+          "certpath": "C:\\Users\\gzr\\.ohos\\config\\default_Smart-Drive-Media_RzhO3-FCgn2BFrXlUSIu4nWYRpnKafN0LiXl7--P1oU=.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "0000001BF6D238D3067E8EB7DA659EA9E343C8F45BE8214B017EAF59B539079DEE7EEA3C260A33583CBF6D",
-          "profile": "C:\\Users\\gzr\\.ohos\\config\\default_Smart-Drive-Media_B3TNfu5BG5JSHmBIuZ_NISWru5mk0zGcZX2r4Bn7Ytk=.p7b",
+          "keyPassword": "0000001B870720AC5A33ECD892013DCDA0F5C9BA8AA124E97ED2179BBF42C40FCEEE7B0143297EA40316F2",
+          "profile": "C:\\Users\\gzr\\.ohos\\config\\default_Smart-Drive-Media_RzhO3-FCgn2BFrXlUSIu4nWYRpnKafN0LiXl7--P1oU=.p7b",
           "signAlg": "SHA256withECDSA",
-          "storeFile": "C:\\Users\\gzr\\.ohos\\config\\default_Smart-Drive-Media_B3TNfu5BG5JSHmBIuZ_NISWru5mk0zGcZX2r4Bn7Ytk=.p12",
-          "storePassword": "0000001B3D15E97FB1F4DD5944C7C34638171416CFC540E80DE857343EAD0899CD2465E0BDDC7E51E6CF9D"
+          "storeFile": "C:\\Users\\gzr\\.ohos\\config\\default_Smart-Drive-Media_RzhO3-FCgn2BFrXlUSIu4nWYRpnKafN0LiXl7--P1oU=.p12",
+          "storePassword": "0000001B0049E68F32DB84A42799519F9A4D281A8F1DEBD738728310DB2AB621D60D03299FCDBECDA7B1A9"
         }
       }
     ]

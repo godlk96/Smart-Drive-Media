@@ -51,6 +51,15 @@ export interface TemplatePreviewSlot {
   y: number
   width: number
   height: number
+  /**
+   * 仅预览用的横向放大倍数（1 / 缺省 = 不放大）。
+   * 用来近似原生导出对 T4 左右两侧做的 crop：画布只占 1/4 宽，但显示的是 2 倍宽源画面的中段。
+   *
+   * 已知差异（不在本次重构范围内，故意不修）：原生左槽取 LeftFront 的**右半**、右槽取 RightFront 的**左半**，
+   * 而这里靠 Stack 居中把 2 倍宽画面裁成中段。要精确对齐需要再引入一个 crop 起点字段，
+   * 而它只能在真机上肉眼验证——在没有设备的前提下改它只会引入无法验证的视觉回归。
+   */
+  zoomX?: number
 }
 
 export interface TemplateFfmpegPolicy {
@@ -67,6 +76,13 @@ export interface TemplateDefinition {
   templateId: TemplateId
   title: string
   subtitle: string
+  /**
+   * 导出画布尺寸。与原生 kNativeTemplateContracts
+   * （entry/src/main/cpp/export_engine.cpp:83-89）逐条对应，
+   * 由 tools/offline-test.mjs 的跨语言一致性用例守着，防止"预览一套、导出一套"再次漂移。
+   */
+  canvasWidth: number
+  canvasHeight: number
   requiredCameras: Array<CameraPosition>
   optionalCameras: Array<CameraPosition>
   slotBindings: Array<TemplateSlotBinding>
@@ -79,6 +95,8 @@ export const DEFAULT_TEMPLATE_ID: TemplateId = TemplateId.T2
 const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
   [TemplateId.T1]: {
     templateId: TemplateId.T1,
+    canvasWidth: 1920,
+    canvasHeight: 2160,
     title: '防追尾双录',
     subtitle: '上下堆叠',
     requiredCameras: [CameraPosition.FRONT, CameraPosition.REAR],
@@ -103,6 +121,8 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
   },
   [TemplateId.T2]: {
     templateId: TemplateId.T2,
+    canvasWidth: 1920,
+    canvasHeight: 1620,
     title: '避险防加塞',
     subtitle: '倒品字',
     requiredCameras: [CameraPosition.FRONT, CameraPosition.LEFT, CameraPosition.RIGHT],
@@ -129,6 +149,8 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
   },
   [TemplateId.T3]: {
     templateId: TemplateId.T3,
+    canvasWidth: 3840,
+    canvasHeight: 1080,
     title: '侧向防开门杀',
     subtitle: '左右分屏',
     requiredCameras: [CameraPosition.LEFT, CameraPosition.RIGHT],
@@ -153,6 +175,8 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
   },
   [TemplateId.T4]: {
     templateId: TemplateId.T4,
+    canvasWidth: 3840,
+    canvasHeight: 1080,
     title: '沉浸式旅拍',
     subtitle: '横向三分屏',
     requiredCameras: [CameraPosition.LEFT_FRONT, CameraPosition.FRONT, CameraPosition.RIGHT_FRONT],
@@ -163,9 +187,11 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
       { slotId: 'right', camera: CameraPosition.RIGHT_FRONT }
     ],
     previewSlots: [
-      { slotId: 'left', x: 0, y: 0, width: 0.3333, height: 1 },
-      { slotId: 'center', x: 0.3333, y: 0, width: 0.3334, height: 1 },
-      { slotId: 'right', x: 0.6667, y: 0, width: 0.3333, height: 1 }
+      // 与原生 T4 的 [left][middle][right] hstack 一致：960 / 1920 / 960 → 0.25 / 0.5 / 0.25。
+      // 原生对两侧做 crop=960:1080（左槽取右半、右槽取左半），预览用 zoomX=2 近似同一构图。
+      { slotId: 'left', x: 0, y: 0, width: 0.25, height: 1, zoomX: 2 },
+      { slotId: 'center', x: 0.25, y: 0, width: 0.5, height: 1 },
+      { slotId: 'right', x: 0.75, y: 0, width: 0.25, height: 1, zoomX: 2 }
     ],
     ffmpegPolicy: {
       needSideTrack: true,
@@ -179,6 +205,8 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
   },
   [TemplateId.T5]: {
     templateId: TemplateId.T5,
+    canvasWidth: 1920,
+    canvasHeight: 1080,
     title: '单前视',
     subtitle: '固定前视',
     requiredCameras: [CameraPosition.FRONT],

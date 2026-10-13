@@ -1,6 +1,6 @@
 import { EditorPreviewArea } from '../components/EditorPreviewArea'
 import { sharedCoreBridge } from '../bridge/CoreBridge'
-import { EditorStateModel, TemplateCardModel, TimelineMarkerModel, TimelineTrackModel } from '../model/AppState'
+import { EditorStateModel, PreviewSeekRequest, TemplateCardModel, TimelineMarkerModel, TimelineTrackModel } from '../model/AppState'
 import { TripSnapshot } from '../model/TripModels'
 import { startNativeExport } from '../NativeExportManager'
 import { debugLog } from '../utils/Logger'
@@ -15,38 +15,18 @@ struct Editor {
   private exportSessionSeed: string = ''
   private controlsTimer: number = -1
   private lastLoggedSecond: number = -1
-  private pendingReleaseWaitTaskId: number = 0
-  private pendingReleaseWaitTimer: number = -1
-  private pendingReleaseWaitResolve?: () => void
-  private pendingPreparedWaitTaskId: number = 0
-  private pendingPreparedWaitTimer: number = -1
   @State private showPlayerControls: boolean = true
   @State private showPreviewCover: boolean = true
   @State private previewPlaying: boolean = false
-  @State private isTemplateSwitching: boolean = false
-  private isSwitchingTemplate: boolean = false
-  @State private templateSwitchLoadingVisible: boolean = false
-  @State private templateSwitchLoadingText: string = '切换模板中...'
-  private templateSwitchEpoch: number = 0
-  private templateSwitchPendingCard?: TemplateCardModel
-  private templateSwitchLoopRunning: boolean = false
-  private templateSwitchWaitVersion: number = -1
-  private templateSwitchReadyVersion: number = -1
-  private templateSwitchReadyResolver?: () => void
-  private readonly templateSwitchReadyTimeoutMs: number = 1800
-  private readonly templateSwitchLoadingMinMs: number = 160
   private isTimelineDragging: boolean = false
-  private isSettlingAfterDrag: boolean = false
   private dragPreviewSec: number = 0
-  private settleTargetSec: number = 0
-  private settleTimer: number = -1
-  private readonly settleWindowMs: number = 260
   private lastStablePlayheadSec: number = 0
-  private readonly minuteBoundaryHysteresisSec: number = 0.35
-  @State private seekToken: number = 0
-  @State private switchTaskId: number = 0
+  /**
+   * 显式跳转请求。**只有**用户主动跳转才递增 token（见 requestPreviewSeek）。
+   * 播放推进只改 playheadSec（展示用），不会发请求——位置由预览区的 TimelineClock 持有。
+   */
+  @State private previewSeek: PreviewSeekRequest = new PreviewSeekRequest()
   @State private tripSnapshot: TripSnapshot = new TripSnapshot()
-  @State private previewRenderVersion: number = 0
   @State private showSlotLabels: boolean = false
   @State private exportLoadingVisible: boolean = false
   @State private exportLoadingText: string = '导出处理中...'
@@ -108,24 +88,6 @@ struct Editor {
     this.state = nextState
   }
 
-  private stabilizeMinuteBoundary(rawSec: number): number {
-    const clamped = Math.max(0, Math.min(rawSec, this.state.totalDurationSec))
-    const last = this.lastStablePlayheadSec
-    if (last <= 0) {
-      return clamped
-    }
-    const lastMinute = Math.floor(last / 60)
-    const currentMinute = Math.floor(clamped / 60)
-    if (lastMinute === currentMinute) {
-      return clamped
-    }
-    const boundary = Math.max(lastMinute, currentMinute) * 60
-    if (Math.abs(clamped - boundary) < this.minuteBoundaryHysteresisSec) {
-      return last
-    }
-    return clamped
-  }
-
   aboutToAppear(): void {
     let params: Record<string, string> = {}
     try {
@@ -145,6 +107,9 @@ struct Editor {
     this.showPreviewCover = this.hasPreviewSource()
     this.previewPlaying = false
     this.showPlayerControls = true
+    // 把"宿主认为的播放头"作为一次显式跳转交给预览区。预览区挂载时会消费这个待处理请求，
+    // 否则新挂载的 TimelineClock 从 0 开始，而界面显示的是恢复出来的位置（画面与播放头不一致）。
+    this.requestPreviewSeek(this.state.playheadSec * 1000)
     this.scheduleHideControls()
     this.hasUnsavedChanges = false
     this.backConfirmVisible = false
@@ -155,9 +120,6 @@ struct Editor {
 
   aboutToDisappear(): void {
     this.clearHideControlsTimer()
-    this.clearSettleTimer()
-    this.resolveTemplateSwitchReleaseWait(this.pendingReleaseWaitTaskId)
-    this.resolveTemplateSwitchPreparedWait(this.pendingPreparedWaitTaskId)
     if (this.toastTimer >= 0) {
       clearTimeout(this.toastTimer)
       this.toastTimer = -1
@@ -177,13 +139,6 @@ struct Editor {
       this.showPlayerControls = false
       debugLog('剪辑诊断', '播放器控件自动隐藏')
     }, 3000)
-  }
-
-  private clearSettleTimer(): void {
-    if (this.settleTimer >= 0) {
-      clearTimeout(this.settleTimer)
-      this.settleTimer = -1
-    }
   }
 
   private showControlsTemporarily(): void {
@@ -244,7 +199,7 @@ struct Editor {
     this.updatePlayheadSec(clamped)
     if (commitSeek) {
       this.applyState(this.viewModel.seekGlobalPlayhead(clamped))
-      this.seekToken += 1
+      this.requestPreviewSeek(clamped * 1000)
     }
     this.updatePlayheadText(this.viewModel.updatePlayheadText(this.state.playheadSec))
     if (fromUser && commitSeek && Math.floor(clamped) !== this.lastLoggedSecond) {
@@ -309,68 +264,7 @@ struct Editor {
     return this.viewModel.getTemplateMissingViews(card, this.state.timeline)
   }
 
-  private syncTemplateSwitchState(): void {
-    this.isTemplateSwitching = this.viewModel.getIsTemplateSwitching()
-    this.switchTaskId = this.viewModel.getTemplateSwitchTaskId()
-  }
-
-  private waitTemplateSwitchRelease(taskId: number): Promise<void> {
-    this.resolveTemplateSwitchReleaseWait(this.pendingReleaseWaitTaskId)
-    this.pendingReleaseWaitTaskId = taskId
-    return new Promise((resolve) => {
-      this.pendingReleaseWaitResolve = resolve
-      this.pendingReleaseWaitTimer = setTimeout(() => {
-        this.resolveTemplateSwitchReleaseWait(taskId)
-      }, 1500)
-    })
-  }
-
-  private resolveTemplateSwitchReleaseWait(taskId: number): void {
-    if (taskId <= 0 || this.pendingReleaseWaitTaskId !== taskId) {
-      return
-    }
-    this.pendingReleaseWaitTaskId = 0
-    if (this.pendingReleaseWaitTimer >= 0) {
-      clearTimeout(this.pendingReleaseWaitTimer)
-      this.pendingReleaseWaitTimer = -1
-    }
-    const resolve = this.pendingReleaseWaitResolve
-    this.pendingReleaseWaitResolve = undefined
-    if (resolve) {
-      resolve()
-    }
-  }
-
-  private startTemplateSwitchPreparedWatchdog(taskId: number): void {
-    this.resolveTemplateSwitchPreparedWait(this.pendingPreparedWaitTaskId)
-    if (taskId <= 0 || !this.viewModel.isTemplateSwitchTaskValid(taskId)) {
-      return
-    }
-    this.pendingPreparedWaitTaskId = taskId
-    this.pendingPreparedWaitTimer = setTimeout(() => {
-      if (this.pendingPreparedWaitTaskId !== taskId) {
-        return
-      }
-      this.completeTemplateSwitch(taskId)
-    }, 2200)
-  }
-
-  private resolveTemplateSwitchPreparedWait(taskId: number): void {
-    if (taskId <= 0 || this.pendingPreparedWaitTaskId !== taskId) {
-      return
-    }
-    this.pendingPreparedWaitTaskId = 0
-    if (this.pendingPreparedWaitTimer >= 0) {
-      clearTimeout(this.pendingPreparedWaitTimer)
-      this.pendingPreparedWaitTimer = -1
-    }
-  }
-
   private selectTemplateForUi(card: TemplateCardModel): void {
-    if (this.isTemplateSwitching || this.isSwitchingTemplate) {
-      this.showToast('模板切换中，请稍候')
-      return
-    }
     if (card.id === this.state.activeTemplateId) {
       this.showControlsTemporarily()
       return
@@ -380,7 +274,7 @@ struct Editor {
       this.showToast(`缺少${missing}视角，无法使用该模板`)
       return
     }
-    this.queueTemplateSwitch(card)
+    this.selectTemplate(card)
   }
 
   private addClipMark(): void {
@@ -496,17 +390,8 @@ struct Editor {
       return
     }
     const nextSec = Math.max(0, Math.min(this.state.totalDurationSec, playheadMs / 1000))
-    if (this.isSettlingAfterDrag) {
-      const delta = Math.abs(nextSec - this.settleTargetSec)
-      if (delta > 0.55) {
-        return
-      }
-      this.isSettlingAfterDrag = false
-      this.clearSettleTimer()
-    }
-    const stabilizedSec = this.stabilizeMinuteBoundary(nextSec)
-    this.updatePlayheadSec(stabilizedSec)
-    this.updatePlayheadText(this.viewModel.updatePlayheadText(stabilizedSec))
+    this.updatePlayheadSec(nextSec)
+    this.updatePlayheadText(this.viewModel.updatePlayheadText(nextSec))
   }
 
   private handlePreviewEnded(): void {
@@ -550,21 +435,14 @@ struct Editor {
     return Math.max(0, Math.min(this.state.totalDurationSec, percent * this.state.totalDurationSec))
   }
 
-  private beginSeekSettleWindow(targetSec: number): void {
-    this.settleTargetSec = Math.max(0, Math.min(targetSec, this.state.totalDurationSec))
-    this.isSettlingAfterDrag = true
-    this.clearSettleTimer()
-    this.settleTimer = setTimeout(() => {
-      this.isSettlingAfterDrag = false
-      this.settleTimer = -1
-    }, this.settleWindowMs)
-  }
-
   private commitTimelineSeekByLocalX(localX: number, fromUser: boolean): number {
     const finalSec = this.resolveTimelineTargetSec(localX)
     this.isTimelineDragging = false
-    this.beginSeekSettleWindow(finalSec)
     this.syncGlobalPlayhead(finalSec, fromUser, true)
+    if (this.wasPlayingBeforeDrag) {
+      this.previewPlaying = true
+      this.wasPlayingBeforeDrag = false
+    }
     return finalSec
   }
 
@@ -575,25 +453,30 @@ struct Editor {
   }
 
   private beginTimelineDrag(localX: number): void {
+    this.wasPlayingBeforeDrag = this.previewPlaying
+    if (this.previewPlaying) {
+      this.previewPlaying = false
+    }
     this.isTimelineDragging = true
-    this.isSettlingAfterDrag = false
-    this.clearSettleTimer()
-    this.dragPreviewSec = this.handleTimelineTouch(localX, true, true)
+    this.dragPreviewSec = this.handleTimelineTouch(localX, false, true)
   }
 
   private updateTimelineDrag(localX: number): void {
-    this.dragPreviewSec = this.handleTimelineTouch(localX, true, true)
+    this.dragPreviewSec = this.handleTimelineTouch(localX, false, true)
   }
 
   private endTimelineDrag(localX?: number): void {
-    const previewSec = Math.max(0, Math.min(this.dragPreviewSec, this.state.totalDurationSec))
     if (localX !== undefined) {
       this.commitTimelineSeekByLocalX(localX, true)
       return
     }
+    const previewSec = Math.max(0, Math.min(this.dragPreviewSec, this.state.totalDurationSec))
     this.isTimelineDragging = false
-    this.beginSeekSettleWindow(previewSec)
     this.syncGlobalPlayhead(previewSec, true, true)
+    if (this.wasPlayingBeforeDrag) {
+      this.previewPlaying = true
+      this.wasPlayingBeforeDrag = false
+    }
   }
 
   private updateExportStatus(statusText: string): void {
@@ -646,11 +529,22 @@ struct Editor {
     this.showControlsTemporarily()
   }
 
+  /**
+   * 唯一的跳转出口：生成一个新的 PreviewSeekRequest（token 递增 + 目标位置），一次赋值同时送达预览区。
+   * 之所以不用两个 @Prop（token / targetMs）：ArkUI 不保证两个 @Prop 的更新顺序，
+   * 会读到"新 token 配旧位置"，旧代码因此不得不加 260ms settle 窗口 + 0.55s 差值阈值去猜。
+   */
+  private requestPreviewSeek(targetMs: number): void {
+    const request = new PreviewSeekRequest()
+    request.token = this.previewSeek.token + 1
+    request.targetMs = Math.max(0, Math.round(targetMs))
+    this.previewSeek = request
+  }
+
   private switchCamera(camera: string): void {
     this.applyState(this.viewModel.switchCamera(camera))
     this.tripSnapshot = this.viewModel.getTripSnapshot(this.state.tripId)
-    this.previewRenderVersion += 1
-    this.seekToken += 1
+    this.requestPreviewSeek(this.state.playheadSec * 1000)
     this.showPreviewCover = this.hasPreviewSource()
     this.viewModel.logPreviewPayload(this.state)
     debugLog('剪辑页', `切换播放器视角=${camera}，片段=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
@@ -681,123 +575,36 @@ struct Editor {
     this.showControlsTemporarily()
   }
 
-  private async selectTemplate(card: TemplateCardModel): Promise<void> {
-    if (this.isTemplateSwitching) {
-      return
-    }
-    const taskId = this.viewModel.beginTemplateSwitchTask()
-    if (taskId <= 0 || !this.viewModel.isTemplateSwitchTaskValid(taskId)) {
-      return
-    }
-    let waitPreviewPrepared = false
+  /**
+   * 切换模板 —— 一个同步的状态变更。
+   *
+   * 旧实现是：beginTemplateSwitchTask 拿 taskId → changeTemplate → 等预览区
+   * 通过 onTemplateSwitchStageReady 回报 'prepared'/'playing'，期间挂着 1800ms
+   * 就绪看门狗和 2200ms 兜底，外加 1500ms release 等待。三个独立超时、两处
+   * resolve、四处 isTemplateSwitchTaskValid 复查交错在一起 —— 这正是"修好这个
+   * 冒出那个"的源头。预览区的几何与段绑定现在是同步的，切换后只需要把播放
+   * 意图同步下去；时钟位置不变（播放头由 TimelineClock 持有，不必在此重设）。
+   */
+  private selectTemplate(card: TemplateCardModel): void {
+    const wasPlaying = this.previewPlaying
+    const targetSec = this.state.playheadSec
     try {
-      this.syncTemplateSwitchState()
-      if (!this.viewModel.isTemplateSwitchTaskValid(taskId)) {
-        return
-      }
-      const wasPlaying = this.previewPlaying
-      const targetSec = this.state.playheadSec
-      this.pauseAllPreview()
-      if (this.hasPreviewSource()) {
-        await this.waitTemplateSwitchRelease(taskId)
-      }
-      if (!this.viewModel.isTemplateSwitchTaskValid(taskId)) {
-        return
-      }
-      const switchedState = this.viewModel.changeTemplate(card.id, taskId)
-      if (!switchedState || !this.viewModel.isTemplateSwitchTaskValid(taskId)) {
-        return
-      }
-      this.applyState(switchedState)
+      this.applyState(this.viewModel.changeTemplate(card.id))
       this.applyState(this.viewModel.seekGlobalPlayhead(targetSec))
       this.updatePlayheadSec(this.state.playheadSec)
       this.updatePlayheadText(this.viewModel.updatePlayheadText(this.state.playheadSec))
       this.tripSnapshot = this.viewModel.getTripSnapshot(this.state.tripId)
-
-      this.previewRenderVersion += 1
       this.showPreviewCover = !wasPlaying
-      this.seekToken += 1
       if (wasPlaying) {
         this.startAllPreview()
       }
-      waitPreviewPrepared = this.hasPreviewSource()
       debugLog('剪辑页', `切换模板=${card.id}`)
       this.markUnsaved()
-      this.showControlsTemporarily()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       debugLog('剪辑页', `切换模板失败：${message}`)
-    } finally {
-      this.templateSwitchLoadingVisible = false
-      if (waitPreviewPrepared) {
-        this.startTemplateSwitchPreparedWatchdog(taskId)
-      } else {
-        this.completeTemplateSwitch(taskId)
-      }
     }
-  }
-
-  private queueTemplateSwitch(card: TemplateCardModel): void {
-    this.selectTemplate(card)
-  }
-
-  private completeTemplateSwitch(taskId: number): void {
-    this.resolveTemplateSwitchPreparedWait(taskId)
-    this.resolveTemplateSwitchReleaseWait(taskId)
-    if (!this.viewModel.isTemplateSwitchTaskValid(taskId)) {
-      return
-    }
-    this.viewModel.finishTemplateSwitchTask(taskId)
-    this.syncTemplateSwitchState()
-  }
-
-  private handleTemplateSwitchStageReady(taskId: number, stage: string): void {
-    if (taskId <= 0 || taskId !== this.switchTaskId) {
-      return
-    }
-    if (stage === 'released' || stage === 'failed') {
-      this.resolveTemplateSwitchReleaseWait(taskId)
-    }
-    if (stage === 'released') {
-      return
-    }
-    if (stage !== 'prepared' && stage !== 'playing' && stage !== 'failed') {
-      return
-    }
-    this.completeTemplateSwitch(taskId)
-  }
-
-  private onPreviewRebuildReady(version: number): void {
-    this.templateSwitchReadyVersion = Math.max(this.templateSwitchReadyVersion, version)
-    if (this.templateSwitchReadyResolver && this.templateSwitchReadyVersion >= this.templateSwitchWaitVersion) {
-      const resolve = this.templateSwitchReadyResolver
-      this.templateSwitchReadyResolver = undefined
-      this.templateSwitchWaitVersion = -1
-      resolve()
-    }
-  }
-
-  private waitForTemplateSwitchReady(version: number): Promise<void> {
-    if (this.templateSwitchReadyVersion >= version) {
-      return Promise.resolve()
-    }
-    return new Promise((resolve: () => void) => {
-      this.templateSwitchWaitVersion = version
-      this.templateSwitchReadyResolver = resolve
-      setTimeout(() => {
-        if (this.templateSwitchReadyResolver === resolve) {
-          this.templateSwitchReadyResolver = undefined
-          this.templateSwitchWaitVersion = -1
-          resolve()
-        }
-      }, this.templateSwitchReadyTimeoutMs)
-    })
-  }
-
-  private sleepMs(durationMs: number): Promise<void> {
-    return new Promise((resolve: () => void) => {
-      setTimeout(() => resolve(), durationMs)
-    })
+    this.showControlsTemporarily()
   }
 
   private toggleDrawer(): void {
@@ -805,21 +612,28 @@ struct Editor {
   }
 
   private cycleSpeed(): void {
-    this.applyState(this.viewModel.cycleSpeed())
-    this.seekToken += 1
+    const currentSec = this.state.playheadSec
+    const nextState = this.viewModel.cycleSpeed()
+    nextState.playheadSec = currentSec
+    this.applyState(nextState)
     debugLog('剪辑诊断', `切换整体倍速=${this.getPlaybackRate()}X`)
     this.markUnsaved()
     this.showControlsTemporarily()
   }
 
   private toggleMuted(): void {
-    this.applyState(this.viewModel.toggleMuted())
-    this.seekToken += 1
+    const currentSec = this.state.playheadSec
+    const nextState = this.viewModel.toggleMuted()
+    nextState.playheadSec = currentSec
+    this.applyState(nextState)
     this.showControlsTemporarily()
   }
 
   private toggleWatermark(): void {
-    this.applyState(this.viewModel.toggleWatermark())
+    const currentSec = this.state.playheadSec
+    const nextState = this.viewModel.toggleWatermark()
+    nextState.playheadSec = currentSec
+    this.applyState(nextState)
     this.showControlsTemporarily()
   }
 
@@ -876,7 +690,7 @@ struct Editor {
                     .backgroundColor(card.id === this.state.activeTemplateId ? '#FF7A00' : '#333333')
                     .borderRadius(8)
                     .border({ width: 2, color: card.id === this.state.activeTemplateId ? '#FF7A00' : '#00000000' })
-                    .opacity(this.isTemplateSwitching || this.isTemplateDisabled(card) ? 0.5 : 1)
+                    .opacity(this.isTemplateDisabled(card) ? 0.5 : 1)
                     .onClick(() => this.selectTemplateForUi(card))
                   }, (card: TemplateCardModel) => card.id)
                 }
@@ -899,21 +713,17 @@ struct Editor {
               Stack({ alignContent: Alignment.Center }) {
                 if (this.hasPreviewSource()) {
                   EditorPreviewArea({
-                    editorState: this.state,
+                    activeTemplateId: this.state.activeTemplateId,
                     tripSnapshot: this.tripSnapshot,
-                    isTemplateSwitching: this.isTemplateSwitching,
-                    renderVersion: this.previewRenderVersion,
+                    hideSpeed: this.state.hideSpeed,
+                    hideVin: this.state.hideVin,
+                    hideTime: this.state.hideTime,
                     playing: this.previewPlaying,
-                    seekToken: this.seekToken,
-                    switchTaskId: this.switchTaskId,
-                    seekBlocked: this.isTimelineDragging,
-                    playheadMs: Math.floor(this.state.playheadSec * 1000),
                     muted: this.state.muted,
                     speedLabel: this.state.speedLabel,
+                    seekRequest: this.previewSeek,
                     onPlayheadChanged: (playheadMs: number) => this.handlePreviewPlayheadChanged(playheadMs),
-                    onPlaybackEnded: () => this.handlePreviewEnded(),
-                    onTemplateSwitchStageReady: (taskId: number, stage: string) => this.handleTemplateSwitchStageReady(taskId, stage),
-                    onRebuildReady: (version: number) => this.onPreviewRebuildReady(version)
+                    onPlaybackEnded: () => this.handlePreviewEnded()
                   })
                     .width('100%')
                     .height('100%')
@@ -949,7 +759,7 @@ struct Editor {
                 }
               }
               .width('100%')
-              .aspectRatio(this.getPreviewAspectRatio())
+              .aspectRatio(16 / 9)
               .backgroundColor('#000000')
               .onClick(() => {
                 if (this.showPreviewCover && this.hasPreviewSource()) {
@@ -1200,22 +1010,6 @@ struct Editor {
             .width(54)
             .height(54)
           Text(this.exportLoadingText)
-            .fontSize(13)
-            .fontColor('#F8FAFC')
-        }
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
-        .width('100%')
-        .height('100%')
-        .backgroundColor('#88000000')
-      }
-      if (this.templateSwitchLoadingVisible) {
-        Column({ space: 10 }) {
-          LoadingProgress()
-            .color('#0A59F7')
-            .width(54)
-            .height(54)
-          Text(this.templateSwitchLoadingText)
             .fontSize(13)
             .fontColor('#F8FAFC')
         }

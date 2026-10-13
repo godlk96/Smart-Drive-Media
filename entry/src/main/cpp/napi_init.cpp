@@ -439,25 +439,16 @@ static napi_value RunExportPipelineAsync(napi_env env, napi_callback_info info)
 
 static std::string normalizeCamera(const std::string &cameraRaw)
 {
-    if (cameraRaw == "front") {
+    if (cameraRaw == "front" || cameraRaw == "ft") {
         return "Front";
     }
-    if (cameraRaw == "back") {
+    if (cameraRaw == "back" || cameraRaw == "rear" || cameraRaw == "rr") {
         return "Back";
     }
-    if (cameraRaw == "rear") {
-        return "Back";
-    }
-    if (cameraRaw == "left") {
+    if (cameraRaw == "left" || cameraRaw == "left_rear" || cameraRaw == "lt") {
         return "Left";
     }
-    if (cameraRaw == "left_rear") {
-        return "Left";
-    }
-    if (cameraRaw == "right") {
-        return "Right";
-    }
-    if (cameraRaw == "right_rear") {
+    if (cameraRaw == "right" || cameraRaw == "right_rear" || cameraRaw == "rt") {
         return "Right";
     }
     if (cameraRaw == "left_front") {
@@ -599,9 +590,14 @@ static napi_value ParseDvrFileName(napi_env env, napi_callback_info info)
         napi_get_null(env, &nil);
         return nil;
     }
-    const std::regex pattern("^(?:.+_)?DVR_LoopRecording_(\\d{4}-\\d{2}-\\d{2})_(\\d{2})-(\\d{2})-(\\d{2})_([a-z_]+)_camera\\.(mp4|mov|ts)$", std::regex::icase);
+    const std::regex loopPattern("^(?:.+_)?DVR_LoopRecording_(\\d{4}-\\d{2}-\\d{2})_(\\d{2})-(\\d{2})-(\\d{2})_([a-z_]+)_camera\\.(mp4|mov|ts)$", std::regex::icase);
+    const std::regex sentryPattern("^(?:.+_)?Sentry_(\\d{4}-\\d{2}-\\d{2})_(\\d{2})-(\\d{2})-(\\d{2})_([a-z]+)\\.(mp4|mov|ts)$", std::regex::icase);
     std::smatch match;
-    if (std::regex_match(name, match, pattern)) {
+    bool matched = std::regex_match(name, match, loopPattern);
+    if (!matched) {
+        matched = std::regex_match(name, match, sentryPattern);
+    }
+    if (matched) {
         std::string date = match[1];
         std::string hh = match[2];
         std::string mm = match[3];
