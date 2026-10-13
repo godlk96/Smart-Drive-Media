@@ -310,7 +310,7 @@ export struct EditorPreviewArea {
           Column()
             .width('100%')
             .height('100%')
-            .backgroundColor('#333333')
+            .backgroundColor($r('app.color.stage_divider'))
         }
       }
       .clip(true)
@@ -331,10 +331,10 @@ export struct EditorPreviewArea {
       .aspectRatio(templateAspectRatio(this.activeTemplateId))
       .width(templateAspectRatio(this.activeTemplateId) >= 16 / 9 ? '100%' : undefined)
       .height(templateAspectRatio(this.activeTemplateId) < 16 / 9 ? '100%' : undefined)
-      .backgroundColor('#000000')
+      .backgroundColor($r('app.color.stage_bg'))
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#000000')
+    .backgroundColor($r('app.color.stage_bg'))
   }
 }

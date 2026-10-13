@@ -107,6 +107,26 @@
     {
       "name": "knob_shadow",
       "value": "#8C000000"
+    },
+    {
+      "name": "stage_btn_bg",
+      "value": "#24FFFFFF"
+    },
+    {
+      "name": "stage_btn_border",
+      "value": "#3DFFFFFF"
+    },
+    {
+      "name": "stage_btn_fg",
+      "value": "#F0FFFFFF"
+    },
+    {
+      "name": "export_scrim",
+      "value": "#88000000"
+    },
+    {
+      "name": "export_text",
+      "value": "#F8FAFC"
     }
   ]
 }

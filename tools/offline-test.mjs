@@ -258,7 +258,9 @@ const REQUIRED_COLOR_TOKENS = new Map([
   ['overlay_veil', '#E614120F'], ['overlay_fade', '#0014120F'],
   ['overlay_track', '#4DFFFFFF'], ['overlay_text', '#D6FFFFFF'],
   ['overlay_btn_bg', '#29FFFFFF'], ['overlay_btn_border', '#42FFFFFF'],
-  ['knob_shadow', '#8C000000']
+  ['knob_shadow', '#8C000000'],
+  ['stage_btn_bg', '#24FFFFFF'], ['stage_btn_border', '#3DFFFFFF'], ['stage_btn_fg', '#F0FFFFFF'],
+  ['export_scrim', '#88000000'], ['export_text', '#F8FAFC']
 ])
 
 function checkColorTokens() {
@@ -283,20 +285,29 @@ function checkColorTokens() {
 }
 
 /**
- * 组件配色守卫：Task 8 的三个组件不得出现十六进制色值（一律走 `$r('app.color.*')`）。
- * Task 9 重写 Editor.ets 后把页面也并进来。
+ * 页面与组件配色守卫（spec §8.11）：剪辑页与三个组件都不得出现遗留配色或十六进制色值，
+ * 一律走 `$r('app.color.*')`。
  */
-const COMPONENT_FILES = [
+const UI_FILES = [
+  'entry/src/main/ets/pages/Editor.ets',
+  'entry/src/main/ets/components/EditorPreviewArea.ets',
   'entry/src/main/ets/components/SegmentParamRow.ets',
   'entry/src/main/ets/components/SegmentTrack.ets',
   'entry/src/main/ets/components/TemplateStrip.ets'
 ]
 
-function checkComponentColors() {
-  const name = '组件无硬编码配色'
+const LEGACY_COLORS = ['#FF7A00', '#0A59F7', '#FF4444', '#F97316', '#181818', '#282828', '#333333', '#121212', '#1A1A1A']
+
+function checkNoLegacyColors() {
+  const name = '剪辑页与组件无硬编码配色'
   const problems = []
-  for (const rel of COMPONENT_FILES) {
+  for (const rel of UI_FILES) {
     const src = readFileSync(join(ROOT, rel), 'utf8')
+    for (const color of LEGACY_COLORS) {
+      if (src.toUpperCase().includes(color)) {
+        problems.push(`${rel} 仍含 ${color}`)
+      }
+    }
     const hits = src.match(/#[0-9A-Fa-f]{6,8}/g)
     if (hits) {
       problems.push(`${rel} 含十六进制色值 ${Array.from(new Set(hits)).join(' ')}`)
@@ -368,12 +379,12 @@ async function main() {
     failures.push({ name: colors.name, detail: colors.detail })
   }
 
-  // 5) 组件里不许有硬编码配色
-  const componentColors = checkComponentColors()
-  if (componentColors.ok) {
+  // 5) 页面与组件里不许有硬编码配色
+  const uiColors = checkNoLegacyColors()
+  if (uiColors.ok) {
     passed += 1
   } else {
-    failures.push({ name: componentColors.name, detail: componentColors.detail })
+    failures.push({ name: uiColors.name, detail: uiColors.detail })
   }
 
   const total = passed + failures.length
