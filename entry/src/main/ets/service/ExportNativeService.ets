@@ -33,6 +33,13 @@ class NativeExportPipelineResult {
   outputPath: string = ''
 }
 
+interface NativeExportProgressResponse {
+  percent: number
+  currentFrame: number
+  totalFrames: number
+  stage: number
+}
+
 function deepCloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
@@ -222,7 +229,8 @@ async function materializeInputUris(
   uris: Array<string>,
   outputPath: string,
   prefix: string,
-  onLog: (message: string) => void
+  onLog: (message: string) => void,
+  onFileCopied?: () => void
 ): Promise<MaterializedUriSet> {
   const outputDir = resolveParentDir(outputPath)
   const inputUris: Array<string> = []
@@ -231,6 +239,9 @@ async function materializeInputUris(
     const uri = uris[index]
     if (uri.startsWith('/data/storage/')) {
       inputUris.push(uri)
+      if (onFileCopied) {
+        onFileCopied()
+      }
       continue
     }
     const targetPath = `${outputDir}/${prefix}_${Date.now()}_${index}.mp4`
@@ -238,6 +249,9 @@ async function materializeInputUris(
     onLog(`Native导出阶段 素材落地 ${prefix}[${index}] -> ${targetPath}`)
     inputUris.push(targetPath)
     tempUris.push(targetPath)
+    if (onFileCopied) {
+      onFileCopied()
+    }
   }
   return { inputUris, tempUris }
 }
@@ -284,13 +298,20 @@ export async function executeComposeByService(
     throw new Error('导出失败：前后路素材不足')
   }
 
-  // 阶段 1: 素材准备与切片物化 (10%)
-  onProgress(10)
+  // 阶段 1: 素材准备与切片物化 (5% ~ 20%)
+  onProgress(5)
   const materializeStart = Date.now()
+  const totalClips = Math.max(1, isolatedRequest.frontUris.length + isolatedRequest.backUris.length + isolatedRequest.sideUris.length)
+  let copiedClipsCount = 0
+  const onFileCopied = () => {
+    copiedClipsCount++
+    const p = Math.min(20, Math.floor(5 + (copiedClipsCount / totalClips) * 15))
+    onProgress(p)
+  }
   const materialized = await Promise.all([
-    materializeInputUris(isolatedRequest.frontUris, isolatedRequest.outputPath, 'front', onLog),
-    materializeInputUris(isolatedRequest.backUris, isolatedRequest.outputPath, 'back', onLog),
-    materializeInputUris(isolatedRequest.sideUris, isolatedRequest.outputPath, 'side', onLog)
+    materializeInputUris(isolatedRequest.frontUris, isolatedRequest.outputPath, 'front', onLog, onFileCopied),
+    materializeInputUris(isolatedRequest.backUris, isolatedRequest.outputPath, 'back', onLog, onFileCopied),
+    materializeInputUris(isolatedRequest.sideUris, isolatedRequest.outputPath, 'side', onLog, onFileCopied)
   ])
   const frontInputUris = materialized[0]?.inputUris ?? []
   const backInputUris = materialized[1]?.inputUris ?? []
@@ -313,11 +334,27 @@ export async function executeComposeByService(
     throw new Error('smartdrive_exporter.runExportPipelineAsync 未实现')
   }
 
-  // 阶段 2: 启动 Native 渲染合成 (35%)
-  onProgress(35)
+  // 阶段 2: 启动 Native 渲染合成 (20% ~ 85%)，启动高频定时轮询 Native 进度，保证 UI 细腻跳动不卡顿
+  onProgress(20)
   onLog('Native导出阶段 启动 export_engine 渲染合成管线')
   const nativeStart = Date.now()
   let outputPath: string = ''
+  let lastReportedProgress = 20
+  const progressTimer = setInterval(() => {
+    try {
+      const getProgressFn = (smartdriveExporter as Record<string, Object | Function> | undefined)?.getExportProgress as (() => NativeExportProgressResponse) | undefined
+      if (typeof getProgressFn === 'function') {
+        const prog = getProgressFn()
+        const pct = Number(prog?.percent ?? 0)
+        if (pct > lastReportedProgress && pct <= 85) {
+          lastReportedProgress = pct
+          onProgress(pct)
+        }
+      }
+    } catch (_) {
+    }
+  }, 120)
+
   try {
     const result = await runPipelineAsync(payload)
     const errorCode = Number(result?.code ?? -1)
@@ -328,6 +365,7 @@ export async function executeComposeByService(
     }
     outputPath = String(result?.outputPath ?? '')
   } finally {
+    clearInterval(progressTimer)
     await removeMaterializedTempUris(tempUris, onLog)
   }
   if (outputPath.length === 0) {
@@ -335,7 +373,7 @@ export async function executeComposeByService(
   }
   onLog(`Native导出阶段 Native处理耗时=${Date.now() - nativeStart}ms`)
 
-  // 阶段 3: Native 合成完成，进入相册写入 (85%)
+  // 阶段 3: Native 合成完成，进入相册写入 (85% ~ 100%)
   onProgress(85)
   onLog(`Native导出阶段 完成 输出=${outputPath}`)
   return outputPath

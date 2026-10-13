@@ -15,7 +15,15 @@ export interface NativeExportPipelineResult {
   outputPath: string
 }
 
+export interface NativeExportProgress {
+  percent: number
+  currentFrame: number
+  totalFrames: number
+  stage: number
+}
+
 export const runExportPipelineAsync: (payload: NativeExportPipelineRequest) => Promise<NativeExportPipelineResult>
+export const getExportProgress: () => NativeExportProgress
 
 export interface NativeDvrMeta {
   fileName: string

@@ -31,6 +31,7 @@ struct Editor {
   @State private tripSnapshot: TripSnapshot = new TripSnapshot()
   @State private exportLoadingVisible: boolean = false
   @State private exportLoadingText: string = '导出处理中...'
+  @State private exportProgress: number = 0
   @State private hasUnsavedChanges: boolean = false
   @State private backConfirmVisible: boolean = false
   @State private toastText: string = ''
@@ -431,12 +432,14 @@ struct Editor {
     }
     const context = host as common.UIAbilityContext
     this.exportLoadingVisible = true
-    this.exportLoadingText = '导出处理中...'
-    this.updateExportStatus('导出处理中...')
+    this.exportLoadingText = '准备导出...'
+    this.exportProgress = 0
+    this.updateExportStatus('准备导出...')
     try {
       const outputPath = await startNativeExport(exportSnapshot, context, (event) => {
         this.updateExportStatus(event.status)
         this.exportLoadingText = event.status
+        this.exportProgress = event.progress
         debugLog('导出', `导出事件 job=${event.jobId} status=${event.status} progress=${event.progress}`)
       })
       this.updateExportStatus(`导出完成：${outputPath}`)
@@ -717,11 +720,12 @@ struct Editor {
       }
 
       if (this.exportLoadingVisible) {
-        Column({ space: 12 }) {
-          LoadingProgress()
+        Column({ space: 14 }) {
+          Progress({ value: Math.max(1, this.exportProgress), total: 100, type: ProgressType.Ring })
+            .width(56)
+            .height(56)
             .color($r('app.color.amber'))
-            .width(54)
-            .height(54)
+            .style({ strokeWidth: 4, enableScanEffect: true })
           Text(this.exportLoadingText)
             .fontSize(13)
             .fontColor($r('app.color.export_text'))

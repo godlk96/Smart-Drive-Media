@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
@@ -14,6 +15,34 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+static std::atomic<int> g_exportPercent{0};
+static std::atomic<int64_t> g_exportCurrentFrame{0};
+static std::atomic<int64_t> g_exportTotalFrames{0};
+static std::atomic<int> g_exportStage{0};
+
+NativeExportProgressInfo getNativeExportProgress()
+{
+    NativeExportProgressInfo info;
+    info.percent = g_exportPercent.load();
+    info.currentFrame = g_exportCurrentFrame.load();
+    info.totalFrames = g_exportTotalFrames.load();
+    info.stage = g_exportStage.load();
+    return info;
+}
+
+void setNativeExportProgress(int percent, int64_t currentFrame, int64_t totalFrames, int stage)
+{
+    g_exportPercent.store(percent);
+    g_exportCurrentFrame.store(currentFrame);
+    g_exportTotalFrames.store(totalFrames);
+    g_exportStage.store(stage);
+}
+
+void resetNativeExportProgress()
+{
+    setNativeExportProgress(0, 0, 0, 0);
+}
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -849,10 +878,13 @@ bool composeTemplateToMp4(const std::string &templateId,
 
     int64_t encodedFrameCount = 0;
     int sinkBreakRet = 0;
+    const int64_t totalExpectedFrames = (frameRate.den > 0 && frameRate.num > 0 && effectiveDurationSec > 0.0)
+        ? static_cast<int64_t>(std::ceil(effectiveDurationSec * static_cast<double>(frameRate.num) / static_cast<double>(frameRate.den)))
+        : (effectiveDurationSec > 0.0 ? static_cast<int64_t>(effectiveDurationSec * 30.0) : 1800);
     {
         std::ostringstream encodeBegin;
         encodeBegin << "begin cutoffPts=" << videoCutoffPts << " fps=" << frameRate.num << "/" << frameRate.den
-                    << " expectFrames=" << (frameRate.den > 0 ? (effectiveDurationSec * frameRate.num / frameRate.den) : 0.0);
+                    << " expectFrames=" << totalExpectedFrames;
         logPipeline("encode", encodeBegin.str());
     }
     while (true) {
@@ -865,13 +897,29 @@ bool composeTemplateToMp4(const std::string &templateId,
             av_packet_free(&audioPkt);
             cleanupComposeResources();
             error = "compose_buffersink_get_frame_failed";
+            setNativeExportProgress(-1, encodedFrameCount, totalExpectedFrames, -1);
             return false;
         }
         frame->pts = nextPts++;
         ++encodedFrameCount;
+        if (totalExpectedFrames > 0) {
+            double ratio = static_cast<double>(encodedFrameCount) / static_cast<double>(totalExpectedFrames);
+            if (ratio > 0.99) {
+                ratio = 0.99;
+            }
+            if (ratio < 0.0) {
+                ratio = 0.0;
+            }
+            int currentPct = 25 + static_cast<int>(ratio * 60.0);
+            if (currentPct > 84) {
+                currentPct = 84;
+            }
+            setNativeExportProgress(currentPct, encodedFrameCount, totalExpectedFrames, 2);
+        }
         if (encodedFrameCount % 100 == 0) {
             std::ostringstream encodeProgress;
-            encodeProgress << "progress frames=" << encodedFrameCount << " pts=" << frame->pts;
+            encodeProgress << "progress frames=" << encodedFrameCount << " pts=" << frame->pts
+                           << " pct=" << g_exportPercent.load();
             logPipeline("encode", encodeProgress.str());
         }
         if (avcodec_send_frame(encoderCtx, frame) < 0) {
@@ -974,6 +1022,7 @@ bool composeTemplateToMp4(const std::string &templateId,
         logPipeline("encode", composeFinish.str());
     }
     av_write_trailer(outputFmt);
+    setNativeExportProgress(85, encodedFrameCount, totalExpectedFrames, 3);
     cleanupComposeResources();
     return true;
 }
@@ -1799,12 +1848,16 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
             logPipeline("request.segment", one.str());
         }
     }
+    resetNativeExportProgress();
+    setNativeExportProgress(20, 0, 0, 1);
     if (frontUris.empty() || backUris.empty()) {
         logPipeline("validate", "invalid input: front/back uris empty");
+        setNativeExportProgress(-1, 0, 0, -1);
         return "__ERROR__:pipeline_invalid_input";
     }
     if (outputPath.empty()) {
         logPipeline("validate", "invalid input: outputPath empty");
+        setNativeExportProgress(-1, 0, 0, -1);
         return "__ERROR__:pipeline_output_path_empty";
     }
 
@@ -1820,8 +1873,10 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
     logPipeline("probe", "start probing front primary source");
     if (!probeVideoStream(frontPrimary, probe, error)) {
         logPipeline("probe", "failed probing front source: " + error);
+        setNativeExportProgress(-1, 0, 0, -1);
         return "__ERROR__:pipeline_probe_front_" + error;
     }
+    setNativeExportProgress(22, 0, 0, 1);
     std::ostringstream probeInfo;
     probeInfo << "probe success width=" << probe.width << " height=" << probe.height
               << " pixFmt=" << probe.pixFmt << " fps=" << probe.frameRate.num << "/" << probe.frameRate.den;
@@ -1943,6 +1998,7 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
         logPipeline("track", trackInfo.str());
     }
     logPipeline("mux", "emit mp4 by ffmpeg template compose, template=" + normalizedTemplate);
+    setNativeExportProgress(25, 0, 0, 2);
     std::vector<NativeExportSegment> effectiveSegments = segments;
     if (effectiveSegments.empty()) {
         NativeExportSegment singleSegment;
@@ -1967,6 +2023,7 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
                               outputPath,
                               error)) {
         logPipeline("mux", "emit failed: " + error);
+        setNativeExportProgress(-1, 0, 0, -1);
         if (!frontConcatPath.empty()) {
             std::remove(frontConcatPath.c_str());
         }

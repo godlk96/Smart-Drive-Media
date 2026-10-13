@@ -693,6 +693,19 @@ static napi_value MergeTimeline(napi_env env, napi_callback_info info)
     return createTimelineArray(env, tracks);
 }
 
+static napi_value GetExportProgress(napi_env env, napi_callback_info info)
+{
+    (void)info;
+    NativeExportProgressInfo p = getNativeExportProgress();
+    napi_value output = nullptr;
+    napi_create_object(env, &output);
+    setNamedInt(env, output, "percent", static_cast<int64_t>(p.percent));
+    setNamedInt(env, output, "currentFrame", p.currentFrame);
+    setNamedInt(env, output, "totalFrames", p.totalFrames);
+    setNamedInt(env, output, "stage", static_cast<int64_t>(p.stage));
+    return output;
+}
+
 static napi_value GetCoreApiVersion(napi_env env, napi_callback_info info)
 {
     (void)info;
@@ -707,6 +720,7 @@ static napi_value Init(napi_env env, napi_value exports)
 {
     napi_property_descriptor desc[] = {
         {"runExportPipelineAsync", nullptr, RunExportPipelineAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"getExportProgress", nullptr, GetExportProgress, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"parseDvrFileName", nullptr, ParseDvrFileName, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"buildTimeline", nullptr, BuildTimeline, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"mergeTimeline", nullptr, MergeTimeline, nullptr, nullptr, nullptr, napi_default, nullptr},

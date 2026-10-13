@@ -19,6 +19,17 @@ struct NativeExportSegment {
     bool muted = false;
 };
 
+struct NativeExportProgressInfo {
+    int percent = 0;
+    int64_t currentFrame = 0;
+    int64_t totalFrames = 0;
+    int stage = 0;
+};
+
+NativeExportProgressInfo getNativeExportProgress();
+void setNativeExportProgress(int percent, int64_t currentFrame, int64_t totalFrames, int stage);
+void resetNativeExportProgress();
+
 std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
                                     const std::vector<std::string> &backUris,
                                     const std::vector<std::string> &sideUris,
