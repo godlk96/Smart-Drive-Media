@@ -39,7 +39,8 @@ const BUILD_DIR = join(ROOT, '.offline-test-build')
 const SUITES = [
   { path: 'entry/src/ohosTest/ets/test/TimelineMathCases.ets', exportName: 'timelineMathCases' },
   { path: 'entry/src/ohosTest/ets/test/TimelineClockCases.ets', exportName: 'timelineClockCases' },
-  { path: 'entry/src/ohosTest/ets/test/PreviewLayoutCases.ets', exportName: 'previewLayoutCases' }
+  { path: 'entry/src/ohosTest/ets/test/PreviewLayoutCases.ets', exportName: 'previewLayoutCases' },
+  { path: 'entry/src/ohosTest/ets/test/SegmentModelCases.ets', exportName: 'segmentModelCases' }
 ]
 
 const TSC_CANDIDATES = [
