@@ -418,6 +418,7 @@ struct Editor {
     if (this.exportLoadingVisible) {
       return
     }
+    this.pauseAllPreview()
     const exportSnapshot = this.buildExportSnapshot()
     if (!exportSnapshot) {
       this.updateExportStatus('导出失败：缺少行程数据')
