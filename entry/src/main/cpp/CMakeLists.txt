@@ -31,6 +31,7 @@ target_link_libraries(smartdrive_exporter PUBLIC
                       ${FFMPEG_AVFORMAT_LIB}
                       ${FFMPEG_AVFILTER_LIB}
                       libnative_media_venc.so
+                      libnative_media_vdec.so
                       libnative_media_avmuxer.so
                       libnative_media_codecbase.so
                       libnative_media_core.so
