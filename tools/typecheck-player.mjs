@@ -1,11 +1,12 @@
 /**
- * 对**播放链路**（SingleTrackController / GlobalTimelineManager）做真实类型检查。
+ * 对**播放链路**（SingleTrackController / GlobalTimelineManager）与**桥接层**
+ * （CoreBridge / EditorViewModel）做真实类型检查。
  *
  * 为什么单独做：hvigor 全量构建在本沙箱里跑不起来（它要在工作区外创建 symlink，
- * 被沙箱 + Windows 权限双重拒绝），但这两个文件是**纯 TS 类**（不含 ArkUI 装饰器），
+ * 被沙箱 + Windows 权限双重拒绝），但这两组文件都是**纯 TS 类**（不含 ArkUI 装饰器），
  * 因此可以直接用 DevEco 自带的 tsc + SDK 真实的 @ohos.* 声明做类型检查。
  *
- * 用法：node tools/typecheck-player.mjs
+ * 用法：node tools/typecheck-player.mjs [player|bridge]（默认 player）
  * 退出码 0 = 无错误；非 0 = 打印每个错误（文件:行:列）。
  */
 
@@ -17,6 +18,7 @@ const require = createRequire(import.meta.url)
 const ROOT = resolve(import.meta.dirname, '..')
 const BUILD = join(ROOT, '.player-typecheck')
 const SDK_API = 'C:/Program Files/Huawei/DevEco Studio/sdk/default/openharmony/ets/api'
+const SDK_KITS = 'C:/Program Files/Huawei/DevEco Studio/sdk/default/openharmony/ets/kits'
 
 const TSC_CANDIDATES = [
   'C:/Program Files/Huawei/DevEco Studio/sdk/default/openharmony/ets/build-tools/ets-loader/node_modules/typescript/lib/typescript.js',
@@ -32,19 +34,52 @@ function loadTypeScript() {
 
 const ts = loadTypeScript()
 
-/** 要检查的文件（入口）+ 它们依赖的纯模块，全部按原相对结构复制成 .ts */
-const ENTRIES = [
-  'entry/src/main/ets/media/SingleTrackController.ets',
-  'entry/src/main/ets/media/GlobalTimelineManager.ets'
-]
-const DEPS = [
-  'entry/src/main/ets/media/TimelineMath.ets',
-  'entry/src/main/ets/media/TimelineClock.ets',
-  'entry/src/main/ets/utils/Logger.ets',
-  'entry/src/main/ets/model/TripModels.ets',
-  'entry/src/main/ets/model/SegmentModel.ets',
-  'entry/src/main/ets/model/AppState.ets'
-]
+/** 分组：入口文件 + 它们依赖的纯模块，全部按原相对结构复制成 .ts */
+const GROUPS = {
+  player: {
+    entries: [
+      'entry/src/main/ets/media/SingleTrackController.ets',
+      'entry/src/main/ets/media/GlobalTimelineManager.ets'
+    ],
+    deps: [
+      'entry/src/main/ets/media/TimelineMath.ets',
+      'entry/src/main/ets/media/TimelineClock.ets',
+      'entry/src/main/ets/utils/Logger.ets',
+      'entry/src/main/ets/model/TripModels.ets',
+      'entry/src/main/ets/model/SegmentModel.ets',
+      'entry/src/main/ets/model/AppState.ets'
+    ]
+  },
+  bridge: {
+    entries: [
+      'entry/src/main/ets/bridge/CoreBridge.ets',
+      'entry/src/main/ets/viewmodel/EditorViewModel.ets'
+    ],
+    deps: [
+      'entry/src/main/ets/constants/AppConstants.ets',
+      'entry/src/main/ets/model/AppState.ets',
+      'entry/src/main/ets/model/Models.ets',
+      'entry/src/main/ets/model/TripModels.ets',
+      'entry/src/main/ets/model/SegmentModel.ets',
+      'entry/src/main/ets/service/CoreApiContract.ets',
+      'entry/src/main/ets/service/DvrScannerService.ets',
+      'entry/src/main/ets/service/ExportNativeService.ets',
+      'entry/src/main/ets/service/PreferencesService.ets',
+      'entry/src/main/ets/service/TimelineService.ets',
+      'entry/src/main/ets/utils/Logger.ets',
+      'entry/src/main/ets/media/TimelineMath.ets'
+    ]
+  }
+}
+
+const groupName = process.argv[2] ?? 'player'
+const group = GROUPS[groupName]
+if (!group) {
+  console.log(`未知分组：${groupName}（可选：${Object.keys(GROUPS).join(' / ')}）`)
+  process.exit(2)
+}
+const ENTRIES = group.entries
+const DEPS = group.deps
 
 /** ArkTS/运行环境提供的全局函数，TS 默认不知道 */
 const GLOBALS_D_TS = `
@@ -76,10 +111,14 @@ writeFileSync(join(BUILD, 'globals.d.ts'), GLOBALS_D_TS, 'utf8')
 const sdkModulesDir = join(BUILD, 'node_modules')
 mkdirSync(sdkModulesDir, { recursive: true })
 let staged = 0
-for (const name of readdirSync(SDK_API)) {
-  if (!name.endsWith('.d.ts')) continue
-  writeFileSync(join(sdkModulesDir, name), readFileSync(join(SDK_API, name), 'utf8'), 'utf8')
-  staged += 1
+// api/ 提供 @ohos.*，kits/ 提供 @kit.*；两者都平铺进 node_modules/ 让 node 解析命中。
+for (const dir of [SDK_API, SDK_KITS]) {
+  if (!existsSync(dir)) continue
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith('.d.ts')) continue
+    writeFileSync(join(sdkModulesDir, name), readFileSync(join(dir, name), 'utf8'), 'utf8')
+    staged += 1
+  }
 }
 console.log(`已平铺 SDK 声明 ${staged} 个到 node_modules/`)
 
@@ -103,8 +142,18 @@ const program = ts.createProgram(rootNames, options)
 const diagnostics = ts.getPreEmitDiagnostics(program)
 
 const lines = []
+/**
+ * SDK 对项目自带 napi（libsmartdrive_exporter.so）声明的固定提示
+ * （"Currently module for '...' is not verified"），与类型正确性无关，过滤掉。
+ */
+function isNapiVerificationNoise(text) {
+  return text.includes('is not verified')
+}
 for (const d of diagnostics) {
   const text = ts.flattenDiagnosticMessageText(d.messageText, ' ')
+  if (isNapiVerificationNoise(text)) {
+    continue
+  }
   if (!d.file || d.start === undefined) {
     lines.push(`(global) ${text}`)
     continue
@@ -114,7 +163,7 @@ for (const d of diagnostics) {
   lines.push(`${file}:${pos.line + 1}:${pos.character + 1}  ${text}`)
 }
 
-console.log(`检查文件 ${rootNames.length} 个，诊断 ${lines.length} 条\n`)
+console.log(`[${groupName}] 检查文件 ${rootNames.length} 个，诊断 ${lines.length} 条\n`)
 if (lines.length > 0) {
   for (const l of lines) console.log(`  ${l}`)
   process.exitCode = 1
