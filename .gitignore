@@ -63,3 +63,5 @@ media_resource/
 .superpowers/
 .skill-refs/
 .npm-cache/
+.localappdata/
+.pnpm-home/
