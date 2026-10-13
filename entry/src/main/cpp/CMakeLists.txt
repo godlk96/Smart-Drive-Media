@@ -5,7 +5,7 @@ add_compile_options(-Wno-unused-command-line-argument)
 add_link_options(-Wno-unused-command-line-argument)
 
 set(NATIVE_ROOT_PATH ${CMAKE_CURRENT_SOURCE_DIR})
-set(FFMPEG_LIBS_PATH ${NATIVE_ROOT_PATH}/../../libs/arm64-v8a)
+set(FFMPEG_LIBS_PATH ${NATIVE_ROOT_PATH}/../../../libs/arm64-v8a)
 set(FFMPEG_INCLUDE_PATH ${NATIVE_ROOT_PATH}/.ffmpeg-install/arm64-v8a/include)
 
 include_directories(${NATIVE_ROOT_PATH}
