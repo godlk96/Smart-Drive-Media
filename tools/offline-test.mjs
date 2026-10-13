@@ -243,8 +243,9 @@ async function checkNativeContract() {
 }
 
 /**
- * 颜色令牌守卫：spec §6.9 的 17 个令牌必须落在 color.json 且取值一致。
- * 页面里不许再写十六进制色值，所以这里红一次就意味着「某个颜色没进资源」。
+ * 颜色令牌守卫：spec §6.9 的 17 个令牌 + spec §5.2/§6.4/§6.5/§6.6/§6.7 用到但 §6.9 没列的
+ * 8 个（胶囊底、选中字、浮层渐变与白色半透明）必须落在 color.json 且取值一致。
+ * 页面与组件里不许再写十六进制色值，所以这里红一次就意味着「某个颜色没进资源」。
  */
 const REQUIRED_COLOR_TOKENS = new Map([
   ['page_bg', '#F7F6F3'], ['card_bg', '#FFFFFF'], ['page_border', '#EAE8E3'],
@@ -252,7 +253,12 @@ const REQUIRED_COLOR_TOKENS = new Map([
   ['text_primary', '#1C1B18'], ['text_secondary', '#57534A'], ['text_tertiary', '#8A867D'],
   ['text_disabled', '#B5B0A6'], ['ink', '#111111'], ['amber', '#D98324'],
   ['amber_soft', '#FDF6EC'], ['stage_bg', '#14120F'], ['stage_divider', '#1E1B17'],
-  ['segment_off_bg', '#EFEDE8'], ['segment_off_border', '#E7E4DE']
+  ['segment_off_bg', '#EFEDE8'], ['segment_off_border', '#E7E4DE'],
+  ['chip_bg', '#FBFAF8'], ['amber_deep', '#8A5A18'],
+  ['overlay_veil', '#E614120F'], ['overlay_fade', '#0014120F'],
+  ['overlay_track', '#4DFFFFFF'], ['overlay_text', '#D6FFFFFF'],
+  ['overlay_btn_bg', '#29FFFFFF'], ['overlay_btn_border', '#42FFFFFF'],
+  ['knob_shadow', '#8C000000']
 ])
 
 function checkColorTokens() {
@@ -274,6 +280,29 @@ function checkColorTokens() {
   } catch (err) {
     return { name, detail: err && err.message ? err.message : String(err) }
   }
+}
+
+/**
+ * 组件配色守卫：Task 8 的三个组件不得出现十六进制色值（一律走 `$r('app.color.*')`）。
+ * Task 9 重写 Editor.ets 后把页面也并进来。
+ */
+const COMPONENT_FILES = [
+  'entry/src/main/ets/components/SegmentParamRow.ets',
+  'entry/src/main/ets/components/SegmentTrack.ets',
+  'entry/src/main/ets/components/TemplateStrip.ets'
+]
+
+function checkComponentColors() {
+  const name = '组件无硬编码配色'
+  const problems = []
+  for (const rel of COMPONENT_FILES) {
+    const src = readFileSync(join(ROOT, rel), 'utf8')
+    const hits = src.match(/#[0-9A-Fa-f]{6,8}/g)
+    if (hits) {
+      problems.push(`${rel} 含十六进制色值 ${Array.from(new Set(hits)).join(' ')}`)
+    }
+  }
+  return problems.length > 0 ? { name, detail: problems.join('; ') } : { name, ok: true }
 }
 
 async function main() {
@@ -337,6 +366,14 @@ async function main() {
     passed += 1
   } else {
     failures.push({ name: colors.name, detail: colors.detail })
+  }
+
+  // 5) 组件里不许有硬编码配色
+  const componentColors = checkComponentColors()
+  if (componentColors.ok) {
+    passed += 1
+  } else {
+    failures.push({ name: componentColors.name, detail: componentColors.detail })
   }
 
   const total = passed + failures.length

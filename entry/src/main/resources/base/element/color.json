@@ -71,6 +71,42 @@
     {
       "name": "segment_off_border",
       "value": "#E7E4DE"
+    },
+    {
+      "name": "chip_bg",
+      "value": "#FBFAF8"
+    },
+    {
+      "name": "amber_deep",
+      "value": "#8A5A18"
+    },
+    {
+      "name": "overlay_veil",
+      "value": "#E614120F"
+    },
+    {
+      "name": "overlay_fade",
+      "value": "#0014120F"
+    },
+    {
+      "name": "overlay_track",
+      "value": "#4DFFFFFF"
+    },
+    {
+      "name": "overlay_text",
+      "value": "#D6FFFFFF"
+    },
+    {
+      "name": "overlay_btn_bg",
+      "value": "#29FFFFFF"
+    },
+    {
+      "name": "overlay_btn_border",
+      "value": "#42FFFFFF"
+    },
+    {
+      "name": "knob_shadow",
+      "value": "#8C000000"
     }
   ]
 }
