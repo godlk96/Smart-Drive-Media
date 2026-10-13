@@ -91,6 +91,8 @@ export interface EditorStateModel {
   drawerExpanded: boolean
   /** 片段列表：整条源片切成首尾相接的段，每段自带倍速与声音开关。 */
   segments: Array<Segment>
+  /** 当前选中的片段 id（参数行与轨道描边都看它）。 */
+  selectedSegmentId: number
   watermarkEnabled: boolean
   exportStatusText: string
 }

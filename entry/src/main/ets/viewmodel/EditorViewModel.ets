@@ -8,7 +8,7 @@ import {
 } from '../constants/AppConstants'
 import { EditorStateModel, TemplateCardModel, TimelineTrackModel } from '../model/AppState'
 import { createEditorStateFromSnapshot, deepCloneExportSnapshot, ExportSnapshot, resolveTemplateDefinition, TemplateId } from '../model/Models'
-import { formatSegmentDuration as segmentDurationText, outputDurationSec, segmentIndexAtSec, Segment } from '../model/SegmentModel'
+import { formatSegmentDuration as segmentDurationText, outputDurationSec, Segment } from '../model/SegmentModel'
 import { TripSnapshot } from '../model/TripModels'
 import { debugLog } from '../utils/Logger'
 
@@ -43,10 +43,6 @@ export class EditorViewModel {
     return this.bridge.updatePlayhead(Math.floor(playheadSec * 1000))
   }
 
-  updateSelectionRange(startSec: number, endSec: number): EditorStateModel {
-    return this.bridge.updateSelectionRange(startSec, endSec)
-  }
-
   selectTemplate(templateId: string): EditorStateModel {
     return this.bridge.selectTemplate(templateId)
   }
@@ -79,6 +75,26 @@ export class EditorViewModel {
 
   setMuted(value: boolean): EditorStateModel {
     return this.bridge.setMuted(value)
+  }
+
+  /** 在播放头处落刀（转发 CoreBridge，plan:735）。 */
+  splitAtPlayhead(): EditorStateModel {
+    return this.bridge.splitAtPlayhead()
+  }
+
+  /** 灰段恢复 / 启用段置灰（转发 CoreBridge，plan:736）。 */
+  toggleSegmentEnabled(id: number): EditorStateModel {
+    return this.bridge.toggleSegmentEnabled(id)
+  }
+
+  /** 选中某一段（转发 CoreBridge，plan:737）。 */
+  selectSegment(id: number): EditorStateModel {
+    return this.bridge.selectSegment(id)
+  }
+
+  /** 剪刀置灰判据（plan:738）。 */
+  canSplitAtPlayhead(): boolean {
+    return this.bridge.canSplitAtPlayhead()
   }
 
   toggleWatermark(): EditorStateModel {
@@ -203,13 +219,9 @@ export class EditorViewModel {
     return `${min}:${sec.toString().padStart(2, '0')}`
   }
 
-  /** 播放头所在的那一段（即选中段）；不在任何段内返回 undefined。 */
+  /** 选中段（显式选中状态，spec D11/§5.7）；id 不存在时返回 undefined。 */
   getSelectedSegment(state: EditorStateModel): Segment | undefined {
-    const at = segmentIndexAtSec(state.segments, state.playheadSec)
-    if (at < 0) {
-      return undefined
-    }
-    return state.segments[at]
+    return state.segments.find((item: Segment) => item.id === state.selectedSegmentId)
   }
 
   /** 段时长文案，只写时长不写起止（spec D9/D10）。 */

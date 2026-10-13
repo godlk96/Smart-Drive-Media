@@ -22,6 +22,18 @@ import { extractFirstFrameByService } from '../service/ExportNativeService'
 import { PreferencesService } from '../service/PreferencesService'
 import { debugLog } from '../utils/Logger'
 import { RUN_GAP_MS, SLICE_MS } from '../media/TimelineMath'
+import {
+  canSplitAt,
+  canToggleSegment,
+  createFullSegment,
+  cycleSpeedLabel,
+  segmentIndexAtSec,
+  setSegmentMuted,
+  setSegmentSpeed,
+  splitSegmentAt,
+  toggleSegmentEnabled as toggleSegmentEnabledIn,
+  Segment
+} from '../model/SegmentModel'
 import photoAccessHelper from '@ohos.file.photoAccessHelper'
 import dataSharePredicates from '@ohos.data.dataSharePredicates'
 import common from '@ohos.app.ability.common'
@@ -33,7 +45,6 @@ const HUAWEI_SHARE_ALBUM_NAMES: Array<string> = ['华为分享', 'Huawei Share']
 //     切成"连续录制段"再拼接。两者一旦不一致，合并行程的时间轴就会错位。
 const CLIP_DURATION_SEC: number = SLICE_MS / 1000
 const TRIP_GAP_THRESHOLD_MS: number = RUN_GAP_MS
-const EDITOR_SPEEDS: Array<string> = ['1.0X', '1.25X', '1.5X', '2.0X']
 const DVR_FILE_PATTERN: RegExp = /^(?:.+_)?DVR_LoopRecording_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_.+_camera\.(mp4|mov|ts)$/i
 const VIDEO_FILE_URI_PATTERN: RegExp = /^((file|datashare):\/\/.+|\/data\/storage\/.+)\.(mp4|mov|ts)(\?.*)?$/i
 
@@ -120,12 +131,12 @@ export class CoreBridge {
   private currentClipIndex: number = 0
   private currentClipTotal: number = 0
   private playheadMs: number = 0
-  private selectionStartSec: number = 0
-  private selectionEndSec: number = CLIP_DURATION_SEC
+  private segments: Array<Segment> = []
+  private selectedSegmentId: number = 0
+  /** 段列表是按哪个时长建立的；与当前行程时长不一致时重建（换行程 = 丢弃上一次的编辑）。 */
+  private segmentSourceDurationSec: number = -1
   private activeTemplateId: string = DEFAULT_TEMPLATE_ID
   private drawerExpanded: boolean = true
-  private speedIndex: number = 0
-  private muted: boolean = false
   private watermarkEnabled: boolean = true
   private exportStatusText: string = '待导出'
   private lastContext?: common.UIAbilityContext = undefined
@@ -624,8 +635,11 @@ export class CoreBridge {
       this.currentClipIndex = 0
       this.currentClipTotal = 0
     }
-    this.selectionStartSec = Math.max(0, Math.min(this.selectionStartSec, this.tripDurationSec))
-    this.selectionEndSec = Math.max(this.selectionStartSec, Math.min(this.selectionEndSec, this.tripDurationSec))
+    if (this.segmentSourceDurationSec !== this.tripDurationSec) {
+      this.segments = createFullSegment(this.tripDurationSec)
+      this.selectedSegmentId = this.segments.length > 0 ? this.segments[0].id : 0
+      this.segmentSourceDurationSec = this.tripDurationSec
+    }
     const segmentCount = Math.max(1, Math.ceil(this.tripDurationSec / CLIP_DURATION_SEC))
     const markers: Array<TimelineMarkerModel> = []
     for (let i = 1; i < segmentCount; i++) {
@@ -660,15 +674,13 @@ export class CoreBridge {
       totalDurationSec: this.tripDurationSec,
       timeline: this.tripTimeline,
       layers: layers,
-      selectionStartSec: this.selectionStartSec,
-      selectionEndSec: this.selectionEndSec,
       boundaryMarkers: markers,
       templateCards: templateCards,
       previewSlots: previewSlots,
       activeTemplateId: this.activeTemplateId,
       drawerExpanded: this.drawerExpanded,
-      speedLabel: EDITOR_SPEEDS[this.speedIndex],
-      muted: this.muted,
+      segments: this.segments,
+      selectedSegmentId: this.selectedSegmentId,
       watermarkEnabled: this.watermarkEnabled,
       exportStatusText: this.exportStatusText
     }
@@ -678,17 +690,13 @@ export class CoreBridge {
     debugLog('剪辑', `加载行程详情，行程ID=${tripId}`)
     const selected = this.trips.get(tripId)
     this.playheadMs = 0
-    this.selectionStartSec = 0
-    this.selectionEndSec = this.tripDurationSec
     this.activeTemplateId = DEFAULT_TEMPLATE_ID
     this.drawerExpanded = true
-    this.speedIndex = 0
-    this.muted = false
+    this.segmentSourceDurationSec = -1
     this.watermarkEnabled = true
     this.exportStatusText = '待导出'
     if (selected) {
       PreferencesService.getInstance().saveLastTripId(selected.id)
-      this.selectionEndSec = selected.durationSec
       const trackSummary = selected.timeline.map((item: TimelineTrackModel) => `${item.cameraPosition}:${item.segmentCount}`).join(',')
       debugLog('剪辑', `命中缓存行程，范围=${selected.tripRange}，时长=${selected.durationSec}s，轨道=${trackSummary}，预览视角=${selected.previewCamera}，预览URI长度=${selected.previewUri.length}`)
       return this.buildEditorState(selected, selected.previewCamera, 0)
@@ -727,17 +735,6 @@ export class CoreBridge {
     return this.buildEditorState(snapshot, this.previewCamera, targetIndex)
   }
 
-  updateSelectionRange(startSec: number, endSec: number): EditorStateModel {
-    const max = Math.max(0, this.tripDurationSec)
-    const nextStart = Math.max(0, Math.min(Math.floor(startSec), max))
-    const nextEnd = Math.max(nextStart, Math.min(Math.floor(endSec), max))
-    this.selectionStartSec = nextStart
-    this.selectionEndSec = nextEnd
-    this.playheadMs = Math.max(nextStart * 1000, Math.min(this.playheadMs, nextEnd * 1000))
-    const snapshot = this.trips.get(this.tripId)
-    return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
-  }
-
   selectTemplate(templateId: string): EditorStateModel {
     this.activeTemplateId = normalizeTemplateIdValue(templateId)
     PreferencesService.getInstance().saveTemplatePreference(this.activeTemplateId)
@@ -752,22 +749,94 @@ export class CoreBridge {
     return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
   }
 
+  /** 循环【选中段】的倍速（plan:757）；全局 speedIndex 这条路径已删除。 */
   cycleSpeed(): EditorStateModel {
-    this.speedIndex = (this.speedIndex + 1) % EDITOR_SPEEDS.length
+    const target = this.segmentById(this.selectedSegmentId)
+    if (target) {
+      this.segments = setSegmentSpeed(this.segments, target.id, cycleSpeedLabel(target.speedLabel))
+    }
     const snapshot = this.trips.get(this.tripId)
     return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
   }
 
+  /** 翻转【选中段】的声音开关。 */
   toggleMuted(): EditorStateModel {
-    this.muted = !this.muted
+    const target = this.segmentById(this.selectedSegmentId)
+    if (target) {
+      this.segments = setSegmentMuted(this.segments, target.id, !target.muted)
+    }
     const snapshot = this.trips.get(this.tripId)
     return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
   }
 
   setMuted(muted: boolean): EditorStateModel {
-    this.muted = muted
+    const target = this.segmentById(this.selectedSegmentId)
+    if (target) {
+      this.segments = setSegmentMuted(this.segments, target.id, muted)
+    }
     const snapshot = this.trips.get(this.tripId)
     return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
+  }
+
+  /** 在播放头处落刀；切出新段后选中播放头所在的那一段（plan:742）。 */
+  splitAtPlayhead(): EditorStateModel {
+    const sec = this.playheadMs / 1000
+    const next = splitSegmentAt(this.segments, sec, this.tripDurationSec)
+    if (next.length !== this.segments.length) {
+      this.segments = next
+      const at = segmentIndexAtSec(this.segments, sec)
+      if (at >= 0) {
+        this.selectedSegmentId = this.segments[at].id
+      }
+    }
+    const snapshot = this.trips.get(this.tripId)
+    return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
+  }
+
+  /** 剪刀置灰判据（纯读）。 */
+  canSplitAtPlayhead(): boolean {
+    return canSplitAt(this.segments, this.playheadMs / 1000, this.tripDurationSec)
+  }
+
+  /** 灰段恢复 / 启用段置灰；关掉当前选中段时选中顺延到下一个启用段（plan:742）。 */
+  toggleSegmentEnabled(id: number): EditorStateModel {
+    if (canToggleSegment(this.segments, id)) {
+      this.segments = toggleSegmentEnabledIn(this.segments, id)
+      if (this.selectedSegmentId === id) {
+        const next = this.nextEnabledSegmentId(id)
+        if (next >= 0) {
+          this.selectedSegmentId = next
+        }
+      }
+    }
+    const snapshot = this.trips.get(this.tripId)
+    return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
+  }
+
+  selectSegment(id: number): EditorStateModel {
+    if (this.segmentById(id)) {
+      this.selectedSegmentId = id
+    }
+    const snapshot = this.trips.get(this.tripId)
+    return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
+  }
+
+  private segmentById(id: number): Segment | undefined {
+    return this.segments.find((item: Segment) => item.id === id)
+  }
+
+  /** 下一个启用段的 id；没有则 -1（plan:742「没有则保持」）。 */
+  private nextEnabledSegmentId(fromId: number): number {
+    const at = this.segments.findIndex((item: Segment) => item.id === fromId)
+    if (at < 0) {
+      return -1
+    }
+    for (let i = at + 1; i < this.segments.length; i++) {
+      if (this.segments[i].enabled) {
+        return this.segments[i].id
+      }
+    }
+    return -1
   }
 
   toggleWatermark(): EditorStateModel {
