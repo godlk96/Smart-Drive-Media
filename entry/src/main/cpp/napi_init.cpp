@@ -132,6 +132,7 @@ struct NativeExportPipelineRequest {
     std::string outputPath;
     double startMs = 0.0;
     double endMs = 0.0;
+    std::vector<NativeExportSegment> segments;
 };
 
 struct NativeExportPipelineResult {
@@ -147,6 +148,7 @@ static constexpr int32_t EXPORT_ERR_BACK_URIS_EMPTY = 1003;
 static constexpr int32_t EXPORT_ERR_TEMPLATE_ID_INVALID = 1004;
 static constexpr int32_t EXPORT_ERR_OUTPUT_PATH_EMPTY = 1005;
 static constexpr int32_t EXPORT_ERR_EXPECTED_DURATION_INVALID = 1006;
+static constexpr int32_t EXPORT_ERR_SEGMENTS_INVALID = 1007;
 static constexpr int32_t EXPORT_ERR_NATIVE_EMPTY = 2001;
 static constexpr int32_t EXPORT_ERR_NATIVE_FAILED = 2002;
 static constexpr int32_t EXPORT_ERR_ASYNC_WORK_FAILED = 2003;
@@ -199,6 +201,71 @@ static bool readStringArrayFromJs(napi_env env, napi_value value, std::vector<st
             return false;
         }
         output.push_back(item);
+    }
+    return true;
+}
+
+/** '1.5X' → 1.5；解析失败或超出 [0.75, 2.0] 一律回落 1.0（与 ArkTS 的 speedFactor 同语义）。 */
+static double parseSpeedLabel(const std::string &label)
+{
+    const double value = std::atof(label.c_str());
+    if (std::isnan(value) || value < 0.75 || value > 2.0) {
+        return 1.0;
+    }
+    return value;
+}
+
+/**
+ * 读取导出请求里的 segments 数组。任一项缺字段或 endMs <= startMs 就返回 false，
+ * 由调用方翻译成 EXPORT_ERR_SEGMENTS_INVALID（不静默丢弃，否则用户会拿到缺段的成片）。
+ */
+static bool parseSegmentsFromJs(napi_env env, napi_value value, std::vector<NativeExportSegment> &output)
+{
+    bool isArray = false;
+    if (napi_is_array(env, value, &isArray) != napi_ok || !isArray) {
+        return false;
+    }
+    uint32_t length = 0;
+    if (napi_get_array_length(env, value, &length) != napi_ok) {
+        return false;
+    }
+    output.clear();
+    output.reserve(length);
+    for (uint32_t i = 0; i < length; i++) {
+        napi_value element = nullptr;
+        if (napi_get_element(env, value, i, &element) != napi_ok || element == nullptr) {
+            return false;
+        }
+        napi_valuetype elementType = napi_undefined;
+        if (napi_typeof(env, element, &elementType) != napi_ok || elementType != napi_object) {
+            return false;
+        }
+        NativeExportSegment segment;
+        napi_value startValue = nullptr;
+        napi_value endValue = nullptr;
+        if (!getNamedProperty(env, element, "startMs", startValue) ||
+            napi_get_value_double(env, startValue, &segment.startMs) != napi_ok) {
+            return false;
+        }
+        if (!getNamedProperty(env, element, "endMs", endValue) ||
+            napi_get_value_double(env, endValue, &segment.endMs) != napi_ok) {
+            return false;
+        }
+        if (std::isnan(segment.startMs) || std::isinf(segment.startMs) || segment.startMs < 0.0 ||
+            std::isnan(segment.endMs) || std::isinf(segment.endMs) || segment.endMs <= segment.startMs) {
+            return false;
+        }
+        napi_value speedValue = nullptr;
+        if (getNamedProperty(env, element, "speedLabel", speedValue) && speedValue != nullptr) {
+            segment.speed = parseSpeedLabel(readUtf8Arg(env, speedValue));
+        }
+        napi_value mutedValue = nullptr;
+        bool muted = false;
+        if (getNamedProperty(env, element, "muted", mutedValue) && mutedValue != nullptr &&
+            napi_get_value_bool(env, mutedValue, &muted) == napi_ok) {
+            segment.muted = muted;
+        }
+        output.push_back(segment);
     }
     return true;
 }
@@ -267,6 +334,17 @@ static bool parseExportPipelineRequest(napi_env env, napi_callback_info info, Na
             request.endMs = val;
         }
     }
+    napi_value segmentsValue = nullptr;
+    if (getNamedProperty(env, args[0], "segments", segmentsValue) && segmentsValue != nullptr) {
+        napi_valuetype segmentsType = napi_undefined;
+        if (napi_typeof(env, segmentsValue, &segmentsType) == napi_ok && segmentsType == napi_object) {
+            // 缺省或空数组时保持单区间行为（用 startMs/endMs），旧调用不回归。
+            if (!parseSegmentsFromJs(env, segmentsValue, request.segments)) {
+                error = makeErrorResult(EXPORT_ERR_SEGMENTS_INVALID, "ERR_SEGMENTS_INVALID");
+                return false;
+            }
+        }
+    }
     if (request.frontUris.empty()) {
         error = makeErrorResult(EXPORT_ERR_FRONT_URIS_EMPTY, "ERR_FRONT_URIS_EMPTY");
         return false;
@@ -296,7 +374,8 @@ static NativeExportPipelineResult runPipelineAndWrapResult(const NativeExportPip
         request.expectedDurationSec,
         request.outputPath,
         request.startMs,
-        request.endMs);
+        request.endMs,
+        request.segments);
     if (output.empty()) {
         return makeErrorResult(EXPORT_ERR_NATIVE_EMPTY, "ERR_NATIVE_EMPTY");
     }

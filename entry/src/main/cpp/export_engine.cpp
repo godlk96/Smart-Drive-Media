@@ -1508,9 +1508,16 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
                                     double expectedDurationSec,
                                     const std::string &outputPath,
                                     double startMs,
-                                    double endMs)
+                                    double endMs,
+                                    const std::vector<NativeExportSegment> &segments)
 {
     logPipeline("start", "trigger runExportEnginePipeline");
+    // segments 的逐段渲染在 Task 12 落地；本 Task 只把参数透到这里，保证签名与头文件一致。
+    if (!segments.empty()) {
+        std::ostringstream segmentInfo;
+        segmentInfo << "received " << segments.size() << " segment(s); per-segment render not wired yet";
+        logPipeline("segments", segmentInfo.str());
+    }
     if (frontUris.empty() || backUris.empty()) {
         logPipeline("validate", "invalid input: front/back uris empty");
         return "__ERROR__:pipeline_invalid_input";
