@@ -1,5 +1,7 @@
 #include "export_engine.h"
 
+#include <hilog/log.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -15,6 +17,7 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavutil/error.h>
 #include <libavfilter/avfilter.h>
 #include <libavfilter/buffersink.h>
 #include <libavfilter/buffersrc.h>
@@ -53,6 +56,7 @@ struct PacketTimestampState {
 
 std::string normalizeUri(const std::string &uri);
 void logPipeline(const std::string &stage, const std::string &message);
+std::string avErrorText(int ret);
 
 int resolveThreadCount()
 {
@@ -266,7 +270,10 @@ bool composeTemplateToMp4(const std::string &templateId,
     }
     const char *encoderName = encoder->name != nullptr ? encoder->name : "unknown";
     std::ostringstream encoderLog;
-    encoderLog << "selected encoder=" << encoderName << " codec_id=" << static_cast<int>(selectedCodecId);
+    encoderLog << "selected encoder=" << encoderName << " codec_id=" << static_cast<int>(selectedCodecId)
+               << " hevc_encoder_available=" << (avcodec_find_encoder(AV_CODEC_ID_HEVC) != nullptr ? 1 : 0)
+               << " h264_encoder_available=" << (avcodec_find_encoder(AV_CODEC_ID_H264) != nullptr ? 1 : 0)
+               << " mpeg4_encoder_available=" << (avcodec_find_encoder(AV_CODEC_ID_MPEG4) != nullptr ? 1 : 0);
     if (selectedCodecId != AV_CODEC_ID_HEVC) {
         encoderLog << " fallback_from_hevc=1";
     }
@@ -301,6 +308,14 @@ bool composeTemplateToMp4(const std::string &templateId,
     const int64_t sourceBitRate = probe.bitRate > 0 ? probe.bitRate : (12LL * 1000LL * 1000LL);
     const int64_t targetBitRate = sourceBitRate > (10LL * 1000LL * 1000LL) ? sourceBitRate : (10LL * 1000LL * 1000LL);
     encoderCtx->bit_rate = targetBitRate;
+    {
+        std::ostringstream encoderDetail;
+        encoderDetail << "resolution=" << width << "x" << height << " fps=" << frameRate.num << "/"
+                      << frameRate.den << " time_base=" << encoderCtx->time_base.num << "/"
+                      << encoderCtx->time_base.den << " bitrate=" << targetBitRate
+                      << " threads=" << threadCount;
+        logPipeline("mux.encoder", encoderDetail.str());
+    }
     encoderCtx->gop_size = 30;
     encoderCtx->max_b_frames = 0;
     encoderCtx->flags2 |= AV_CODEC_FLAG2_FAST;
@@ -312,12 +327,15 @@ bool composeTemplateToMp4(const std::string &templateId,
         av_dict_set(&encoderOptions, "preset", "veryfast", 0);
         av_dict_set(&encoderOptions, "crf", "24", 0);
     }
-    if (avcodec_open2(encoderCtx, encoder, &encoderOptions) < 0) {
-        av_dict_free(&encoderOptions);
-        avcodec_free_context(&encoderCtx);
-        avformat_free_context(outputFmt);
-        error = "compose_open_encoder_failed";
-        return false;
+    {
+        const int openRet = avcodec_open2(encoderCtx, encoder, &encoderOptions);
+        if (openRet < 0) {
+            av_dict_free(&encoderOptions);
+            avcodec_free_context(&encoderCtx);
+            avformat_free_context(outputFmt);
+            error = "compose_open_encoder_failed:" + std::string(encoderName) + ":" + avErrorText(openRet);
+            return false;
+        }
     }
     av_dict_free(&encoderOptions);
     AVStream *outVideoStream = avformat_new_stream(outputFmt, nullptr);
@@ -371,17 +389,19 @@ bool composeTemplateToMp4(const std::string &templateId,
         outAudioStream->time_base = audioFmt->streams[audioIndex]->time_base;
     }
     if (!(outputFmt->oformat->flags & AVFMT_NOFILE)) {
-        if (avio_open(&outputFmt->pb, outputPath.c_str(), AVIO_FLAG_WRITE) < 0) {
+        const int openOutputRet = avio_open(&outputFmt->pb, outputPath.c_str(), AVIO_FLAG_WRITE);
+        if (openOutputRet < 0) {
             if (audioFmt != nullptr) {
                 avformat_close_input(&audioFmt);
             }
             avcodec_free_context(&encoderCtx);
             avformat_free_context(outputFmt);
-            error = "compose_open_output_failed";
+            error = "compose_open_output_failed:" + avErrorText(openOutputRet) + ":" + outputPath;
             return false;
         }
     }
-    if (avformat_write_header(outputFmt, nullptr) < 0) {
+    const int headerRet = avformat_write_header(outputFmt, nullptr);
+    if (headerRet < 0) {
         if (audioFmt != nullptr) {
             avformat_close_input(&audioFmt);
         }
@@ -390,7 +410,7 @@ bool composeTemplateToMp4(const std::string &templateId,
         }
         avcodec_free_context(&encoderCtx);
         avformat_free_context(outputFmt);
-        error = "compose_write_header_failed";
+        error = "compose_write_header_failed:" + avErrorText(headerRet);
         return false;
     }
     AVFilterGraph *graph = avfilter_graph_alloc();
@@ -454,6 +474,12 @@ bool composeTemplateToMp4(const std::string &templateId,
     inputs->next = nullptr;
     const std::string filterDesc = buildTemplateFilterDesc(
         templateId, frontPath, backPath, sidePath, startSec, endSec, width, height);
+    {
+        std::ostringstream filterInfo;
+        filterInfo << "template=" << templateId << " " << width << "x" << height
+                   << " startSec=" << startSec << " endSec=" << endSec << " desc=" << filterDesc;
+        logPipeline("filter", filterInfo.str());
+    }
     if (filterDesc.empty()) {
         avfilter_inout_free(&inputs);
         avfilter_graph_free(&graph);
@@ -468,7 +494,8 @@ bool composeTemplateToMp4(const std::string &templateId,
         error = "compose_invalid_template_filter";
         return false;
     }
-    if (avfilter_graph_parse_ptr(graph, filterDesc.c_str(), &inputs, nullptr, nullptr) < 0) {
+    const int parseRet = avfilter_graph_parse_ptr(graph, filterDesc.c_str(), &inputs, nullptr, nullptr);
+    if (parseRet < 0) {
         avfilter_inout_free(&inputs);
         avfilter_graph_free(&graph);
         if (audioFmt != nullptr) {
@@ -479,11 +506,12 @@ bool composeTemplateToMp4(const std::string &templateId,
         }
         avcodec_free_context(&encoderCtx);
         avformat_free_context(outputFmt);
-        error = "compose_graph_parse_failed";
+        error = "compose_graph_parse_failed:" + avErrorText(parseRet);
         return false;
     }
     avfilter_inout_free(&inputs);
-    if (avfilter_graph_config(graph, nullptr) < 0) {
+    const int configRet = avfilter_graph_config(graph, nullptr);
+    if (configRet < 0) {
         avfilter_graph_free(&graph);
         if (audioFmt != nullptr) {
             avformat_close_input(&audioFmt);
@@ -493,7 +521,7 @@ bool composeTemplateToMp4(const std::string &templateId,
         }
         avcodec_free_context(&encoderCtx);
         avformat_free_context(outputFmt);
-        error = "compose_graph_config_failed";
+        error = "compose_graph_config_failed:" + avErrorText(configRet);
         return false;
     }
     AVFrame *frame = av_frame_alloc();
@@ -660,11 +688,12 @@ bool composeTemplateToMp4(const std::string &templateId,
                 error = "compose_write_interleaved_audio_failed";
                 return false;
             }
-            if (av_interleaved_write_frame(outputFmt, packet) < 0) {
+            const int writeRet = av_interleaved_write_frame(outputFmt, packet);
+            if (writeRet < 0) {
                 av_packet_unref(packet);
                 av_packet_free(&audioPkt);
                 cleanupComposeResources();
-                error = "compose_write_packet_failed";
+                error = "compose_write_packet_failed:" + avErrorText(writeRet);
                 return false;
             }
             if (packet->pts != AV_NOPTS_VALUE) {
@@ -694,11 +723,12 @@ bool composeTemplateToMp4(const std::string &templateId,
             error = "compose_write_interleaved_audio_failed";
             return false;
         }
-        if (av_interleaved_write_frame(outputFmt, packet) < 0) {
+        const int flushRet = av_interleaved_write_frame(outputFmt, packet);
+        if (flushRet < 0) {
             av_packet_unref(packet);
             av_packet_free(&audioPkt);
             cleanupComposeResources();
-            error = "compose_flush_packet_failed";
+            error = "compose_flush_packet_failed:" + avErrorText(flushRet);
             return false;
         }
         if (packet->pts != AV_NOPTS_VALUE) {
@@ -1099,9 +1129,25 @@ std::string normalizeUri(const std::string &uri)
     return uri;
 }
 
+/**
+ * 统一日志出口。hilog 给设备排查用（HarmonyOS 上应用进程的 stderr 不进 hilog），
+ * stderr 留给宿主侧工具。tag 固定 export_engine，设备上用 `hdc shell hilog | grep export_engine` 抓。
+ */
 void logPipeline(const std::string &stage, const std::string &message)
 {
     std::fprintf(stderr, "[export_engine][%s] %s\n", stage.c_str(), message.c_str());
+    OH_LOG_Print(LOG_APP, LOG_INFO, 0x3200, "export_engine", "[%{public}s] %{public}s",
+                 stage.c_str(), message.c_str());
+}
+
+/** 把 ffmpeg 的负返回值翻成可读文本，拼进错误串，避免设备上只看到 compose_xxx_failed。 */
+std::string avErrorText(int ret)
+{
+    char buffer[AV_ERROR_MAX_STRING_SIZE] = {0};
+    if (av_strerror(ret, buffer, sizeof(buffer)) < 0) {
+        return "ret=" + std::to_string(ret);
+    }
+    return std::string(buffer) + " (ret=" + std::to_string(ret) + ")";
 }
 
 bool probeVideoStream(const std::string &uri, ProbeResult &result, std::string &error)
@@ -1511,12 +1557,20 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
                                     double endMs,
                                     const std::vector<NativeExportSegment> &segments)
 {
-    logPipeline("start", "trigger runExportEnginePipeline");
-    // segments 的逐段渲染在 Task 12 落地；本 Task 只把参数透到这里，保证签名与头文件一致。
-    if (!segments.empty()) {
-        std::ostringstream segmentInfo;
-        segmentInfo << "received " << segments.size() << " segment(s); per-segment render not wired yet";
-        logPipeline("segments", segmentInfo.str());
+    {
+        std::ostringstream requestInfo;
+        requestInfo << "front=" << frontUris.size() << " back=" << backUris.size()
+                    << " side=" << sideUris.size() << " template=" << templateId
+                    << " expectedDurationSec=" << expectedDurationSec
+                    << " startMs=" << startMs << " endMs=" << endMs
+                    << " segments=" << segments.size() << " output=" << outputPath;
+        logPipeline("request", requestInfo.str());
+        for (size_t i = 0; i < segments.size(); i++) {
+            std::ostringstream one;
+            one << "#" << i << " startMs=" << segments[i].startMs << " endMs=" << segments[i].endMs
+                << " speed=" << segments[i].speed << " muted=" << (segments[i].muted ? 1 : 0);
+            logPipeline("request.segment", one.str());
+        }
     }
     if (frontUris.empty() || backUris.empty()) {
         logPipeline("validate", "invalid input: front/back uris empty");
@@ -1655,6 +1709,12 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
         logPipeline("audio", "template " + normalizedTemplate + " disables front audio");
     }
 
+    {
+        std::ostringstream trackInfo;
+        trackInfo << "frontTrack=" << frontTrackPath << " backTrack=" << backTrackPath
+                  << " sideTrack=" << sideTrackPath << " includeFrontAudio=" << (includeFrontAudio ? 1 : 0);
+        logPipeline("track", trackInfo.str());
+    }
     logPipeline("mux", "emit mp4 by ffmpeg template compose, template=" + normalizedTemplate);
     if (!composeTemplateToMp4(normalizedTemplate,
                               frontTrackPath,
@@ -1691,6 +1751,18 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
         std::remove(sideConcatPath.c_str());
     }
 
-    logPipeline("complete", "runExportEnginePipeline finished");
+    {
+        std::ostringstream doneInfo;
+        doneInfo << "output=" << outputPath;
+        std::FILE *outputCheck = std::fopen(outputPath.c_str(), "rb");
+        if (outputCheck != nullptr) {
+            std::fseek(outputCheck, 0, SEEK_END);
+            doneInfo << " bytes=" << static_cast<long long>(std::ftell(outputCheck));
+            std::fclose(outputCheck);
+        } else {
+            doneInfo << " bytes=<open failed>";
+        }
+        logPipeline("complete", doneInfo.str());
+    }
     return outputPath;
 }

@@ -1,4 +1,4 @@
-import { ExportComposeRequest } from '../model/TripModels'
+import { ExportComposeRequest, ExportSegment } from '../model/TripModels'
 import fs from '@ohos.file.fs'
 import image from '@ohos.multimedia.image'
 import media from '@ohos.multimedia.media'
@@ -19,6 +19,7 @@ interface NativeExportPipelineRequest {
   startMs: number
   endMs: number
   outputPath: string
+  segments: Array<ExportSegment>
 }
 
 interface MaterializedUriSet {
@@ -255,7 +256,8 @@ function buildNativeExportPayload(
     expectedDurationSec: request.expectedDurationSec,
     startMs: request.rangeStartMs,
     endMs: request.rangeEndMs,
-    outputPath: request.outputPath
+    outputPath: request.outputPath,
+    segments: request.segments
   }
   return deepCloneJson(payload)
 }
@@ -301,6 +303,12 @@ export async function executeComposeByService(
   onLog(`Native导出阶段 素材落地耗时=${Date.now() - materializeStart}ms`)
   const payload = buildNativeExportPayload(isolatedRequest, frontInputUris, backInputUris, sideInputUris)
   onLog(`Native导出阶段 输入统计 Front=${isolatedRequest.frontUris.length} Back=${isolatedRequest.backUris.length} 输出=${isolatedRequest.outputPath}`)
+  let segmentText = ''
+  for (let index = 0; index < payload.segments.length; index++) {
+    const item = payload.segments[index]
+    segmentText += `[${item.startMs},${item.endMs}]@${item.speedLabel}${item.muted ? '/mute' : ''} `
+  }
+  onLog(`Native导出阶段 请求负载 template=${payload.templateId} expectedDurationSec=${payload.expectedDurationSec} startMs=${payload.startMs} endMs=${payload.endMs} segments=${payload.segments.length} ${segmentText}`)
   if (typeof runPipelineAsync !== 'function') {
     throw new Error('smartdrive_exporter.runExportPipelineAsync 未实现')
   }
@@ -313,9 +321,10 @@ export async function executeComposeByService(
   try {
     const result = await runPipelineAsync(payload)
     const errorCode = Number(result?.code ?? -1)
+    const resultMessage = String(result?.message ?? '')
+    onLog(`Native导出阶段 返回 code=${errorCode} message=${resultMessage}`)
     if (errorCode !== 0) {
-      const message = String(result?.message ?? 'UNKNOWN')
-      throw new Error(`导出失败[${errorCode}]：${message}`)
+      throw new Error(`导出失败[${errorCode}]：${resultMessage.length > 0 ? resultMessage : 'UNKNOWN'}`)
     }
     outputPath = String(result?.outputPath ?? '')
   } finally {

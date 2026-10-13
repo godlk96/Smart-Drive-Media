@@ -69,6 +69,23 @@ const GROUPS = {
       'entry/src/main/ets/utils/Logger.ets',
       'entry/src/main/ets/media/TimelineMath.ets'
     ]
+  },
+  export: {
+    entries: [
+      'entry/src/main/ets/service/ExportManager.ets',
+      'entry/src/main/ets/service/ExportService.ets',
+      'entry/src/main/ets/service/ExportNativeService.ets'
+    ],
+    deps: [
+      'entry/src/main/ets/constants/AppConstants.ets',
+      'entry/src/main/ets/model/AppState.ets',
+      'entry/src/main/ets/model/Models.ets',
+      'entry/src/main/ets/model/TripModels.ets',
+      'entry/src/main/ets/model/SegmentModel.ets',
+      'entry/src/main/ets/service/CoreApiContract.ets',
+      'entry/src/main/ets/utils/Logger.ets',
+      'entry/src/main/ets/media/TimelineMath.ets'
+    ]
   }
 }
 

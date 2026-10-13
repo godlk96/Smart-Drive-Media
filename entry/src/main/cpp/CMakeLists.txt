@@ -35,4 +35,5 @@ target_link_libraries(smartdrive_exporter PUBLIC
                       libnative_media_codecbase.so
                       libnative_media_core.so
                       libace_napi.z.so
+                      libhilog_ndk.z.so
                       libdl.so)

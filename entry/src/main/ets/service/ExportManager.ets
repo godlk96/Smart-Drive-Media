@@ -162,6 +162,7 @@ export class ExportManager {
         snapshot.playback.segments,
         snapshot.brand.watermarkEnabled
       )
+      debugLog('导出', `开始导出 fileName=${fileName} output=${outputPath} template=${request.templateId} expectedDurationSec=${request.expectedDurationSec} segments=${request.segments.length} watermark=${request.watermarkEnabled}`)
       if (record.cancelled) {
         return
       }
@@ -192,7 +193,8 @@ export class ExportManager {
       this.notify(record, `相册保存成功：${albumUri}`, 100)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      debugLog('导出', `导出失败：${message}`)
+      const stack = error instanceof Error && error.stack !== undefined ? error.stack : ''
+      debugLog('导出', `导出失败：${message}${stack.length > 0 ? `\n${stack}` : ''}`)
       const failureEvent: ExportJobEvent = { jobId: record.id, status: `导出失败：${message}`, progress: 0 }
       this.recordTerminalEvent(record.id, failureEvent)
       this.notify(record, `导出失败：${message}`, 0)
@@ -224,6 +226,7 @@ export class ExportManager {
         if (!albumUri || albumUri.length === 0) {
           throw new Error('未选择相册保存位置')
         }
+        debugLog('导出', `相册写入开始 source=${sourceUri} target=${albumUri}`)
         let srcFd: number = -1
         let dstFd: number = -1
         const chunkSize: number = 1024 * 1024
@@ -231,6 +234,7 @@ export class ExportManager {
         let copiedSize: number = 0
         const baseProgress: number = Math.max(85, Math.min(99, startProgress))
         let reportedProgress: number = baseProgress
+        let copyError: string = ''
         try {
           try {
             const stat = await fs.stat(sourceUri)
@@ -248,6 +252,7 @@ export class ExportManager {
             try {
               readLen = await fs.read(srcFd, buffer)
             } catch (e) {
+              copyError = `读取失败: ${e instanceof Error ? e.message : String(e)}`
               break
             }
             if (readLen <= 0) {
@@ -256,6 +261,7 @@ export class ExportManager {
             try {
               await fs.write(dstFd, buffer.slice(0, readLen))
             } catch (e) {
+              copyError = `写入失败: ${e instanceof Error ? e.message : String(e)}`
               break
             }
             copiedSize += readLen
@@ -274,6 +280,9 @@ export class ExportManager {
           while (reportedProgress < 99) {
             reportedProgress += 1
             onProgress(reportedProgress)
+          }
+          if (copyError.length > 0) {
+            throw new Error(`相册写入中断（已写入 ${copiedSize}/${totalSize} 字节）：${copyError}`)
           }
         } finally {
           if (srcFd >= 0) {
