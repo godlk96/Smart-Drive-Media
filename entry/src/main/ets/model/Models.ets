@@ -1,5 +1,5 @@
-import { DvrMeta, TripSnapshot } from './TripModels'
-import { enabledSegments, Segment } from './SegmentModel'
+import { DvrMeta, ExportSegment, TripSnapshot } from './TripModels'
+import { Segment, toExportSegments } from './SegmentModel'
 
 export enum CameraPosition {
   FRONT = 'FRONT',
@@ -258,10 +258,7 @@ export function listTemplateDefinitions(): Array<TemplateDefinition> {
 
 export interface PlaybackState {
   playheadMs: number
-  rangeStartMs: number
-  rangeEndMs: number
-  speedLabel: string
-  muted: boolean
+  segments: Array<ExportSegment>
 }
 
 export interface BrandState {
@@ -385,19 +382,13 @@ export function createEditorStateFromSnapshot(
   exportStatus: string
 ): EditorState {
   const trip = tripFromSnapshot(snapshot)
-  const enabled = enabledSegments(segments)
-  const first = enabled.length > 0 ? enabled[0] : undefined
-  const last = enabled.length > 0 ? enabled[enabled.length - 1] : undefined
   return {
     sessionId: sessionId,
     trip: trip,
     selectedTemplateId: toTemplateId(templateId),
     playback: {
       playheadMs: 0,
-      rangeStartMs: first ? Math.max(0, Math.round(first.startSec * 1000)) : 0,
-      rangeEndMs: last ? Math.max(0, Math.round(last.endSec * 1000)) : Math.max(0, trip.durationSec * 1000),
-      speedLabel: first ? first.speedLabel : '1.0X',
-      muted: first ? first.muted : false
+      segments: toExportSegments(segments)
     },
     brand: {
       watermarkEnabled: watermarkEnabled

@@ -104,7 +104,9 @@ export class EditorViewModel {
       state.exportStatusText
     )
     const playheadMs = Math.floor(state.playheadSec * 1000)
-    draft.playback.playheadMs = Math.max(0, Math.min(playheadMs, draft.playback.rangeEndMs))
+    const exported = draft.playback.segments
+    const endMs = exported.length > 0 ? exported[exported.length - 1].endMs : playheadMs
+    draft.playback.playheadMs = Math.max(0, Math.min(playheadMs, endMs))
     return deepCloneExportSnapshot(draft)
   }
 

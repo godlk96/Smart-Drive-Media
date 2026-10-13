@@ -1,6 +1,7 @@
 import { Segment, createFullSegment, canSplitAt, canToggleSegment, cycleSpeedLabel, enabledCount,
-  formatSegmentDuration, isAllDisabled, outputDurationSec, playbackSkipTargetSec, segmentDurationSec,
-  segmentIndexAtSec, setSegmentMuted, setSegmentSpeed, speedFactor, splitSegmentAt, toggleSegmentEnabled }
+  exportDurationSec, formatSegmentDuration, isAllDisabled, outputDurationSec, playbackSkipTargetSec,
+  segmentDurationSec, segmentIndexAtSec, setSegmentMuted, setSegmentSpeed, speedFactor, splitSegmentAt,
+  toExportSegments, toggleSegmentEnabled }
   from '../../../main/ets/model/SegmentModel'
 import { TimelineCase, expectNumber, expectString, expectTrue, firstError } from './TestSupport'
 
@@ -252,6 +253,48 @@ export function segmentModelCases(): Array<TimelineCase> {
       expectString(formatSegmentDuration(whole), '15s', '整数秒'),
       expectString(formatSegmentDuration(fractional), '16s', '向上取整'),
       expectString(formatSegmentDuration(createFullSegment(59.4)[0]), '60s', '非整数片长')
+    ])
+  }))
+
+  cases.push(makeCase('导出只带启用段且按起点升序', () => {
+    const two = splitSegmentAt(createFullSegment(60), 30, 60)
+    const tuned = setSegmentMuted(setSegmentSpeed(two, two[0].id, '2.0X'), two[0].id, true)
+    const out = toExportSegments(tuned)
+    return firstError([
+      expectNumber(out.length, 2, '段数'),
+      expectNumber(out[0].startMs, 0, '第一段起点毫秒'),
+      expectNumber(out[0].endMs, 30000, '第一段终点毫秒'),
+      expectString(out[0].speedLabel, '2.0X', '第一段倍速'),
+      expectTrue(out[0].muted, '第一段静音'),
+      expectString(out[1].speedLabel, '1.0X', '第二段倍速')
+    ])
+  }))
+
+  cases.push(makeCase('单段 2.0× 时成片时长是源时长的一半', () => {
+    const single = createFullSegment(60)
+    single[0].speedLabel = '2.0X'
+    return firstError([
+      expectNumber(toExportSegments(single).length, 1, '段数'),
+      expectNumber(outputDurationSec(single), 30, 'expectedDurationSec 取值')
+    ])
+  }))
+
+  cases.push(makeCase('灰段不进导出', () => {
+    const two = splitSegmentAt(createFullSegment(60), 30, 60)
+    const off = toggleSegmentEnabled(two, two[0].id)
+    const out = toExportSegments(off)
+    return firstError([
+      expectNumber(out.length, 1, '段数'),
+      expectNumber(out[0].startMs, 30000, '只剩后半段')
+    ])
+  }))
+
+  cases.push(makeCase('成片时长按每段倍速求和', () => {
+    const two = splitSegmentAt(createFullSegment(60), 30, 60)
+    const tuned = setSegmentSpeed(two, two[1].id, '2.0X')
+    return firstError([
+      expectNumber(exportDurationSec(toExportSegments(tuned)), 45, '30 + 30/2'),
+      expectNumber(exportDurationSec(toExportSegments(createFullSegment(12))), 12, '单段 1.0x')
     ])
   }))
 

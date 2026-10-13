@@ -12,6 +12,8 @@
  * 默认状态是 createFullSegment(total) 返回的一整段 [0, total]。
  */
 
+import { ExportSegment } from './TripModels'
+
 /** 启用段的数量上限 */
 export const MAX_SEGMENTS: number = 3
 /** 单段最短时长（秒） */
@@ -310,4 +312,33 @@ export function isAllDisabled(segments: Array<Segment>): boolean {
 /** 段时长文案：只写时长不写起止（spec D9/D10），向上取整到秒，如 '15s'。 */
 export function formatSegmentDuration(segment: Segment): string {
   return `${Math.ceil(segmentDurationSec(segment))}s`
+}
+
+/** 模型层片段 → 导出用区间：只取启用段，按起点升序，秒转毫秒用四舍五入。 */
+export function toExportSegments(segments: Array<Segment>): Array<ExportSegment> {
+  const out: Array<ExportSegment> = []
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i]
+    if (!segment.enabled) {
+      continue
+    }
+    const item = new ExportSegment()
+    item.startMs = Math.round(segment.startSec * 1000)
+    item.endMs = Math.round(segment.endSec * 1000)
+    item.speedLabel = segment.speedLabel
+    item.muted = segment.muted
+    out.push(item)
+  }
+  out.sort((a: ExportSegment, b: ExportSegment) => a.startMs - b.startMs)
+  return out
+}
+
+/** 导出成片时长（秒）：各段毫秒长度按各自倍速换算后求和。 */
+export function exportDurationSec(segments: Array<ExportSegment>): number {
+  let total = 0
+  for (let i = 0; i < segments.length; i++) {
+    const item = segments[i]
+    total += (item.endMs - item.startMs) / 1000 / speedFactor(item.speedLabel)
+  }
+  return total
 }

@@ -41,21 +41,22 @@ export default function exportPayloadTest(): void {
         buildSnapshotWithClips(2), 'session-3', 'T2', createFullSegment(120), true, true, '待导出'
       )
       const snapshot = deepCloneExportSnapshot(state)
-      expect(snapshot.playback.rangeStartMs).assertEqual(0)
-      expect(snapshot.playback.rangeEndMs).assertEqual(120000)
+      expect(snapshot.playback.segments.length).assertEqual(1)
+      expect(snapshot.playback.segments[0].startMs).assertEqual(0)
+      expect(snapshot.playback.segments[0].endMs).assertEqual(120000)
     })
 
     it('区间可被赋值为非零起点，且深拷贝后保持独立（不共享引用）', 0, () => {
       const state = createEditorStateFromSnapshot(
         buildSnapshotWithClips(2), 'session-4', 'T2', createFullSegment(120), true, true, '待导出'
       )
-      state.playback.rangeStartMs = 30000
-      state.playback.rangeEndMs = 90000
+      state.playback.segments[0].startMs = 30000
+      state.playback.segments[0].endMs = 90000
       const snapshot = deepCloneExportSnapshot(state)
-      expect(snapshot.playback.rangeStartMs).assertEqual(30000)
-      expect(snapshot.playback.rangeEndMs).assertEqual(90000)
-      snapshot.playback.rangeStartMs = 1
-      expect(state.playback.rangeStartMs).assertEqual(30000)
+      expect(snapshot.playback.segments[0].startMs).assertEqual(30000)
+      expect(snapshot.playback.segments[0].endMs).assertEqual(90000)
+      snapshot.playback.segments[0].startMs = 1
+      expect(state.playback.segments[0].startMs).assertEqual(30000)
     })
 
     it('导出快照携带模板与水印开关', 0, () => {

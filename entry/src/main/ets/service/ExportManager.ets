@@ -4,6 +4,7 @@ import photoAccessHelper from '@ohos.file.photoAccessHelper'
 import { CameraPosition, ExportSnapshot, toLegacyCamera } from '../model/Models'
 import { DvrMeta } from '../model/TripModels'
 import { buildComposeRequestByService } from './ExportService'
+import { exportDurationSec } from '../model/SegmentModel'
 import { executeComposeByService } from './ExportNativeService'
 import { debugLog } from '../utils/Logger'
 
@@ -156,13 +157,10 @@ export class ExportManager {
         clips,
         fileName,
         outputPath,
-        Math.max(1, (snapshot.playback.rangeEndMs - snapshot.playback.rangeStartMs) / 1000),
+        Math.max(1, exportDurationSec(snapshot.playback.segments)),
         snapshot.selectedTemplateId,
-        snapshot.playback.speedLabel,
-        snapshot.playback.muted,
-        snapshot.brand.watermarkEnabled,
-        snapshot.playback.rangeStartMs,
-        snapshot.playback.rangeEndMs
+        snapshot.playback.segments,
+        snapshot.brand.watermarkEnabled
       )
       if (record.cancelled) {
         return

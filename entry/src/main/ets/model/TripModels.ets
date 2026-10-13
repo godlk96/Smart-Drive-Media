@@ -33,6 +33,14 @@ export class PreviewSource {
   camera: string = ''
 }
 
+/** 导出用的一段：毫秒区间 + 该段自己的倍速与声音开关。 */
+export class ExportSegment {
+  startMs: number = 0
+  endMs: number = 0
+  speedLabel: string = '1.0X'
+  muted: boolean = false
+}
+
 export class ExportComposeRequest {
   fileName: string = ''
   outputPath: string = ''
@@ -47,4 +55,6 @@ export class ExportComposeRequest {
   speedLabel: string = '1.0X'
   muted: boolean = false
   watermarkEnabled: boolean = true
+  /** 多段导出：native 侧优先读它；上面四个单值字段是过渡兼容。 */
+  segments: Array<ExportSegment> = []
 }

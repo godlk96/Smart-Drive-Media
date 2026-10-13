@@ -1,4 +1,4 @@
-import { DvrMeta, ExportComposeRequest } from '../model/TripModels'
+import { DvrMeta, ExportComposeRequest, ExportSegment } from '../model/TripModels'
 import { ensureCoreApiContract } from './CoreApiContract'
 import { resolveTemplateDefinition, toLegacyCamera } from '../model/Models'
 
@@ -119,23 +119,24 @@ export function buildComposeRequestByService(
   outputPath: string,
   expectedDurationSec: number,
   templateId: string,
-  speedLabel: string,
-  muted: boolean,
-  watermarkEnabled: boolean,
-  rangeStartMs: number = 0,
-  rangeEndMs: number = 0
+  segments: Array<ExportSegment>,
+  watermarkEnabled: boolean
 ): ExportComposeRequest {
   ensureCoreApiContract()
   const request = new ExportComposeRequest()
   request.fileName = fileName
   request.outputPath = outputPath
   request.expectedDurationSec = expectedDurationSec
-  request.rangeStartMs = rangeStartMs
-  request.rangeEndMs = rangeEndMs
   request.templateId = templateId
-  request.speedLabel = speedLabel
-  request.muted = muted
   request.watermarkEnabled = watermarkEnabled
+  // 过渡兼容（plan:651）：native 尚未读 segments（Task 11/12），四个旧字段先取第一段；
+  // 单段时行为与旧版完全一致，多段时等价于「只导出第一段」。
+  const first = segments.length > 0 ? segments[0] : undefined
+  request.rangeStartMs = first ? first.startMs : 0
+  request.rangeEndMs = first ? first.endMs : 0
+  request.speedLabel = first ? first.speedLabel : '1.0X'
+  request.muted = first ? first.muted : false
+  request.segments = segments
   const nativeFrontUris: Array<string> = []
   const nativeBackUris: Array<string> = []
   const nativeFrontIndexes: Array<number> = []
