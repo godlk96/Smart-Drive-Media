@@ -3,6 +3,74 @@
     {
       "name": "start_window_background",
       "value": "#0F172A"
+    },
+    {
+      "name": "page_bg",
+      "value": "#F7F6F3"
+    },
+    {
+      "name": "card_bg",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "page_border",
+      "value": "#EAE8E3"
+    },
+    {
+      "name": "card_border",
+      "value": "#EDEAE4"
+    },
+    {
+      "name": "track_bg",
+      "value": "#F4F2ED"
+    },
+    {
+      "name": "segment_border",
+      "value": "#E4E1DA"
+    },
+    {
+      "name": "text_primary",
+      "value": "#1C1B18"
+    },
+    {
+      "name": "text_secondary",
+      "value": "#57534A"
+    },
+    {
+      "name": "text_tertiary",
+      "value": "#8A867D"
+    },
+    {
+      "name": "text_disabled",
+      "value": "#B5B0A6"
+    },
+    {
+      "name": "ink",
+      "value": "#111111"
+    },
+    {
+      "name": "amber",
+      "value": "#D98324"
+    },
+    {
+      "name": "amber_soft",
+      "value": "#FDF6EC"
+    },
+    {
+      "name": "stage_bg",
+      "value": "#14120F"
+    },
+    {
+      "name": "stage_divider",
+      "value": "#1E1B17"
+    },
+    {
+      "name": "segment_off_bg",
+      "value": "#EFEDE8"
+    },
+    {
+      "name": "segment_off_border",
+      "value": "#E7E4DE"
     }
   ]
 }

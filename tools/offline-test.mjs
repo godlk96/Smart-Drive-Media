@@ -241,6 +241,40 @@ async function checkNativeContract() {
   }
 }
 
+/**
+ * 颜色令牌守卫：spec §6.9 的 17 个令牌必须落在 color.json 且取值一致。
+ * 页面里不许再写十六进制色值，所以这里红一次就意味着「某个颜色没进资源」。
+ */
+const REQUIRED_COLOR_TOKENS = new Map([
+  ['page_bg', '#F7F6F3'], ['card_bg', '#FFFFFF'], ['page_border', '#EAE8E3'],
+  ['card_border', '#EDEAE4'], ['track_bg', '#F4F2ED'], ['segment_border', '#E4E1DA'],
+  ['text_primary', '#1C1B18'], ['text_secondary', '#57534A'], ['text_tertiary', '#8A867D'],
+  ['text_disabled', '#B5B0A6'], ['ink', '#111111'], ['amber', '#D98324'],
+  ['amber_soft', '#FDF6EC'], ['stage_bg', '#14120F'], ['stage_divider', '#1E1B17'],
+  ['segment_off_bg', '#EFEDE8'], ['segment_off_border', '#E7E4DE']
+])
+
+function checkColorTokens() {
+  const name = '颜色令牌齐全且取值正确'
+  try {
+    const raw = JSON.parse(
+      readFileSync(join(ROOT, 'entry/src/main/resources/base/element/color.json'), 'utf8')
+    )
+    const actual = new Map(
+      (raw.color ?? []).map((item) => [item.name, String(item.value).toUpperCase()])
+    )
+    const problems = []
+    for (const [token, expected] of REQUIRED_COLOR_TOKENS) {
+      const got = actual.get(token)
+      if (got === undefined) problems.push(`${token} 缺失`)
+      else if (got !== expected) problems.push(`${token} 期望 ${expected}，实际 ${got}`)
+    }
+    return problems.length > 0 ? { name, detail: problems.join('; ') } : { name, ok: true }
+  } catch (err) {
+    return { name, detail: err && err.message ? err.message : String(err) }
+  }
+}
+
 async function main() {
   rmSync(BUILD_DIR, { recursive: true, force: true })
 
@@ -294,6 +328,14 @@ async function main() {
     passed += 1
   } else {
     failures.push({ name: contract.name, detail: contract.detail })
+  }
+
+  // 4) 颜色令牌
+  const colors = checkColorTokens()
+  if (colors.ok) {
+    passed += 1
+  } else {
+    failures.push({ name: colors.name, detail: colors.detail })
   }
 
   const total = passed + failures.length
