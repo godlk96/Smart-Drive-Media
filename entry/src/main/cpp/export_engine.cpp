@@ -373,13 +373,13 @@ bool composeTemplateToMp4(const std::string &templateId,
         AVCodecID codecId;
         bool isOhCodec;
     };
+    // 鸿蒙原生平台导出专供：只使用 OpenHarmony 系统编码体系（h264_ohcodec / hevc_ohcodec），
+    // 绝不静默降级为旧版 mpeg4（mp4v 兼容性差且不被相册索引）。
     const std::vector<EncoderCandidate> candidates = {
         {"h264_ohcodec", AV_CODEC_ID_H264, true},
         {"hevc_ohcodec", AV_CODEC_ID_HEVC, true},
         {"h264_oh", AV_CODEC_ID_H264, true},
-        {"hevc_oh", AV_CODEC_ID_HEVC, true},
-        {"", AV_CODEC_ID_H264, false},
-        {"", AV_CODEC_ID_MPEG4, false}
+        {"hevc_oh", AV_CODEC_ID_HEVC, true}
     };
 
     const AVCodec *selectedEncoder = nullptr;
@@ -388,6 +388,7 @@ bool composeTemplateToMp4(const std::string &templateId,
     const int64_t sourceBitRate = probe.bitRate > 0 ? probe.bitRate : (12LL * 1000LL * 1000LL);
     const int64_t targetBitRate = sourceBitRate > (10LL * 1000LL * 1000LL) ? sourceBitRate : (10LL * 1000LL * 1000LL);
     std::vector<const AVCodec *> triedEncoders;
+    std::string lastOpenError;
 
     for (const auto &candidate : candidates) {
         const AVCodec *enc = nullptr;
@@ -472,6 +473,7 @@ bool composeTemplateToMp4(const std::string &templateId,
         av_dict_free(&opts);
         if (openRet < 0) {
             const char *encName = enc->name != nullptr ? enc->name : "unknown";
+            lastOpenError = std::string(encName) + ":" + avErrorText(openRet) + " (ret=" + std::to_string(openRet) + ")";
             logPipeline("mux", "encoder candidate " + std::string(encName) + " open failed: " +
                                avErrorText(openRet) + " (ret=" + std::to_string(openRet) + "), trying next");
             avcodec_free_context(&ctx);
@@ -485,7 +487,7 @@ bool composeTemplateToMp4(const std::string &templateId,
 
     if (encoderCtx == nullptr || selectedEncoder == nullptr) {
         avformat_free_context(outputFmt);
-        error = "compose_open_encoder_failed:no_usable_encoder";
+        error = "compose_open_encoder_failed:ohcodec_failed:" + (lastOpenError.empty() ? "encoder_not_found" : lastOpenError);
         return false;
     }
 
@@ -494,8 +496,7 @@ bool composeTemplateToMp4(const std::string &templateId,
     encoderLog << "selected encoder=" << encoderName << " codec_id=" << static_cast<int>(selectedEncoder->id)
                << " pix_fmt=" << av_get_pix_fmt_name(encoderCtx->pix_fmt)
                << " hevc_encoder_available=" << (avcodec_find_encoder(AV_CODEC_ID_HEVC) != nullptr ? 1 : 0)
-               << " h264_encoder_available=" << (avcodec_find_encoder(AV_CODEC_ID_H264) != nullptr ? 1 : 0)
-               << " mpeg4_encoder_available=" << (avcodec_find_encoder(AV_CODEC_ID_MPEG4) != nullptr ? 1 : 0);
+               << " h264_encoder_available=" << (avcodec_find_encoder(AV_CODEC_ID_H264) != nullptr ? 1 : 0);
     logPipeline("mux", encoderLog.str());
 
     {
