@@ -58,3 +58,8 @@ logs/
 .offline-test-build/
 .player-typecheck/
 media_resource/
+
+# local working artifacts: brainstorm screens / skill references / npm cache
+.superpowers/
+.skill-refs/
+.npm-cache/

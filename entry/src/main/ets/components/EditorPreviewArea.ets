@@ -18,16 +18,7 @@ interface PersistentSlotState {
   height: number
   zoomX: number
   hasSource: boolean
-  privacyMasks: Array<PreviewMaskRect>
   controller: SingleTrackController
-}
-
-interface PreviewMaskRect {
-  key: string
-  x: number
-  y: number
-  width: number
-  height: number
 }
 
 /**
@@ -38,7 +29,7 @@ interface PreviewMaskRect {
  * 与上一版的区别（都是"删机制"而不是"加机制"）：
  *   - **不再接收 editorState**。上一版 watch 整个 EditorStateModel，而宿主每播放 tick 都会替换 state，
  *     于是布局重建（setDuration / updateClockMaster / setMuted / setPlaybackRate / play|pause 全量重放）
- *     每秒被执行约 10 次。现在只接收 8 个**事件级**标量：模板 id、行程、3 个遮罩开关、播放/静音/倍速，
+ *     每秒被执行约 10 次。现在只接收 6 个**事件级**标量：模板 id、行程、播放/静音/倍速，
  *     以及一次性的跳转请求。没有任何一个字段会被每秒改写。
  *   - **seekToken + playheadMs 合并成 PreviewSeekRequest**。旧版用两个独立 @Prop 表达"跳到哪里"，
  *     而 playheadMs 同时又被播放推进改写，二者更新顺序不受 ArkUI 保证 → "新 token 配旧位置"错跳。
@@ -55,10 +46,6 @@ interface PreviewMaskRect {
 export struct EditorPreviewArea {
   @Prop @Watch('onTemplateOrTripChanged') activeTemplateId: string = ''
   @Prop @Watch('onTemplateOrTripChanged') tripSnapshot: TripSnapshot = new TripSnapshot()
-  /** 隐私遮罩开关。与原生一致：只有 speed / vin / time 三个矩形，hideGps 原生不使用（见 export_engine.cpp:178-190）。 */
-  @Prop @Watch('onPrivacyChanged') hideSpeed: boolean = false
-  @Prop @Watch('onPrivacyChanged') hideVin: boolean = false
-  @Prop @Watch('onPrivacyChanged') hideTime: boolean = false
   @Prop @Watch('onPlayingChanged') playing: boolean = false
   @Prop @Watch('onMutedChanged') muted: boolean = false
   @Prop @Watch('onSpeedLabelChanged') speedLabel: string = '1.0X'
@@ -84,13 +71,9 @@ export struct EditorPreviewArea {
    */
   private appliedSeekToken: number = 0
   private appliedApplyKey: string = ''
-  private appliedPrivacyKey: string = ''
   private appliedPlaying: boolean = false
   private appliedMuted: boolean = false
   private appliedSpeedLabel: string = ''
-
-  /** 隐私遮罩的坐标系：源画面固定 16:9，遮罩按 letterbox 映射到实际槽位。 */
-  private readonly sourceAspectRatio: number = 16 / 9
 
   aboutToAppear(): void {
     this.disposed = false
@@ -144,7 +127,6 @@ export struct EditorPreviewArea {
         height: 1,
         zoomX: 1,
         hasSource: false,
-        privacyMasks: [],
         controller
       })
     }
@@ -185,55 +167,6 @@ export struct EditorPreviewArea {
     return result
   }
 
-  private buildFrontPrivacyMasksBySlot(slotWidth: number, slotHeight: number): Array<PreviewMaskRect> {
-    if (slotWidth <= 0 || slotHeight <= 0) {
-      return []
-    }
-    const masks: Array<PreviewMaskRect> = []
-    if (this.hideSpeed) {
-      masks.push({ key: 'speed', x: 0.05, y: 0.9, width: 0.12, height: 0.08 })
-    }
-    if (this.hideVin) {
-      masks.push({ key: 'vin', x: 0.28, y: 0.9, width: 0.24, height: 0.08 })
-    }
-    if (this.hideTime) {
-      masks.push({ key: 'time', x: 0.58, y: 0.9, width: 0.34, height: 0.08 })
-    }
-    if (masks.length === 0) {
-      return []
-    }
-    const containerAspect = slotWidth / slotHeight
-    let contentWidth = 1
-    let contentHeight = 1
-    let contentOffsetX = 0
-    let contentOffsetY = 0
-    if (containerAspect > this.sourceAspectRatio) {
-      contentWidth = this.sourceAspectRatio / containerAspect
-      contentOffsetX = (1 - contentWidth) / 2
-    } else if (containerAspect < this.sourceAspectRatio) {
-      contentHeight = containerAspect / this.sourceAspectRatio
-      contentOffsetY = (1 - contentHeight) / 2
-    }
-    return masks.map((mask: PreviewMaskRect) => {
-      const mapped: PreviewMaskRect = {
-        key: mask.key,
-        x: Math.max(0, Math.min(1, contentOffsetX + mask.x * contentWidth)),
-        y: Math.max(0, Math.min(1, contentOffsetY + mask.y * contentHeight)),
-        width: Math.max(0, Math.min(1, mask.width * contentWidth)),
-        height: Math.max(0, Math.min(1, mask.height * contentHeight))
-      }
-      return mapped
-    })
-  }
-
-  /** 遮罩只画在"有源且机位是 Front"的槽位上（原生也只给前摄叠加遮罩）。 */
-  private masksForSlot(slot: PersistentSlotState): Array<PreviewMaskRect> {
-    if (!slot.visible || !slot.hasSource || slot.camera !== 'Front') {
-      return []
-    }
-    return this.buildFrontPrivacyMasksBySlot(slot.width, slot.height)
-  }
-
   /** 布局重算的去重键：只有模板、行程内容或时长真的变了才需要重建。 */
   private buildApplyKey(): string {
     const snapshot = this.tripSnapshot
@@ -249,7 +182,6 @@ export struct EditorPreviewArea {
       return
     }
     this.appliedApplyKey = this.buildApplyKey()
-    this.appliedPrivacyKey = `${this.hideSpeed}|${this.hideVin}|${this.hideTime}`
     const templateId = this.activeTemplateId
     const geometries: Array<SlotGeometry> = buildSlotGeometry(templateId)
     const clips = this.buildNormalizedClips()
@@ -277,7 +209,6 @@ export struct EditorPreviewArea {
         slot.hasSource = false
         slot.controller.bindSegments([])
       }
-      slot.privacyMasks = this.masksForSlot(slot)
       nextSlots.push(slot)
     }
 
@@ -320,25 +251,6 @@ export struct EditorPreviewArea {
       return
     }
     this.applyTemplateAndTrip()
-  }
-
-  /** 遮罩开关只影响 Front 槽位的叠加层，不需要重新绑定媒体源。 */
-  onPrivacyChanged(): void {
-    if (this.disposed) {
-      return
-    }
-    const key = `${this.hideSpeed}|${this.hideVin}|${this.hideTime}`
-    if (key === this.appliedPrivacyKey) {
-      return
-    }
-    this.appliedPrivacyKey = key
-    const nextSlots: Array<PersistentSlotState> = []
-    for (let i = 0; i < this.slots.length; i++) {
-      const slot = this.slots[i]
-      slot.privacyMasks = this.masksForSlot(slot)
-      nextSlots.push(slot)
-    }
-    this.slots = nextSlots
   }
 
   onPlayingChanged(): void {
@@ -399,16 +311,6 @@ export struct EditorPreviewArea {
             .width('100%')
             .height('100%')
             .backgroundColor('#333333')
-        }
-
-        if (this.slots[index].visible && this.slots[index].hasSource) {
-          ForEach(this.slots[index].privacyMasks, (mask: PreviewMaskRect) => {
-            Column()
-              .width(this.toPercent(mask.width))
-              .height(this.toPercent(mask.height))
-              .position({ x: this.toPercent(mask.x), y: this.toPercent(mask.y) })
-              .backgroundColor('#000000')
-          }, (mask: PreviewMaskRect) => mask.key)
         }
       }
       .clip(true)

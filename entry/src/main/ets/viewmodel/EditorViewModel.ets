@@ -84,10 +84,6 @@ export class EditorViewModel {
     return this.bridge.toggleWatermark()
   }
 
-  updatePrivacy(type: string, enabled: boolean): EditorStateModel {
-    return this.bridge.updatePrivacy(type, enabled)
-  }
-
   setExportStatusText(statusText: string): void {
     this.bridge.setExportStatusText(statusText)
   }
@@ -104,9 +100,6 @@ export class EditorViewModel {
       state.speedLabel,
       state.muted,
       state.watermarkEnabled,
-      state.hideSpeed,
-      state.hideGps,
-      state.hideVin,
       state.drawerExpanded,
       state.exportStatusText
     )
@@ -116,7 +109,6 @@ export class EditorViewModel {
     draft.playback.rangeStartMs = startMs
     draft.playback.rangeEndMs = endMs
     draft.playback.playheadMs = Math.max(startMs, Math.min(playheadMs, endMs))
-    draft.privacy.hideTime = state.hideTime ?? state.hideGps
     return deepCloneExportSnapshot(draft)
   }
 
@@ -146,10 +138,6 @@ export class EditorViewModel {
       return icon
     }
     return '🎬'
-  }
-
-  templateSupportsMosaic(templateId: string): boolean {
-    return templateId === TemplateId.T1 || templateId === TemplateId.T2 || templateId === TemplateId.T5
   }
 
   normalizeCameraName(camera: string): string {

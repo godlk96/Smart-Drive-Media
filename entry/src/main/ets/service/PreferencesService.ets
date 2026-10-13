@@ -2,18 +2,9 @@ import preferences from '@ohos.data.preferences'
 import common from '@ohos.app.ability.common'
 import { debugLog } from '../utils/Logger'
 
-export interface PrivacySettings {
-  hideSpeed: boolean;
-  hideVin: boolean;
-  hideTime: boolean;
-}
-
 const PREF_STORE_NAME = 'smartdrive_preferences'
 const KEY_LAST_TRIP_ID = 'pref_last_trip_id'
 const KEY_TEMPLATE_ID = 'pref_template_id'
-const KEY_HIDE_SPEED = 'pref_hide_speed'
-const KEY_HIDE_VIN = 'pref_hide_vin'
-const KEY_HIDE_TIME = 'pref_hide_time'
 
 export class PreferencesService {
   private static instance: PreferencesService | null = null
@@ -93,41 +84,5 @@ export class PreferencesService {
       }
     }
     return String(this.memoryStore.get(KEY_TEMPLATE_ID) || defaultTemplate)
-  }
-
-  public async savePrivacySettings(settings: PrivacySettings): Promise<void> {
-    this.memoryStore.set(KEY_HIDE_SPEED, settings.hideSpeed)
-    this.memoryStore.set(KEY_HIDE_VIN, settings.hideVin)
-    this.memoryStore.set(KEY_HIDE_TIME, settings.hideTime)
-    const store = await this.getPreferencesStore()
-    if (store) {
-      try {
-        await store.put(KEY_HIDE_SPEED, settings.hideSpeed)
-        await store.put(KEY_HIDE_VIN, settings.hideVin)
-        await store.put(KEY_HIDE_TIME, settings.hideTime)
-        await store.flush()
-      } catch (e) {
-        debugLog('Preferences', `保存privacySettings失败: ${e}`)
-      }
-    }
-  }
-
-  public async getPrivacySettings(): Promise<PrivacySettings> {
-    const store = await this.getPreferencesStore()
-    if (store) {
-      try {
-        const hideSpeed = Boolean(await store.get(KEY_HIDE_SPEED, true))
-        const hideVin = Boolean(await store.get(KEY_HIDE_VIN, true))
-        const hideTime = Boolean(await store.get(KEY_HIDE_TIME, true))
-        return { hideSpeed, hideVin, hideTime }
-      } catch (e) {
-        debugLog('Preferences', `读取privacySettings失败: ${e}`)
-      }
-    }
-    return {
-      hideSpeed: Boolean(this.memoryStore.get(KEY_HIDE_SPEED) ?? true),
-      hideVin: Boolean(this.memoryStore.get(KEY_HIDE_VIN) ?? true),
-      hideTime: Boolean(this.memoryStore.get(KEY_HIDE_TIME) ?? true)
-    }
   }
 }

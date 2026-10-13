@@ -130,9 +130,6 @@ struct NativeExportPipelineRequest {
     std::string templateId;
     double expectedDurationSec = 0.0;
     std::string outputPath;
-    bool hideSpeed = true;
-    bool hideVin = true;
-    bool hideTime = true;
     double startMs = 0.0;
     double endMs = 0.0;
 };
@@ -206,21 +203,6 @@ static bool readStringArrayFromJs(napi_env env, napi_value value, std::vector<st
     return true;
 }
 
-static bool readBoolPropertyFromJs(napi_env env, napi_value obj, const char *name, bool defaultValue, bool &output)
-{
-    output = defaultValue;
-    napi_value value = nullptr;
-    if (!getNamedProperty(env, obj, name, value)) {
-        return true;
-    }
-    bool boolValue = false;
-    if (napi_get_value_bool(env, value, &boolValue) != napi_ok) {
-        return false;
-    }
-    output = boolValue;
-    return true;
-}
-
 static bool parseExportPipelineRequest(napi_env env, napi_callback_info info, NativeExportPipelineRequest &request, NativeExportPipelineResult &error)
 {
     size_t argc = 1;
@@ -271,18 +253,6 @@ static bool parseExportPipelineRequest(napi_env env, napi_callback_info info, Na
         return false;
     }
     request.outputPath = readUtf8Arg(env, outputPathValue);
-    if (!readBoolPropertyFromJs(env, args[0], "hideSpeed", true, request.hideSpeed)) {
-        error = makeErrorResult(EXPORT_ERR_INVALID_ARG, "ERR_HIDE_SPEED_INVALID");
-        return false;
-    }
-    if (!readBoolPropertyFromJs(env, args[0], "hideVin", true, request.hideVin)) {
-        error = makeErrorResult(EXPORT_ERR_INVALID_ARG, "ERR_HIDE_VIN_INVALID");
-        return false;
-    }
-    if (!readBoolPropertyFromJs(env, args[0], "hideTime", true, request.hideTime)) {
-        error = makeErrorResult(EXPORT_ERR_INVALID_ARG, "ERR_HIDE_TIME_INVALID");
-        return false;
-    }
     napi_value startMsValue = nullptr;
     if (getNamedProperty(env, args[0], "startMs", startMsValue) && startMsValue != nullptr) {
         double val = 0.0;
@@ -324,9 +294,6 @@ static NativeExportPipelineResult runPipelineAndWrapResult(const NativeExportPip
         request.sideUris,
         request.templateId,
         request.expectedDurationSec,
-        request.hideSpeed,
-        request.hideVin,
-        request.hideTime,
         request.outputPath,
         request.startMs,
         request.endMs);

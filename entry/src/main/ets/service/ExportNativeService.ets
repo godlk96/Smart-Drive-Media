@@ -19,9 +19,6 @@ interface NativeExportPipelineRequest {
   startMs: number
   endMs: number
   outputPath: string
-  hideSpeed: boolean
-  hideVin: boolean
-  hideTime: boolean
 }
 
 interface MaterializedUriSet {
@@ -258,10 +255,7 @@ function buildNativeExportPayload(
     expectedDurationSec: request.expectedDurationSec,
     startMs: request.rangeStartMs,
     endMs: request.rangeEndMs,
-    outputPath: request.outputPath,
-    hideSpeed: request.hideSpeed,
-    hideVin: request.hideVin,
-    hideTime: request.hideTime
+    outputPath: request.outputPath
   }
   return deepCloneJson(payload)
 }

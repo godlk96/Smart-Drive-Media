@@ -119,10 +119,6 @@ export class CoreBridge {
   private previewCamera: string = ''
   private currentClipIndex: number = 0
   private currentClipTotal: number = 0
-  private hideSpeed: boolean = true
-  private hideGps: boolean = true
-  private hideTime: boolean = true
-  private hideVin: boolean = true
   private playheadMs: number = 0
   private selectionStartSec: number = 0
   private selectionEndSec: number = CLIP_DURATION_SEC
@@ -481,27 +477,10 @@ export class CoreBridge {
     return merged.id
   }
 
-  /** 冷启动恢复用户上次保存的隐私打码偏好 */
-  private async restorePrivacySettings(): Promise<void> {
-    try {
-      const saved = await PreferencesService.getInstance().getPrivacySettings()
-      this.hideSpeed = saved.hideSpeed
-      this.hideVin = saved.hideVin
-      this.hideTime = saved.hideTime
-      // hideGps 与 hideTime 语义对齐（历史字段，保持同源以免出现分歧）
-      this.hideGps = saved.hideTime
-      debugLog('隐私', `已恢复打码偏好 speed=${this.hideSpeed} time=${this.hideTime} vin=${this.hideVin}`)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      debugLog('隐私', `恢复打码偏好失败，使用默认值，原因=${message}`)
-    }
-  }
-
   async createLibraryState(permissionGranted: boolean, context?: common.UIAbilityContext): Promise<LibraryStateModel> {
     debugLog('扫描', `开始构建行程，授权状态=${permissionGranted}`)
     this.lastContext = context
     PreferencesService.getInstance().setContext(context ?? null)
-    await this.restorePrivacySettings()
     if (!permissionGranted) {
       return {
         title: '行程库',
@@ -691,10 +670,6 @@ export class CoreBridge {
       speedLabel: EDITOR_SPEEDS[this.speedIndex],
       muted: this.muted,
       watermarkEnabled: this.watermarkEnabled,
-      hideSpeed: this.hideSpeed,
-      hideGps: this.hideGps,
-      hideTime: this.hideTime,
-      hideVin: this.hideVin,
       exportStatusText: this.exportStatusText
     }
   }
@@ -797,26 +772,6 @@ export class CoreBridge {
 
   toggleWatermark(): EditorStateModel {
     this.watermarkEnabled = !this.watermarkEnabled
-    const snapshot = this.trips.get(this.tripId)
-    return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
-  }
-
-  updatePrivacy(type: string, enabled: boolean): EditorStateModel {
-    debugLog('剪辑', `更新隐私开关，类型=${type}，值=${enabled}`)
-    if (type === 'speed') {
-      this.hideSpeed = enabled
-    } else if (type === 'gps') {
-      this.hideGps = enabled
-    } else if (type === 'vin') {
-      this.hideVin = enabled
-    } else if (type === 'time') {
-      this.hideTime = enabled
-    }
-    PreferencesService.getInstance().savePrivacySettings({
-      hideSpeed: this.hideSpeed,
-      hideVin: this.hideVin,
-      hideTime: this.hideTime
-    })
     const snapshot = this.trips.get(this.tripId)
     return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
   }

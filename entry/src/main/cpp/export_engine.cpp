@@ -168,49 +168,8 @@ std::string escapeFilterPath(const std::string &path)
     return escaped;
 }
 
-struct FrontPrivacyMask {
-    double x;
-    double y;
-    double w;
-    double h;
-};
-
-std::string buildFrontPrivacyMaskChain(bool hideSpeed, bool hideVin, bool hideTime)
-{
-    std::vector<FrontPrivacyMask> masks;
-    if (hideSpeed) {
-        masks.push_back({0.05, 0.90, 0.12, 0.08});
-    }
-    if (hideVin) {
-        masks.push_back({0.28, 0.90, 0.24, 0.08});
-    }
-    if (hideTime) {
-        masks.push_back({0.58, 0.90, 0.34, 0.08});
-    }
-    if (masks.empty()) {
-        return "";
-    }
-    std::ostringstream oss;
-    for (size_t i = 0; i < masks.size(); ++i) {
-        const FrontPrivacyMask &mask = masks[i];
-        if (i > 0) {
-            oss << ",";
-        }
-        oss << "drawbox=x=iw*" << mask.x
-            << ":y=ih*" << mask.y
-            << ":w=iw*" << mask.w
-            << ":h=ih*" << mask.h
-            << ":color=black:t=fill";
-    }
-    return oss.str();
-}
-
 std::string buildMovieSourceFilter(const std::string &path,
                                    const std::string &transformChain,
-                                   bool applyFrontMask,
-                                   bool hideSpeed,
-                                   bool hideVin,
-                                   bool hideTime,
                                    double startSec = 0.0,
                                    double endSec = 0.0)
 {
@@ -220,12 +179,6 @@ std::string buildMovieSourceFilter(const std::string &path,
         oss << ",trim=start=" << startSec << ":end=" << endSec << ",setpts=PTS-STARTPTS";
     } else if (startSec > 0.0) {
         oss << ",trim=start=" << startSec << ",setpts=PTS-STARTPTS";
-    }
-    if (applyFrontMask) {
-        const std::string maskChain = buildFrontPrivacyMaskChain(hideSpeed, hideVin, hideTime);
-        if (!maskChain.empty()) {
-            oss << "," << maskChain;
-        }
     }
     if (!transformChain.empty()) {
         oss << "," << transformChain;
@@ -239,9 +192,6 @@ std::string buildTemplateFilterDesc(const std::string &templateId,
                                     const std::string &sidePath,
                                     double startSec,
                                     double endSec,
-                                    bool hideSpeed,
-                                    bool hideVin,
-                                    bool hideTime,
                                     int width,
                                     int height)
 {
@@ -249,38 +199,38 @@ std::string buildTemplateFilterDesc(const std::string &templateId,
     (void)height;
     if (templateId == "T1") {
         std::ostringstream oss;
-        oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", true, hideSpeed, hideVin, hideTime, startSec, endSec) << "[top];"
-            << buildMovieSourceFilter(backPath, "scale=1920:1080", false, hideSpeed, hideVin, hideTime, startSec, endSec) << "[bottom];"
+        oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec) << "[top];"
+            << buildMovieSourceFilter(backPath, "scale=1920:1080", startSec, endSec) << "[bottom];"
             << "[top][bottom]vstack=inputs=2,format=pix_fmts=yuv420p[outv]";
         return oss.str();
     }
     if (templateId == "T3") {
         std::ostringstream oss;
-        oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", true, hideSpeed, hideVin, hideTime, startSec, endSec) << "[left];"
-            << buildMovieSourceFilter(backPath, "scale=1920:1080", false, hideSpeed, hideVin, hideTime, startSec, endSec) << "[right];"
+        oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec) << "[left];"
+            << buildMovieSourceFilter(backPath, "scale=1920:1080", startSec, endSec) << "[right];"
             << "[left][right]hstack=inputs=2,format=pix_fmts=yuv420p[outv]";
         return oss.str();
     }
     if (templateId == "T4") {
         std::ostringstream oss;
-        oss << buildMovieSourceFilter(sidePath, "crop=960:1080:960:0", false, hideSpeed, hideVin, hideTime, startSec, endSec) << "[left];"
-            << buildMovieSourceFilter(frontPath, "scale=1920:1080", true, hideSpeed, hideVin, hideTime, startSec, endSec) << "[middle];"
-            << buildMovieSourceFilter(backPath, "crop=960:1080:0:0", false, hideSpeed, hideVin, hideTime, startSec, endSec) << "[right];"
+        oss << buildMovieSourceFilter(sidePath, "crop=960:1080:960:0", startSec, endSec) << "[left];"
+            << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec) << "[middle];"
+            << buildMovieSourceFilter(backPath, "crop=960:1080:0:0", startSec, endSec) << "[right];"
             << "[left][middle][right]hstack=inputs=3,format=pix_fmts=yuv420p[outv]";
         return oss.str();
     }
     if (templateId == "T2") {
         std::ostringstream oss;
-        oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", true, hideSpeed, hideVin, hideTime, startSec, endSec) << "[top];"
-            << buildMovieSourceFilter(sidePath, "scale=960:540", false, hideSpeed, hideVin, hideTime, startSec, endSec) << "[bottom_left];"
-            << buildMovieSourceFilter(backPath, "scale=960:540", false, hideSpeed, hideVin, hideTime, startSec, endSec) << "[bottom_right];"
+        oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec) << "[top];"
+            << buildMovieSourceFilter(sidePath, "scale=960:540", startSec, endSec) << "[bottom_left];"
+            << buildMovieSourceFilter(backPath, "scale=960:540", startSec, endSec) << "[bottom_right];"
             << "[bottom_left][bottom_right]hstack=inputs=2[bottom];"
             << "[top][bottom]vstack=inputs=2,format=pix_fmts=yuv420p[outv]";
         return oss.str();
     }
     if (templateId == "T5") {
         std::ostringstream oss;
-        oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", true, hideSpeed, hideVin, hideTime, startSec, endSec)
+        oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec)
             << ",format=pix_fmts=yuv420p[outv]";
         return oss.str();
     }
@@ -296,9 +246,6 @@ bool composeTemplateToMp4(const std::string &templateId,
                           double expectedDurationSec,
                           double startSec,
                           double endSec,
-                          bool hideSpeed,
-                          bool hideVin,
-                          bool hideTime,
                           const ProbeResult &probe,
                           const std::string &outputPath,
                           std::string &error)
@@ -506,7 +453,7 @@ bool composeTemplateToMp4(const std::string &templateId,
     inputs->pad_idx = 0;
     inputs->next = nullptr;
     const std::string filterDesc = buildTemplateFilterDesc(
-        templateId, frontPath, backPath, sidePath, startSec, endSec, hideSpeed, hideVin, hideTime, width, height);
+        templateId, frontPath, backPath, sidePath, startSec, endSec, width, height);
     if (filterDesc.empty()) {
         avfilter_inout_free(&inputs);
         avfilter_graph_free(&graph);
@@ -1559,9 +1506,6 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
                                     const std::vector<std::string> &sideUris,
                                     const std::string &templateId,
                                     double expectedDurationSec,
-                                    bool hideSpeed,
-                                    bool hideVin,
-                                    bool hideTime,
                                     const std::string &outputPath,
                                     double startMs,
                                     double endMs)
@@ -1714,9 +1658,6 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
                               expectedDurationSec,
                               startSec,
                               endSec,
-                              hideSpeed,
-                              hideVin,
-                              hideTime,
                               probe,
                               outputPath,
                               error)) {

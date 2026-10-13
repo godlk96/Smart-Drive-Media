@@ -118,10 +118,6 @@ export function buildComposeRequestByService(
   fileName: string,
   outputPath: string,
   expectedDurationSec: number,
-  hideSpeed: boolean,
-  hideGps: boolean,
-  hideTime: boolean,
-  hideVin: boolean,
   templateId: string,
   speedLabel: string,
   muted: boolean,
@@ -136,10 +132,6 @@ export function buildComposeRequestByService(
   request.expectedDurationSec = expectedDurationSec
   request.rangeStartMs = rangeStartMs
   request.rangeEndMs = rangeEndMs
-  request.hideSpeed = hideSpeed
-  request.hideGps = hideGps
-  request.hideTime = hideTime
-  request.hideVin = hideVin
   request.templateId = templateId
   request.speedLabel = speedLabel
   request.muted = muted

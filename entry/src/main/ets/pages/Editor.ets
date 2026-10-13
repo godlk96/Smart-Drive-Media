@@ -63,10 +63,6 @@ struct Editor {
     speedLabel: '1.0X',
     muted: false,
     watermarkEnabled: true,
-    hideSpeed: true,
-    hideGps: true,
-    hideVin: true,
-    hideTime: true,
     exportStatusText: '待导出'
   }
 
@@ -240,10 +236,6 @@ struct Editor {
     return this.viewModel.getTemplateIcon(card)
   }
 
-  private templateSupportsMosaic(templateId: string): boolean {
-    return this.viewModel.templateSupportsMosaic(templateId)
-  }
-
   private templateSupportsAudio(templateId: string): boolean {
     return true
   }
@@ -378,11 +370,6 @@ struct Editor {
 
   private cancelBack(): void {
     this.backConfirmVisible = false
-  }
-
-  private togglePrivacyByUi(type: string, value: boolean): void {
-    this.togglePrivacy(type, value)
-    this.markUnsaved()
   }
 
   private handlePreviewPlayheadChanged(playheadMs: number): void {
@@ -521,12 +508,6 @@ struct Editor {
     } finally {
       this.exportLoadingVisible = false
     }
-  }
-
-  private togglePrivacy(type: string, enabled: boolean): void {
-    debugLog('剪辑页', `切换隐私开关，类型=${type}，值=${enabled}`)
-    this.applyState(this.viewModel.updatePrivacy(type, enabled))
-    this.showControlsTemporarily()
   }
 
   /**
@@ -715,9 +696,6 @@ struct Editor {
                   EditorPreviewArea({
                     activeTemplateId: this.state.activeTemplateId,
                     tripSnapshot: this.tripSnapshot,
-                    hideSpeed: this.state.hideSpeed,
-                    hideVin: this.state.hideVin,
-                    hideTime: this.state.hideTime,
                     playing: this.previewPlaying,
                     muted: this.state.muted,
                     speedLabel: this.state.speedLabel,
@@ -896,35 +874,6 @@ struct Editor {
                 .fontSize(14)
                 .fontColor('#999999')
                 .width('100%')
-              if (this.templateSupportsMosaic(this.state.activeTemplateId)) {
-                Row() {
-                  Text('打码：车速')
-                    .fontSize(14)
-                    .fontColor('#FFFFFF')
-                  Blank()
-                  Toggle({ type: ToggleType.Switch, isOn: this.state.hideSpeed })
-                    .onChange((value: boolean) => this.togglePrivacyByUi('speed', value))
-                }
-                .width('100%')
-                Row() {
-                  Text('打码：时间')
-                    .fontSize(14)
-                    .fontColor('#FFFFFF')
-                  Blank()
-                  Toggle({ type: ToggleType.Switch, isOn: this.state.hideTime })
-                    .onChange((value: boolean) => this.togglePrivacyByUi('time', value))
-                }
-                .width('100%')
-                Row() {
-                  Text('打码：车牌')
-                    .fontSize(14)
-                    .fontColor('#FFFFFF')
-                  Blank()
-                  Toggle({ type: ToggleType.Switch, isOn: this.state.hideVin })
-                    .onChange((value: boolean) => this.togglePrivacyByUi('vin', value))
-                }
-                .width('100%')
-              }
               Row() {
                 Text('倍速')
                   .fontSize(14)

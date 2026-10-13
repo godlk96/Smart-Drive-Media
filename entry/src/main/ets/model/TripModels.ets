@@ -43,10 +43,6 @@ export class ExportComposeRequest {
   expectedDurationSec: number = 0
   rangeStartMs: number = 0
   rangeEndMs: number = 0
-  hideSpeed: boolean = true
-  hideGps: boolean = true
-  hideTime: boolean = true
-  hideVin: boolean = true
   templateId: string = 'T2'
   speedLabel: string = '1.0X'
   muted: boolean = false

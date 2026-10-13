@@ -250,7 +250,6 @@ foreach ($tmplId in @("T1", "T2", "T4")) {
         BackClips = $backUris.Count
         SideClips = ($leftUris.Count + $rightUris.Count)
         ExpectedDuration = 60
-        PrivacyMasks = $true
         AudioMuted = $false
         Watermark = $true
     }

@@ -7,9 +7,6 @@ export interface NativeExportPipelineRequest {
   startMs: number
   endMs: number
   outputPath: string
-  hideSpeed: boolean
-  hideVin: boolean
-  hideTime: boolean
 }
 
 export interface NativeExportPipelineResult {

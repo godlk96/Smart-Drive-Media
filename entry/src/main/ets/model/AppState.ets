@@ -92,9 +92,5 @@ export interface EditorStateModel {
   speedLabel: string
   muted: boolean
   watermarkEnabled: boolean
-  hideSpeed: boolean
-  hideGps: boolean
-  hideTime: boolean
-  hideVin: boolean
   exportStatusText: string
 }

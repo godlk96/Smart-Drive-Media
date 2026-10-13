@@ -263,13 +263,6 @@ export interface PlaybackState {
   muted: boolean
 }
 
-export interface PrivacyState {
-  hideSpeed: boolean
-  hideGps: boolean
-  hideTime: boolean
-  hideVin: boolean
-}
-
 export interface BrandState {
   watermarkEnabled: boolean
 }
@@ -285,7 +278,6 @@ export interface EditorState {
   trip: Trip
   selectedTemplateId: TemplateId
   playback: PlaybackState
-  privacy: PrivacyState
   brand: BrandState
   ui: EditorUiState
 }
@@ -296,7 +288,6 @@ export interface ExportSnapshot {
   trip: Trip
   selectedTemplateId: TemplateId
   playback: PlaybackState
-  privacy: PrivacyState
   brand: BrandState
 }
 
@@ -390,9 +381,6 @@ export function createEditorStateFromSnapshot(
   speedLabel: string,
   muted: boolean,
   watermarkEnabled: boolean,
-  hideSpeed: boolean,
-  hideGps: boolean,
-  hideVin: boolean,
   drawerExpanded: boolean,
   exportStatus: string
 ): EditorState {
@@ -408,12 +396,6 @@ export function createEditorStateFromSnapshot(
       rangeEndMs: endMs,
       speedLabel: speedLabel,
       muted: muted
-    },
-    privacy: {
-      hideSpeed: hideSpeed,
-      hideGps: hideGps,
-      hideTime: hideGps,
-      hideVin: hideVin
     },
     brand: {
       watermarkEnabled: watermarkEnabled
@@ -433,7 +415,6 @@ export function deepCloneExportSnapshot(state: EditorState): ExportSnapshot {
     trip: state.trip,
     selectedTemplateId: state.selectedTemplateId,
     playback: state.playback,
-    privacy: state.privacy,
     brand: state.brand
   })) as ExportSnapshot
   return raw
