@@ -103,3 +103,137 @@ export function outputDurationSec(segments: Array<Segment>): number {
   }
   return total
 }
+
+function cloneSegment(segment: Segment): Segment {
+  const copy = new Segment()
+  copy.id = segment.id
+  copy.startSec = segment.startSec
+  copy.endSec = segment.endSec
+  copy.speedLabel = segment.speedLabel
+  copy.muted = segment.muted
+  copy.enabled = segment.enabled
+  return copy
+}
+
+/** 新段 id = 当前所有段 id 的最大值 + 1（空表从 0 起） */
+function nextSegmentId(segments: Array<Segment>): number {
+  let max = -1
+  for (let i = 0; i < segments.length; i++) {
+    if (segments[i].id > max) {
+      max = segments[i].id
+    }
+  }
+  return max + 1
+}
+
+/**
+ * 无条件执行切分或插入，不做任何上限校验（校验归 canSplitAt）。
+ * 三条规则见 spec §5.3：启用段内切两半、灰段内只把后半段补回来、
+ * 空档里插入 [sec, 下一个边界]。落到已有边界上则结构不变。
+ */
+function rawSplit(segments: Array<Segment>, sec: number, totalDurationSec: number): Array<Segment> {
+  const freshId = nextSegmentId(segments)
+  const out: Array<Segment> = []
+  let inserted = false
+
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i]
+    if (sec > segment.startSec && sec < segment.endSec) {
+      const head = cloneSegment(segment)
+      head.endSec = sec
+      const tail = cloneSegment(segment)
+      tail.id = freshId
+      tail.startSec = sec
+      tail.enabled = true
+      out.push(head)
+      out.push(tail)
+      inserted = true
+    } else {
+      out.push(cloneSegment(segment))
+    }
+  }
+  if (inserted) {
+    return out
+  }
+
+  let onBoundary = false
+  for (let i = 0; i < out.length; i++) {
+    if (out[i].startSec === sec || out[i].endSec === sec) {
+      onBoundary = true
+      break
+    }
+  }
+  if (onBoundary) {
+    return out
+  }
+
+  let boundary = totalDurationSec
+  let at = out.length
+  for (let i = 0; i < out.length; i++) {
+    if (out[i].startSec > sec) {
+      boundary = out[i].startSec
+      at = i
+      break
+    }
+  }
+  const fresh = new Segment()
+  fresh.id = freshId
+  fresh.startSec = sec
+  fresh.endSec = boundary
+  out.splice(at, 0, fresh)
+  return out
+}
+
+/**
+ * 能否在此落刀。拒绝：启用段已满、sec 不在 (0, 总时长) 内、
+ * 或切分后会出现短于 MIN_SEGMENT_SEC 的启用段。
+ * 用 MIN_SEGMENT_SEC - 1e-9 比较，避免 60 - 58 这类减法误差误拒。
+ */
+export function canSplitAt(segments: Array<Segment>, sec: number, totalDurationSec: number): boolean {
+  if (enabledCount(segments) >= MAX_SEGMENTS) {
+    return false
+  }
+  if (sec <= 0 || sec >= totalDurationSec) {
+    return false
+  }
+  const result = rawSplit(segments, sec, totalDurationSec)
+  if (enabledCount(result) <= enabledCount(segments)) {
+    return false
+  }
+  const enabled = enabledSegments(result)
+  for (let i = 0; i < enabled.length; i++) {
+    if (segmentDurationSec(enabled[i]) < MIN_SEGMENT_SEC - 1e-9) {
+      return false
+    }
+  }
+  return true
+}
+
+/** 被拒绝时原样返回输入，不改结构。 */
+export function splitSegmentAt(segments: Array<Segment>, sec: number, totalDurationSec: number): Array<Segment> {
+  if (!canSplitAt(segments, sec, totalDurationSec)) {
+    return segments
+  }
+  return rawSplit(segments, sec, totalDurationSec)
+}
+
+/** 只剩一段时不许再关（spec §5.7），因此「0 个启用段」不可达。 */
+export function canToggleSegment(segments: Array<Segment>): boolean {
+  return enabledCount(segments) > 1
+}
+
+/** 翻转目标段的 enabled；再点一次就是恢复。 */
+export function toggleSegmentEnabled(segments: Array<Segment>, id: number): Array<Segment> {
+  if (!canToggleSegment(segments)) {
+    return segments
+  }
+  const out: Array<Segment> = []
+  for (let i = 0; i < segments.length; i++) {
+    const copy = cloneSegment(segments[i])
+    if (copy.id === id) {
+      copy.enabled = !copy.enabled
+    }
+    out.push(copy)
+  }
+  return out
+}
