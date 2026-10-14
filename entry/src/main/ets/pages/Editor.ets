@@ -1,4 +1,5 @@
 import { EditorPreviewArea } from '../components/EditorPreviewArea'
+import { AppIcon, AppIconName } from '../components/AppIcon'
 import { SegmentParamRow } from '../components/SegmentParamRow'
 import { PreviewOverlay, SegmentTrack } from '../components/SegmentTrack'
 import { TemplateStrip } from '../components/TemplateStrip'
@@ -10,6 +11,16 @@ import { startNativeExport } from '../NativeExportManager'
 import { debugLog } from '../utils/Logger'
 import common from '@ohos.app.ability.common'
 import { EditorViewModel } from '../viewmodel/EditorViewModel'
+
+/**
+ * 画面区恒为 16:9。
+ *
+ * 以前这里跟模板走 `getPreviewAspectRatio()`，五个模板的自然高度是 366/275/92/92/183px
+ * （内容宽 326px 时），最大差 4 倍 —— 每切一次模板，下面的参数行和片段轨道就上下弹一次。
+ * 现在画面区定死 16:9，模板组合由 EditorPreviewArea 自己按 Contain 缩放居中、
+ * 四周留 stage_bg 黑边（它内部本来就有这层等比约束），切模板时下方一动不动。
+ */
+const STAGE_ASPECT_RATIO: number = 16 / 9
 
 @Entry
 @Component
@@ -138,10 +149,6 @@ struct Editor {
     this.scheduleHideControls()
   }
 
-  private getPreviewAspectRatio(): number {
-    return this.viewModel.getPreviewAspectRatio(this.state.activeTemplateId)
-  }
-
   private hasPreviewSource(): boolean {
     return this.state.previewSlots.some((slot) => slot.uri.length > 0)
   }
@@ -232,10 +239,6 @@ struct Editor {
 
   private getTemplateResolution(card: TemplateCardModel): string {
     return this.viewModel.getTemplateResolution(card)
-  }
-
-  private getTemplateIcon(card: TemplateCardModel): string {
-    return this.viewModel.getTemplateIcon(card)
   }
 
   private templateSupportsAudio(templateId: string): boolean {
@@ -565,9 +568,7 @@ struct Editor {
   @Builder
   TopBar() {
     Row() {
-      Text('←')
-        .fontSize(19)
-        .fontColor($r('app.color.text_secondary'))
+      AppIcon({ name: AppIconName.Back, iconSize: 20, iconColor: $r('app.color.text_secondary') })
         .onClick(() => this.handleBack())
       Text(this.state.timeRange.length > 0 ? this.state.timeRange : this.state.tripTitle)
         .fontSize(13)
@@ -611,16 +612,22 @@ struct Editor {
         if (this.showPreviewCover && this.hasImageCover()) {
           Image(this.formatCoverUri(this.tripSnapshot.previewFrameUri))
             .width('100%')
-            .height('100%')
-            .objectFit(ImageFit.Contain)
+            // 不能用 height('100%')：父 Stack 的高度来自它自己的 aspectRatio，
+            // 子元素再要 100% 高度就成了循环依赖，首帧会解出一个畸形的框
+            // （点播放后 EditorPreviewArea 用内层 aspectRatio 撑开，布局才自洽）。
+            // 让封面图自己撑出 16:9。
+            .aspectRatio(STAGE_ASPECT_RATIO)
+            .objectFit(ImageFit.Cover)
             .backgroundColor($r('app.color.stage_bg'))
         }
         Column() {
           if (this.showPlayerControls && this.hasPreviewSource()) {
             Button() {
-              Text('▶')
-                .fontSize(16)
-                .fontColor($r('app.color.stage_btn_fg'))
+              AppIcon({
+                name: this.previewPlaying ? AppIconName.Pause : AppIconName.Play,
+                iconSize: 22,
+                iconColor: $r('app.color.stage_btn_fg')
+              })
             }
             .type(ButtonType.Circle)
             .width(56)
@@ -648,8 +655,11 @@ struct Editor {
         })
       }
       .width('100%')
-      .aspectRatio(this.viewModel.getPreviewAspectRatio(this.state.activeTemplateId))
+      .aspectRatio(STAGE_ASPECT_RATIO)
       .backgroundColor($r('app.color.stage_bg'))
+      .borderRadius(10)
+      .clip(true)
+      .border({ width: 1, color: $r('app.color.stage_divider') })
 
       SegmentParamRow({
         segment: this.selectedSegment(),
@@ -671,6 +681,9 @@ struct Editor {
     .backgroundColor($r('app.color.card_bg'))
     .borderRadius(16)
     .border({ width: 1, color: $r('app.color.card_border') })
+    // 之前整张卡只有一层 1px 描边，落在同为浅色的 page_bg 上几乎看不出边界，
+    // 这就是「像原型图」的直接来源。加一层极轻的暖色投影把卡从底色上抬起来。
+    .shadow({ radius: 10, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 2 })
     .margin({ left: 16, right: 16, top: 8 })
   }
 
@@ -691,6 +704,11 @@ struct Editor {
             })
           }
           .width('100%')
+          // Scroll 的内容默认垂直居中：内容比视口矮时（这一页正是如此）会在播放器
+          // 上方留一大片底色。ScrollAttribute 上没有 alignContent（编译报错验证过），
+          // 所以改成「内容容器至少撑满视口 + 顶对齐」：内容矮时贴顶，内容高时照常滚动。
+          .constraintSize({ minHeight: '100%' })
+          .justifyContent(FlexAlign.Start)
         }
         .layoutWeight(1)
         .scrollBar(BarState.Off)

@@ -1,4 +1,5 @@
 import { Segment, formatSegmentDuration } from '../model/SegmentModel'
+import { AppIcon, AppIconName } from './AppIcon'
 
 /**
  * 参数行（spec §5.6 / §6.5）：`片段 N` · 时长 · 倍速胶囊 · 声音图标 · ✕。
@@ -38,28 +39,11 @@ export struct SegmentParamRow {
   @Builder
   soundIcon() {
     Stack({ alignContent: Alignment.Center }) {
-      Path()
-        .width(20)
-        .height(20)
-        .commands('M3 7.5 L3 12.5 L7 12.5 L11.5 16 L11.5 4 Z')
-        .fill($r('app.color.text_secondary'))
-      if (this.segment.muted) {
-        Path()
-          .width(20)
-          .height(20)
-          .commands('M4 4 L16 16')
-          .fill(Color.Transparent)
-          .stroke($r('app.color.text_secondary'))
-          .strokeWidth(1.6)
-      } else {
-        Path()
-          .width(20)
-          .height(20)
-          .commands('M14 7.5 A4 4 0 0 1 14 12.5')
-          .fill(Color.Transparent)
-          .stroke($r('app.color.text_secondary'))
-          .strokeWidth(1.6)
-      }
+      AppIcon({
+        name: this.segment.muted ? AppIconName.Muted : AppIconName.Speaker,
+        iconSize: 20,
+        iconColor: $r('app.color.text_secondary')
+      })
     }
     .width(32)
     .height(32)
@@ -73,19 +57,18 @@ export struct SegmentParamRow {
 
   @Builder
   closeButton() {
-    Text('✕')
-      .fontSize(15)
-      .fontColor($r('app.color.text_disabled'))
-      .textAlign(TextAlign.Center)
-      .width(32)
-      .height(32)
-      .margin({ left: 8 })
-      .opacity(this.canToggle ? 1 : 0.35)
-      .onClick(() => {
-        if (this.canToggle && this.onToggleEnabled) {
-          this.onToggleEnabled()
-        }
-      })
+    Stack({ alignContent: Alignment.Center }) {
+      AppIcon({ name: AppIconName.Close, iconSize: 18, iconColor: $r('app.color.text_disabled') })
+    }
+    .width(32)
+    .height(32)
+    .margin({ left: 8 })
+    .opacity(this.canToggle ? 1 : 0.35)
+    .onClick(() => {
+      if (this.canToggle && this.onToggleEnabled) {
+        this.onToggleEnabled()
+      }
+    })
   }
 
   build() {

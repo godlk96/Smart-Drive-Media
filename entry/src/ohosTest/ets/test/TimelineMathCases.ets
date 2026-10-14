@@ -434,7 +434,7 @@ export function timelineMathCases(): Array<TimelineCase> {
   })
 
   cases.push({
-    name: 'PreviewLayout: T5 单前视一槽铺满',
+    name: 'PreviewLayout: T5 单视角一槽铺满',
     run: (): string => {
       const g = buildSlotGeometry('T5')
       return firstError([

@@ -1,4 +1,5 @@
 import { Segment, segmentDurationSec } from '../model/SegmentModel'
+import { AppIcon, AppIconName } from './AppIcon'
 
 /**
  * 片段轨道（spec §6.6）：段块按各自时长占宽、段间 3vp 缝。
@@ -27,22 +28,42 @@ export struct SegmentTrack {
   @Builder
   handles() {
     Row() {
-      Row()
-        .width(6)
-        .height(44)
-        .borderRadius(3)
-        .backgroundColor($r('app.color.amber'))
-        .offset({ x: -4 })
+      // 手柄原本只是一根 6×44 的琥珀竖条，在浅色段块上读不出「这是可以拖的」。
+      // 在条心叠三颗底色小圆点，做出握把的形。
+      this.handleBar(-4)
       Blank()
-      Row()
-        .width(6)
-        .height(44)
-        .borderRadius(3)
-        .backgroundColor($r('app.color.amber'))
-        .offset({ x: 4 })
+      this.handleBar(4)
     }
     .width('100%')
     .height('100%')
+  }
+
+  @Builder
+  handleBar(offsetX: number) {
+    Stack({ alignContent: Alignment.Center }) {
+      Row()
+        .width(6)
+        .height(44)
+        .borderRadius(3)
+        .backgroundColor($r('app.color.amber'))
+      Column({ space: 3 }) {
+        this.handleDot()
+        this.handleDot()
+        this.handleDot()
+      }
+    }
+    .width(6)
+    .height(44)
+    .offset({ x: offsetX })
+  }
+
+  @Builder
+  handleDot() {
+    Row()
+      .width(2)
+      .height(2)
+      .borderRadius(1)
+      .backgroundColor($r('app.color.card_bg'))
   }
 
   @Builder
@@ -150,9 +171,16 @@ export struct PreviewOverlay {
     Stack({ alignContent: Alignment.Start }) {
       Row()
         .width('100%')
-        .height(2)
-        .borderRadius(1)
+        .height(3)
+        .borderRadius(1.5)
         .backgroundColor($r('app.color.overlay_track'))
+      // 已播部分：整条按播放进度填琥珀。以前只有一根 30% 白的细轨加一个白点，
+      // 压在高亮画面上几乎看不见，"进度条"读起来就只剩一个圆钮。
+      Row()
+        .width(`${this.percent()}%`)
+        .height(3)
+        .borderRadius(1.5)
+        .backgroundColor($r('app.color.amber'))
       Row() {
         Blank()
         Row()
@@ -208,9 +236,7 @@ export struct PreviewOverlay {
     Row() {
       Blank()
       Stack({ alignContent: Alignment.Center }) {
-        Text('✂')
-          .fontSize(16)
-          .fontColor($r('app.color.card_bg'))
+        AppIcon({ name: AppIconName.Scissors, iconSize: 18, iconColor: $r('app.color.card_bg') })
       }
       .width(28)
       .height(28)

@@ -1,7 +1,6 @@
 import { CoreBridge, sharedCoreBridge } from '../bridge/CoreBridge'
 import {
   getCameraZhNameById,
-  getTemplateIconById,
   getTemplateResolutionById,
   getTemplateUiNameById,
   normalizeCameraNameById
@@ -144,14 +143,6 @@ export class EditorViewModel {
       return resolution
     }
     return '3840×1080'
-  }
-
-  getTemplateIcon(card: TemplateCardModel): string {
-    const icon = getTemplateIconById(card.id)
-    if (icon.length > 0) {
-      return icon
-    }
-    return '🎬'
   }
 
   normalizeCameraName(camera: string): string {

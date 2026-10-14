@@ -100,7 +100,7 @@ export function previewLayoutCases(): Array<TimelineCase> {
     ])
   }))
 
-  cases.push(makeCase('buildSlotGeometry: T5 单前视满屏', (): string => {
+  cases.push(makeCase('buildSlotGeometry: T5 单视角满屏', (): string => {
     const slots: Array<SlotGeometry> = buildSlotGeometry('T5')
     if (slots.length !== 1) {
       return `槽位数: 期望 1，实际 ${slots.length}`

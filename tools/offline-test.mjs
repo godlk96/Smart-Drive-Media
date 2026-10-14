@@ -40,7 +40,8 @@ const SUITES = [
   { path: 'entry/src/ohosTest/ets/test/TimelineMathCases.ets', exportName: 'timelineMathCases' },
   { path: 'entry/src/ohosTest/ets/test/TimelineClockCases.ets', exportName: 'timelineClockCases' },
   { path: 'entry/src/ohosTest/ets/test/PreviewLayoutCases.ets', exportName: 'previewLayoutCases' },
-  { path: 'entry/src/ohosTest/ets/test/SegmentModelCases.ets', exportName: 'segmentModelCases' }
+  { path: 'entry/src/ohosTest/ets/test/SegmentModelCases.ets', exportName: 'segmentModelCases' },
+  { path: 'entry/src/ohosTest/ets/test/TripFormatCases.ets', exportName: 'tripFormatCases' }
 ]
 
 const TSC_CANDIDATES = [
@@ -289,6 +290,7 @@ function checkColorTokens() {
  * 一律走 `$r('app.color.*')`。
  */
 const UI_FILES = [
+  'entry/src/main/ets/pages/Index.ets',
   'entry/src/main/ets/pages/Editor.ets',
   'entry/src/main/ets/components/EditorPreviewArea.ets',
   'entry/src/main/ets/components/SegmentParamRow.ets',
@@ -493,6 +495,76 @@ function checkColorReferences() {
     : { name, ok: true }
 }
 
+/**
+ * 模板命名一致性守卫。
+ *
+ * 模板名有两个来源，界面到底显示哪个取决于调用点：
+ *   - `AppConstants.getTemplateUiNameById()` —— TemplateStrip 优先用它；
+ *   - `Models.ets` 的 `TEMPLATE_DEFINITION_MAP[].title` —— 取不到时的回落，也是导出/日志里的名字。
+ *
+ * 两处曾经漂移过：T3 一边叫「左右盲区」一边叫「侧向防开门杀」，T5 一边叫「单视角」
+ * 一边叫「单前视」。界面上看不出来（走的是前者），但日志、回落路径和导出元数据会显示另一个名字。
+ * AppConstants 依赖 @kit.AbilityKit，进不了本文件的纯模块 BFS，所以这里按文本对账。
+ */
+function checkTemplateNamingConsistency() {
+  const name = '模板名在 AppConstants 与 Models 两处一致'
+  try {
+    const constantsSrc = readFileSync(
+      join(ROOT, 'entry/src/main/ets/constants/AppConstants.ets'), 'utf8'
+    )
+    const modelsSrc = readFileSync(join(ROOT, 'entry/src/main/ets/model/Models.ets'), 'utf8')
+
+    // 1) AppConstants：只在 getTemplateUiNameById 的函数体里找 if/return 对
+    const fnAt = constantsSrc.indexOf('export function getTemplateUiNameById')
+    if (fnAt < 0) {
+      return { name, detail: 'AppConstants.ets 里找不到 getTemplateUiNameById' }
+    }
+    const nextFnAt = constantsSrc.indexOf('export function', fnAt + 1)
+    const body = constantsSrc.slice(fnAt, nextFnAt > 0 ? nextFnAt : constantsSrc.length)
+    const uiNames = new Map()
+    for (const m of body.matchAll(/if\s*\(\s*templateId\s*===\s*'(\w+)'\s*\)\s*\{\s*return\s*'([^']*)'/g)) {
+      uiNames.set(m[1], m[2])
+    }
+    if (uiNames.size === 0) {
+      return { name, detail: 'AppConstants.getTemplateUiNameById 没解析出任何模板名，守卫会失效' }
+    }
+
+    // 2) Models：每个 `[TemplateId.TX]: {` 到下一个标记之间，第一条 title: 就是模板名
+    const marks = []
+    for (const m of modelsSrc.matchAll(/\[TemplateId\.(T\d)\]:\s*\{/g)) {
+      marks.push({ id: m[1], at: m.index })
+    }
+    if (marks.length === 0) {
+      return { name, detail: 'Models.ets 没解析出任何 TEMPLATE_DEFINITION_MAP 条目' }
+    }
+    const modelTitles = new Map()
+    for (let i = 0; i < marks.length; i += 1) {
+      const end = i + 1 < marks.length ? marks[i + 1].at : modelsSrc.length
+      const block = modelsSrc.slice(marks[i].at, end)
+      const titleMatch = block.match(/title:\s*'([^']*)'/)
+      if (titleMatch) {
+        modelTitles.set(marks[i].id, titleMatch[1])
+      }
+    }
+
+    const problems = []
+    for (const [id, uiName] of uiNames) {
+      const modelTitle = modelTitles.get(id)
+      if (modelTitle === undefined) {
+        problems.push(`${id} 在 Models.ets 里没有对应条目`)
+      } else if (modelTitle !== uiName) {
+        problems.push(`${id}：AppConstants 叫「${uiName}」，Models 叫「${modelTitle}」`)
+      }
+    }
+    if (uiNames.size !== modelTitles.size) {
+      problems.push(`模板数量 AppConstants ${uiNames.size} != Models ${modelTitles.size}`)
+    }
+    return problems.length > 0 ? { name, detail: problems.join('; ') } : { name, ok: true }
+  } catch (err) {
+    return { name, detail: err && err.message ? err.message : String(err) }
+  }
+}
+
 async function main() {
   rmSync(BUILD_DIR, { recursive: true, force: true })
   const modules = collectModules()
@@ -585,6 +657,14 @@ async function main() {
     passed += 1
   } else {
     failures.push({ name: colorRefs.name, detail: colorRefs.detail })
+  }
+
+  // 9) 模板名在 AppConstants 与 Models 两处必须一致
+  const templateNames = checkTemplateNamingConsistency()
+  if (templateNames.ok) {
+    passed += 1
+  } else {
+    failures.push({ name: templateNames.name, detail: templateNames.detail })
   }
 
   const total = passed + failures.length

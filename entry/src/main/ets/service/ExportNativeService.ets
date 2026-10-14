@@ -5,10 +5,15 @@ import media from '@ohos.multimedia.media'
 import smartdriveExporter from 'libsmartdrive_exporter.so'
 import { debugLog } from '../utils/Logger'
 
-const THUMB_WIDTH: number = 480
-const THUMB_HEIGHT: number = 270
-const THUMB_JPEG_QUALITY: number = 80
+// 封面要铺满 356vp 宽的卡片（3x 屏 ≈ 1068px），480×270 被放大 2.2 倍，卡面文字全糊。
+// 直接按行车记录仪的原生档位取帧。
+const THUMB_WIDTH: number = 1920
+const THUMB_HEIGHT: number = 1080
+const THUMB_JPEG_QUALITY: number = 92
 const THUMB_TIME_US: number = 0
+// 缓存版本号：取帧尺寸/质量一变就必须递增。isUsableThumbnail 只检查文件 size > 0，
+// 不校验分辨率，否则上一版 480×270 的旧文件会被当有效缓存复用，改了参数也不生效。
+const THUMB_CACHE_VERSION: string = 'v2'
 
 interface NativeExportPipelineRequest {
   frontUris: Array<string>
@@ -99,7 +104,7 @@ export async function extractFirstFrameByService(
   }
 
   const sanitizedKey = cacheKey.replace(/[^a-zA-Z0-9_-]/g, '_')
-  const targetImagePath = `${cacheDir}/thumb_${sanitizedKey}.jpg`
+  const targetImagePath = `${cacheDir}/thumb_${THUMB_CACHE_VERSION}_${sanitizedKey}.jpg`
 
   if (await isUsableThumbnail(targetImagePath)) {
     return targetImagePath

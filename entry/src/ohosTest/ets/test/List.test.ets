@@ -4,6 +4,7 @@ import timelineMathTest from './TimelineMath.test'
 import timelineClockTest from './TimelineClock.test'
 import previewLayoutTest from './PreviewLayout.test'
 import segmentModelTest from './SegmentModel.test'
+import tripFormatTest from './TripFormat.test'
 
 export default function testsuite(): void {
   appStateModelTest()
@@ -12,4 +13,5 @@ export default function testsuite(): void {
   timelineClockTest()
   previewLayoutTest()
   segmentModelTest()
+  tripFormatTest()
 }

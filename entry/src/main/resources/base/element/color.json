@@ -65,6 +65,10 @@
       "value": "#1E1B17"
     },
     {
+      "name": "stage_slot",
+      "value": "#5A554C"
+    },
+    {
       "name": "segment_off_bg",
       "value": "#EFEDE8"
     },
@@ -127,6 +131,18 @@
     {
       "name": "export_text",
       "value": "#F8FAFC"
+    },
+    {
+      "name": "amber_light",
+      "value": "#F0A94A"
+    },
+    {
+      "name": "shadow_soft",
+      "value": "#0F1C1B18"
+    },
+    {
+      "name": "shadow_amber",
+      "value": "#33D98324"
     }
   ]
 }

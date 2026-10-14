@@ -1,12 +1,16 @@
 /**
  * 对**播放链路**（SingleTrackController / GlobalTimelineManager）与**桥接层**
- * （CoreBridge / EditorViewModel）做真实类型检查。
+ * （CoreBridge / EditorViewModel / HomeViewModel）做真实类型检查。
  *
- * 为什么单独做：hvigor 全量构建在本沙箱里跑不起来（它要在工作区外创建 symlink，
- * 被沙箱 + Windows 权限双重拒绝），但这两组文件都是**纯 TS 类**（不含 ArkUI 装饰器），
+ * 为什么单独做：它比 hvigor 全量构建快得多（秒级 vs 十几秒），且诊断能直接落到
+ * `文件:行:列`，适合改一处就重跑一次。这几组文件都是**纯 TS 类**（不含 ArkUI 装饰器），
  * 因此可以直接用 DevEco 自带的 tsc + SDK 真实的 @ohos.* 声明做类型检查。
  *
- * 用法：node tools/typecheck-player.mjs [player|bridge]（默认 player）
+ * 注意：本沙箱**能**跑 hvigor（见 docs/superpowers/notes 里的构建命令），
+ * 但 hvigor 覆盖 ArkUI 文件、这条覆盖纯逻辑层，两者互补而不是替代关系。
+ * 页面/组件的装饰器与 build() DSL 只有 hvigor 能验。
+ *
+ * 用法：node tools/typecheck-player.mjs [player|bridge|export|home]（默认 player）
  * 退出码 0 = 无错误；非 0 = 打印每个错误（文件:行:列）。
  */
 
@@ -85,6 +89,27 @@ const GROUPS = {
       'entry/src/main/ets/service/CoreApiContract.ets',
       'entry/src/main/ets/utils/Logger.ets',
       'entry/src/main/ets/media/TimelineMath.ets'
+    ]
+  },
+  home: {
+    entries: [
+      'entry/src/main/ets/viewmodel/HomeViewModel.ets',
+      'entry/src/main/ets/utils/TripFormat.ets'
+    ],
+    deps: [
+      'entry/src/main/ets/constants/AppConstants.ets',
+      'entry/src/main/ets/model/AppState.ets',
+      'entry/src/main/ets/model/Models.ets',
+      'entry/src/main/ets/model/TripModels.ets',
+      'entry/src/main/ets/model/SegmentModel.ets',
+      'entry/src/main/ets/service/CoreApiContract.ets',
+      'entry/src/main/ets/service/DvrScannerService.ets',
+      'entry/src/main/ets/service/ExportNativeService.ets',
+      'entry/src/main/ets/service/PreferencesService.ets',
+      'entry/src/main/ets/service/TimelineService.ets',
+      'entry/src/main/ets/utils/Logger.ets',
+      'entry/src/main/ets/media/TimelineMath.ets',
+      'entry/src/main/ets/bridge/CoreBridge.ets'
     ]
   }
 }

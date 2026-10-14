@@ -44,25 +44,6 @@ export function getTemplateResolutionById(templateId: string): string {
   return ''
 }
 
-export function getTemplateIconById(templateId: string): string {
-  if (templateId === 'T1') {
-    return '📹📹'
-  }
-  if (templateId === 'T2') {
-    return '👁️👁️👁️'
-  }
-  if (templateId === 'T3') {
-    return '⬅️➡️'
-  }
-  if (templateId === 'T4') {
-    return '🎬'
-  }
-  if (templateId === 'T5') {
-    return '📹'
-  }
-  return ''
-}
-
 export function normalizeCameraNameById(camera: string): string {
   if (camera === 'FRONT') {
     return 'Front'
