@@ -323,13 +323,16 @@ export async function executeComposeByService(
   ]
   onLog(`Native导出阶段 素材落地耗时=${Date.now() - materializeStart}ms`)
   const payload = buildNativeExportPayload(isolatedRequest, frontInputUris, backInputUris, sideInputUris)
-  onLog(`Native导出阶段 输入统计 Front=${isolatedRequest.frontUris.length} Back=${isolatedRequest.backUris.length} 输出=${isolatedRequest.outputPath}`)
+  onLog(`【Native入参-落地文件】Front=[${frontInputUris.join(', ')}]`)
+  onLog(`【Native入参-落地文件】Back=[${backInputUris.join(', ')}]`)
+  onLog(`【Native入参-落地文件】Side=[${sideInputUris.join(', ')}]`)
+  onLog(`【Native入参-输出路径】outputPath=${payload.outputPath}`)
   let segmentText = ''
   for (let index = 0; index < payload.segments.length; index++) {
     const item = payload.segments[index]
-    segmentText += `[${item.startMs},${item.endMs}]@${item.speedLabel}${item.muted ? '/mute' : ''} `
+    segmentText += `[#${index} ${item.startMs}ms~${item.endMs}ms (${item.startMs/1000}s~${item.endMs/1000}s) @${item.speedLabel} ${item.muted ? 'MUTED' : 'UNMUTED'}] `
   }
-  onLog(`Native导出阶段 请求负载 template=${payload.templateId} expectedDurationSec=${payload.expectedDurationSec} startMs=${payload.startMs} endMs=${payload.endMs} segments=${payload.segments.length} ${segmentText}`)
+  onLog(`【Native入参-模板与片段】template=${payload.templateId} expectedDurationSec=${payload.expectedDurationSec} segments(${payload.segments.length})=${segmentText}`)
   if (typeof runPipelineAsync !== 'function') {
     throw new Error('smartdrive_exporter.runExportPipelineAsync 未实现')
   }

@@ -162,7 +162,16 @@ export class ExportManager {
         snapshot.playback.segments,
         snapshot.brand.watermarkEnabled
       )
-      debugLog('导出', `开始导出 fileName=${fileName} output=${outputPath} template=${request.templateId} expectedDurationSec=${request.expectedDurationSec} segments=${request.segments.length} watermark=${request.watermarkEnabled}`)
+      debugLog('导出', `【导出参数-任务快照】fileName=${fileName} template=${request.templateId} expectedDurationSec=${request.expectedDurationSec} watermark=${request.watermarkEnabled}`)
+      debugLog('导出', `【导出参数-轨道输入】Front=${request.frontUris.length}路 Back=${request.backUris.length}路 Side=${request.sideUris.length}路`)
+      request.frontUris.forEach((uri, idx) => debugLog('导出', `  -> Front[${idx}]: ${uri}`))
+      request.backUris.forEach((uri, idx) => debugLog('导出', `  -> Back[${idx}]: ${uri}`))
+      request.sideUris.forEach((uri, idx) => debugLog('导出', `  -> Side[${idx}]: ${uri}`))
+      debugLog('导出', `【导出参数-片段列表】总段数=${request.segments.length}`)
+      for (let i = 0; i < request.segments.length; i++) {
+        const seg = request.segments[i]
+        debugLog('导出', `  -> Seg[${i}]: [${seg.startMs}ms ~ ${seg.endMs}ms] (${(seg.startMs / 1000).toFixed(2)}s ~ ${(seg.endMs / 1000).toFixed(2)}s) speed=${seg.speedLabel} muted=${seg.muted ? 'YES' : 'NO'}`)
+      }
       if (record.cancelled) {
         return
       }

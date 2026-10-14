@@ -65,3 +65,6 @@ media_resource/
 .npm-cache/
 .localappdata/
 .pnpm-home/
+
+# 导出样片（本地验证用，不入库）
+SmartDrive_Export_*.mp4

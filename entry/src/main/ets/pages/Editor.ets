@@ -146,6 +146,22 @@ struct Editor {
     return this.state.previewSlots.some((slot) => slot.uri.length > 0)
   }
 
+  private hasImageCover(): boolean {
+    const uri = this.tripSnapshot.previewFrameUri
+    if (uri.length === 0) {
+      return false
+    }
+    const lower = uri.toLowerCase()
+    return lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png') || lower.endsWith('.webp')
+  }
+
+  private formatCoverUri(uri: string): string {
+    if (uri.startsWith('file://') || uri.startsWith('http://') || uri.startsWith('https://')) {
+      return uri
+    }
+    return `file://${uri}`
+  }
+
   private startAllPreview(): void {
     this.showPreviewCover = false
     this.previewPlaying = true
@@ -435,6 +451,13 @@ struct Editor {
     this.exportLoadingText = '准备导出...'
     this.exportProgress = 0
     this.updateExportStatus('准备导出...')
+    debugLog('导出', `====================【导出开始】====================`)
+    debugLog('导出', `【导出参数-前端状态】tripId=${this.state.tripId} activeTemplateId=${this.state.activeTemplateId} totalDurationSec=${this.state.totalDurationSec} selectedSegmentId=${this.state.selectedSegmentId} watermarkEnabled=${this.state.watermarkEnabled}`)
+    debugLog('导出', `【导出参数-前端片段总数】count=${this.state.segments.length}`)
+    for (let i = 0; i < this.state.segments.length; i++) {
+      const s = this.state.segments[i]
+      debugLog('导出', `【导出参数-前端片段明细】#${i} id=${s.id} 区间=[${s.startSec}s -> ${s.endSec}s] 倍速=${s.speedLabel} 静音=${s.muted ? 'YES' : 'NO'} 启用=${s.enabled ? 'YES' : 'NO'}`)
+    }
     try {
       const outputPath = await startNativeExport(exportSnapshot, context, (event) => {
         this.updateExportStatus(event.status)
@@ -584,6 +607,13 @@ struct Editor {
             onPlayheadChanged: (playheadMs: number) => this.handlePreviewPlayheadChanged(playheadMs),
             onPlaybackEnded: () => this.handlePreviewEnded()
           })
+        }
+        if (this.showPreviewCover && this.hasImageCover()) {
+          Image(this.formatCoverUri(this.tripSnapshot.previewFrameUri))
+            .width('100%')
+            .height('100%')
+            .objectFit(ImageFit.Contain)
+            .backgroundColor($r('app.color.stage_bg'))
         }
         Column() {
           if (this.showPlayerControls && this.hasPreviewSource()) {

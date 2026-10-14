@@ -778,15 +778,27 @@ export class CoreBridge {
     return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
   }
 
-  /** 在播放头处落刀；切出新段后选中播放头所在的那一段（plan:742）。 */
+  /** 在播放头处落刀；切出新段后选中播放头所在的那一段（切分后优先选中从当前落刀点开始的后半段）。 */
   splitAtPlayhead(): EditorStateModel {
     const sec = this.playheadMs / 1000
     const next = splitSegmentAt(this.segments, sec, this.tripDurationSec)
     if (next.length !== this.segments.length) {
       this.segments = next
-      const at = segmentIndexAtSec(this.segments, sec)
-      if (at >= 0) {
-        this.selectedSegmentId = this.segments[at].id
+      // 切分后优先选中从当前落刀点开始的后半段（符合剪辑操作直觉：落刀后调整后续内容）
+      let targetSegment: Segment | undefined = undefined
+      for (let i = 0; i < this.segments.length; i++) {
+        if (Math.abs(this.segments[i].startSec - sec) < 1e-4) {
+          targetSegment = this.segments[i]
+          break
+        }
+      }
+      if (targetSegment !== undefined) {
+        this.selectedSegmentId = targetSegment.id
+      } else {
+        const at = segmentIndexAtSec(this.segments, sec)
+        if (at >= 0) {
+          this.selectedSegmentId = this.segments[at].id
+        }
       }
     }
     const snapshot = this.trips.get(this.tripId)
