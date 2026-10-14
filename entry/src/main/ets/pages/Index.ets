@@ -152,7 +152,7 @@ struct Index {
     if (selected) {
       return { radius: 14, color: $r('app.color.shadow_amber'), offsetX: 0, offsetY: 4 }
     }
-    return { radius: 2, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 1 }
+    return { radius: 8, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 2 }
   }
 
   private getSummaryText(): string {
@@ -216,8 +216,9 @@ struct Index {
           .height(32)
           .padding({ left: 14, right: 14 })
           .fontSize(13)
+          .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.card_bg'))
-          .backgroundColor($r('app.color.ink'))
+          .backgroundColor($r('app.color.amber'))
           .borderRadius(8)
           .onClick(() => this.openMergedEditor())
       }
@@ -244,11 +245,16 @@ struct Index {
   tripRow(ctx: TripRowContext) {
     Column({ space: 0 }) {
       if (ctx.dayStart) {
-        Row({ space: 9 }) {
+        Row({ space: 8 }) {
           Text(formatTripDay(ctx.card.title))
-            .fontSize(12)
+            .fontSize(11.5)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_secondary'))
+            .padding({ left: 8, right: 8, top: 2.5, bottom: 2.5 })
+            .backgroundColor($r('app.color.card_bg'))
+            .borderRadius(6)
+            .border({ width: 1, color: $r('app.color.page_border') })
+            .shadow({ radius: 4, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 1 })
           Row()
             .height(1)
             .backgroundColor($r('app.color.page_border'))
@@ -256,11 +262,11 @@ struct Index {
         }
         .width('100%')
         .alignItems(VerticalAlign.Center)
-        .padding({ left: 14, right: 14, top: 13, bottom: 8 })
+        .padding({ left: 14, right: 14, top: 14, bottom: 8 })
       }
 
       Row({ space: 0 }) {
-        // 时间轴轨：时间右对齐贴住竖线，状态点压在竖线上
+        // 时间轴轨：时间右对齐贴住竖线，导航双环状态点压在竖线上
         Stack({ alignContent: Alignment.TopEnd }) {
           Text(getTripStartTime(ctx.card))
             .fontSize(13.5)
@@ -271,72 +277,83 @@ struct Index {
             .width('100%')
             .padding({ right: 13, top: 2 })
 
-          Row()
-            .width(9)
-            .height(9)
-            .borderRadius(4.5)
-            .backgroundColor(isTripComplete(ctx.card) ? $r('app.color.amber') : $r('app.color.page_bg'))
-            .border({
-              width: isTripComplete(ctx.card) ? 0 : 1.5,
-              color: $r('app.color.text_disabled')
-            })
-            .offset({ x: 4.5, y: 5 })
+          // 导航双环光斑：外环淡琥珀柔光圈，内圈实心琥珀橙点
+          Stack({ alignContent: Alignment.Center }) {
+            Row()
+              .width(5)
+              .height(5)
+              .borderRadius(2.5)
+              .backgroundColor(isTripComplete(ctx.card) ? $r('app.color.amber') : $r('app.color.text_disabled'))
+          }
+          .width(11)
+          .height(11)
+          .borderRadius(5.5)
+          .backgroundColor(isTripComplete(ctx.card) ? $r('app.color.amber_soft') : $r('app.color.page_bg'))
+          .border({
+            width: 1.5,
+            color: isTripComplete(ctx.card) ? $r('app.color.chip_amber_border') : $r('app.color.text_disabled')
+          })
+          .offset({ x: 5.5, y: 5 })
         }
         .width(RAIL_WIDTH)
-        // 竖线是下一列（封面容器）的左边框，而封面容器在兄弟顺序里排在轨道之后，
-        // 后画的会盖住先画的 —— 状态点正好压在线上，会被那条 1vp 线从中间劈开。
-        // 抬高整条轨道的层级，让点画在线的上面。
         .zIndex(1)
 
-        // 竖线画在封面容器的左边框上：容器高度含底部呼吸位，
-        // 所以相邻两行的线天然接得上，不需要任何百分比高度
+        // 封面容器：外层 2.5vp 纯白双层高光边框（Double-Bezel），内嵌 16:9 视频画面
         Column({ space: 0 }) {
-          Stack({ alignContent: Alignment.TopStart }) {
-            if (this.hasImageCover(ctx.card)) {
-              Image(this.formatCoverUri(ctx.card.previewFrameUri))
+          Column() {
+            Stack({ alignContent: Alignment.TopStart }) {
+              if (this.hasImageCover(ctx.card)) {
+                Image(this.formatCoverUri(ctx.card.previewFrameUri))
+                  .width('100%')
+                  .height('100%')
+                  .objectFit(ImageFit.Cover)
+                  .alt($r('app.media.app_icon'))
+              } else {
+                Column() {
+                  Text('无封面')
+                    .fontSize(11)
+                    .fontColor($r('app.color.text_disabled'))
+                }
                 .width('100%')
                 .height('100%')
-                .objectFit(ImageFit.Cover)
-                .alt($r('app.media.app_icon'))
-            } else {
-              Column() {
-                Text('无封面')
-                  .fontSize(11)
-                  .fontColor($r('app.color.text_disabled'))
+                .justifyContent(FlexAlign.Center)
+                .alignItems(HorizontalAlign.Center)
               }
-              .width('100%')
-              .height('100%')
-              .justifyContent(FlexAlign.Center)
-              .alignItems(HorizontalAlign.Center)
-            }
 
-            if (ctx.index === 0) {
-              Text('最近')
-                .fontSize(9.5)
-                .fontWeight(FontWeight.Medium)
-                .fontColor($r('app.color.text_primary'))
-                .backgroundColor($r('app.color.amber_light'))
-                .borderRadius(5)
-                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                .margin({ left: 9, top: 9 })
-            }
-
-            if (this.selectionMode && this.isTripSelected(ctx.card.id)) {
-              Stack({ alignContent: Alignment.Center }) {
-                AppIcon({ name: AppIconName.Check, iconSize: 14, iconColor: $r('app.color.card_bg') })
+              if (ctx.index === 0) {
+                Text('最近')
+                  .fontSize(9.5)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor($r('app.color.amber'))
+                  .backgroundColor($r('app.color.amber_soft'))
+                  .border({ width: 1, color: $r('app.color.chip_amber_border') })
+                  .borderRadius(5)
+                  .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                  .margin({ left: 7, top: 7 })
               }
-              .width(20)
-              .height(20)
-              .borderRadius(10)
-              .backgroundColor($r('app.color.amber'))
-              .position({ x: '84%', y: '4%' })
+
+              if (this.selectionMode && this.isTripSelected(ctx.card.id)) {
+                Stack({ alignContent: Alignment.Center }) {
+                  AppIcon({ name: AppIconName.Check, iconSize: 14, iconColor: $r('app.color.card_bg') })
+                }
+                .width(20)
+                .height(20)
+                .borderRadius(10)
+                .backgroundColor($r('app.color.amber'))
+                .position({ x: '84%', y: '4%' })
+              }
             }
+            .width('100%')
+            .aspectRatio(16 / 9)
+            .borderRadius(9)
+            .clip(true)
+            .backgroundColor($r('app.color.stage_bg'))
+            .border({ width: 1, color: $r('app.color.stage_divider') })
           }
           .width('100%')
-          .aspectRatio(16 / 9)
-          .borderRadius(11)
-          .clip(true)
-          .backgroundColor($r('app.color.stage_bg'))
+          .padding(2.5)
+          .backgroundColor($r('app.color.card_bg'))
+          .borderRadius(12)
           .border({
             width: this.isTripSelected(ctx.card.id) ? 1.5 : 1,
             color: this.isTripSelected(ctx.card.id) ? $r('app.color.amber') : $r('app.color.card_border')
