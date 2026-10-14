@@ -38,6 +38,7 @@ export struct SegmentTrack {
   @Prop selectedSegmentId: number = -1
   @Prop isRawFull: boolean = false
   onSelectSegment?: (id: number) => void
+  onAdjustStart?: () => void
   onAdjustBoundary?: (id: number, edge: 'start' | 'end', sec: number) => void
 
   @State private isDraggingLeft: boolean = false
@@ -234,6 +235,9 @@ export struct SegmentTrack {
     .gesture(
       PanGesture({ direction: PanDirection.Horizontal })
         .onActionStart(() => {
+          if (this.onAdjustStart) {
+            this.onAdjustStart()
+          }
           this.draggingSegmentId = segment.id
           this.dragLeftBaseSec = segment.startSec
           this.dragLeftSec = segment.startSec
@@ -279,6 +283,9 @@ export struct SegmentTrack {
     .gesture(
       PanGesture({ direction: PanDirection.Horizontal })
         .onActionStart(() => {
+          if (this.onAdjustStart) {
+            this.onAdjustStart()
+          }
           this.draggingSegmentId = segment.id
           this.dragRightBaseSec = segment.endSec
           this.dragRightSec = segment.endSec
@@ -413,18 +420,33 @@ export struct PreviewOverlay {
   }
 
   private handleTouch(event: TouchEvent): void {
-    if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+    if (this.barWidth <= 0 || this.totalDurationSec <= 0) {
+      return
+    }
+    if (event.type === TouchType.Down || event.type === TouchType.Move) {
+      const touch = event.touches.length > 0 ? event.touches[0] : (event.changedTouches.length > 0 ? event.changedTouches[0] : undefined)
+      if (touch) {
+        const ratio = Math.min(1, Math.max(0, touch.x / this.barWidth))
+        this.dragSec = ratio * this.totalDurationSec
+        this.dragging = true
+      }
+      return
+    }
+    if (event.type === TouchType.Up) {
+      this.dragging = false
+      const touch = event.changedTouches.length > 0 ? event.changedTouches[0] : (event.touches.length > 0 ? event.touches[0] : undefined)
+      if (touch) {
+        const ratio = Math.min(1, Math.max(0, touch.x / this.barWidth))
+        this.dragSec = ratio * this.totalDurationSec
+      }
+      if (this.onScrubTo) {
+        this.onScrubTo(this.dragSec)
+      }
+      return
+    }
+    if (event.type === TouchType.Cancel) {
       this.dragging = false
       return
-    }
-    if (this.barWidth <= 0 || this.totalDurationSec <= 0 || event.touches.length === 0) {
-      return
-    }
-    const ratio = Math.min(1, Math.max(0, event.touches[0].x / this.barWidth))
-    this.dragSec = ratio * this.totalDurationSec
-    this.dragging = true
-    if (this.onScrubTo) {
-      this.onScrubTo(this.dragSec)
     }
   }
 

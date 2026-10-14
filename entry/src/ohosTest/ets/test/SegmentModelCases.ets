@@ -238,10 +238,22 @@ export function segmentModelCases(): Array<TimelineCase> {
   cases.push(makeCase('播放跳过灰段与空档', () => {
     const two = splitSegmentAt(createFullSegment(60), 30, 60)
     const off = toggleSegmentEnabled(two, two[0].id)
+    const gapped: Array<Segment> = [
+      (() => { const s = new Segment(); s.id = 0; s.startSec = 15; s.endSec = 30; s.enabled = true; return s })(),
+      (() => { const s = new Segment(); s.id = 1; s.startSec = 40; s.endSec = 50; s.enabled = true; return s })()
+    ]
     return firstError([
       expectNumber(playbackSkipTargetSec(off, 10, 60), 30, '灰段跳到段尾'),
       expectNumber(playbackSkipTargetSec(off, 40, 60), 40, '启用段原地不动'),
-      expectNumber(playbackSkipTargetSec(off, 60, 60), 60, '片尾')
+      expectNumber(playbackSkipTargetSec(off, 60, 60), 60, '片尾'),
+      expectNumber(playbackSkipTargetSec(gapped, 0, 60), 15, '段前空白跳到首段起点'),
+      expectNumber(playbackSkipTargetSec(gapped, 20, 60), 20, '首段内部原地不动'),
+      expectNumber(playbackSkipTargetSec(gapped, 30, 60), 30, '首段终点算首段内'),
+      expectNumber(playbackSkipTargetSec(gapped, 30.1, 60), 40, '段间空白跳到下段起点'),
+      expectNumber(playbackSkipTargetSec(gapped, 35, 60), 40, '段间空白跳到下段起点'),
+      expectNumber(playbackSkipTargetSec(gapped, 45, 60), 45, '下段内部原地不动'),
+      expectNumber(playbackSkipTargetSec(gapped, 50.1, 60), 60, '末段之后空白跳到片尾'),
+      expectNumber(playbackSkipTargetSec(gapped, 60, 60), 60, '片尾原地不动')
     ])
   }))
 

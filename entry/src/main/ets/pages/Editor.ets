@@ -33,6 +33,7 @@ struct Editor {
   @State private showPlayerControls: boolean = true
   @State private previewPlaying: boolean = false
   private lastStablePlayheadSec: number = 0
+  private skippingToTargetSec: number = -1
   /**
    * 显式跳转请求。**只有**用户主动跳转才递增 token（见 requestPreviewSeek）。
    * 播放推进只改 playheadSec（展示用），不会发请求——位置由预览区的 TimelineClock 持有。
@@ -175,6 +176,7 @@ struct Editor {
 
   private pauseAllPreview(): void {
     this.previewPlaying = false
+    this.skippingToTargetSec = -1
     debugLog('剪辑诊断', `触发统一暂停，当前倍速=${this.getPlaybackRate()}X`)
   }
 
@@ -197,6 +199,9 @@ struct Editor {
   }
 
   private syncGlobalPlayhead(second: number, fromUser: boolean, commitSeek: boolean = true): void {
+    if (fromUser) {
+      this.skippingToTargetSec = -1
+    }
     const clamped = Math.max(0, Math.min(second, this.state.totalDurationSec))
     this.updatePlayheadSec(clamped)
     if (commitSeek) {
@@ -291,6 +296,7 @@ struct Editor {
         return
       }
     }
+    this.pauseAllPreview()
     this.applyState(this.viewModel.splitAtPlayhead())
     this.markUnsaved()
     this.showToast(wasRawFull ? '已生成高光片段' : '已添加剪辑点')
@@ -418,8 +424,19 @@ struct Editor {
     // 播放跳过灰段与空档：落点不在活段内就直接跳到下一个活段起点（spec §5.4）。
     const skipTarget = playbackSkipTargetSec(this.state.segments, nextSec, this.state.totalDurationSec)
     if (Math.abs(skipTarget - nextSec) > 1e-6) {
+      if (this.skippingToTargetSec >= 0 && Math.abs(this.skippingToTargetSec - skipTarget) < 1e-3) {
+        return
+      }
+      if (skipTarget >= this.state.totalDurationSec) {
+        this.handlePreviewEnded()
+        return
+      }
+      this.skippingToTargetSec = skipTarget
       this.syncGlobalPlayhead(skipTarget, false)
       return
+    }
+    if (this.skippingToTargetSec >= 0 && nextSec >= this.skippingToTargetSec - 0.1) {
+      this.skippingToTargetSec = -1
     }
     this.updatePlayheadSec(nextSec)
     this.updatePlayheadText(this.viewModel.updatePlayheadText(nextSec))
@@ -434,6 +451,7 @@ struct Editor {
 
   private handlePreviewEnded(): void {
     this.previewPlaying = false
+    this.skippingToTargetSec = -1
     this.updatePlayheadSec(this.state.totalDurationSec)
     this.updatePlayheadText(this.viewModel.updatePlayheadText(this.state.totalDurationSec))
     this.showControlsTemporarily()
@@ -704,6 +722,7 @@ struct Editor {
         selectedSegmentId: this.selectedSegmentId(),
         isRawFull: this.state.isRawFull,
         onSelectSegment: (id: number) => this.handleSelectSegment(id),
+        onAdjustStart: () => this.pauseAllPreview(),
         onAdjustBoundary: (id: number, edge: 'start' | 'end', sec: number) => this.handleAdjustBoundary(id, edge, sec)
       })
     }
