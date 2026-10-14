@@ -95,4 +95,6 @@ export interface EditorStateModel {
   selectedSegmentId: number
   watermarkEnabled: boolean
   exportStatusText: string
+  /** 是否处于全片未剪辑原始状态（默认 true，首次落刀后变为 false，删光重置回 true）。 */
+  isRawFull: boolean
 }

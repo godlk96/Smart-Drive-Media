@@ -81,6 +81,14 @@ export class EditorViewModel {
     return this.bridge.splitAtPlayhead()
   }
 
+  deleteSegment(id: number): EditorStateModel {
+    return this.bridge.deleteSegment(id)
+  }
+
+  adjustSegmentBoundary(id: number, edge: 'start' | 'end', sec: number): EditorStateModel {
+    return this.bridge.adjustSegmentBoundary(id, edge, sec)
+  }
+
   /** 灰段恢复 / 启用段置灰（转发 CoreBridge，plan:736）。 */
   toggleSegmentEnabled(id: number): EditorStateModel {
     return this.bridge.toggleSegmentEnabled(id)
@@ -208,6 +216,11 @@ export class EditorViewModel {
     const min = Math.floor(seconds / 60)
     const sec = Math.floor(seconds % 60)
     return `${min}:${sec.toString().padStart(2, '0')}`
+  }
+
+  /** 判断当前是否处于空白区间（未选中任何段且非全片原始态）。 */
+  isGap(state: EditorStateModel): boolean {
+    return !state.isRawFull && state.selectedSegmentId === -1
   }
 
   /** 选中段（显式选中状态，spec D11/§5.7）；id 不存在时返回 undefined。 */

@@ -23,13 +23,18 @@ import { PreferencesService } from '../service/PreferencesService'
 import { debugLog } from '../utils/Logger'
 import { RUN_GAP_MS, SLICE_MS } from '../media/TimelineMath'
 import {
+  adjustSegmentEnd,
+  adjustSegmentStart,
   canSplitAt,
+  canSplitOrInsertAt,
   canToggleSegment,
   createFullSegment,
   cycleSpeedLabel,
+  removeSegment,
   segmentIndexAtSec,
   setSegmentMuted,
   setSegmentSpeed,
+  splitOrInsertAt,
   splitSegmentAt,
   toggleSegmentEnabled as toggleSegmentEnabledIn,
   Segment
@@ -144,6 +149,7 @@ export class CoreBridge {
   private playheadMs: number = 0
   private segments: Array<Segment> = []
   private selectedSegmentId: number = 0
+  private isRawFull: boolean = true
   /** 段列表是按哪个时长建立的；与当前行程时长不一致时重建（换行程 = 丢弃上一次的编辑）。 */
   private segmentSourceDurationSec: number = -1
   private activeTemplateId: string = DEFAULT_TEMPLATE_ID
@@ -718,8 +724,9 @@ export class CoreBridge {
       this.currentClipTotal = 0
     }
     if (this.segmentSourceDurationSec !== this.tripDurationSec) {
+      this.isRawFull = true
       this.segments = createFullSegment(this.tripDurationSec)
-      this.selectedSegmentId = this.segments.length > 0 ? this.segments[0].id : 0
+      this.selectedSegmentId = 0
       this.segmentSourceDurationSec = this.tripDurationSec
     }
     const segmentCount = Math.max(1, Math.ceil(this.tripDurationSec / CLIP_DURATION_SEC))
@@ -764,7 +771,8 @@ export class CoreBridge {
       segments: this.segments,
       selectedSegmentId: this.selectedSegmentId,
       watermarkEnabled: this.watermarkEnabled,
-      exportStatusText: this.exportStatusText
+      exportStatusText: this.exportStatusText,
+      isRawFull: this.isRawFull
     }
   }
 
@@ -775,6 +783,7 @@ export class CoreBridge {
     this.activeTemplateId = DEFAULT_TEMPLATE_ID
     this.drawerExpanded = true
     this.segmentSourceDurationSec = -1
+    this.isRawFull = true
     this.watermarkEnabled = true
     this.exportStatusText = '待导出'
     if (selected) {
@@ -808,6 +817,12 @@ export class CoreBridge {
   seekGlobalPlayhead(second: number): EditorStateModel {
     const clamped = Math.max(0, Math.min(Math.floor(second), this.tripDurationSec))
     this.playheadMs = clamped * 1000
+    if (!this.isRawFull) {
+      const at = segmentIndexAtSec(this.segments, clamped)
+      this.selectedSegmentId = at >= 0 ? this.segments[at].id : -1
+    } else {
+      this.selectedSegmentId = 0
+    }
     const snapshot = this.trips.get(this.tripId)
     if (!snapshot || this.currentClipTotal <= 0) {
       return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
@@ -863,23 +878,34 @@ export class CoreBridge {
   /** 在播放头处落刀；切出新段后选中播放头所在的那一段（切分后优先选中从当前落刀点开始的后半段）。 */
   splitAtPlayhead(): EditorStateModel {
     const sec = this.playheadMs / 1000
-    const next = splitSegmentAt(this.segments, sec, this.tripDurationSec)
-    if (next.length !== this.segments.length) {
+    if (!canSplitOrInsertAt(this.segments, sec, this.tripDurationSec, this.isRawFull)) {
+      const snapshot = this.trips.get(this.tripId)
+      return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
+    }
+    if (this.isRawFull) {
+      const next = splitOrInsertAt(this.segments, sec, this.tripDurationSec, true)
       this.segments = next
-      // 切分后优先选中从当前落刀点开始的后半段（符合剪辑操作直觉：落刀后调整后续内容）
-      let targetSegment: Segment | undefined = undefined
-      for (let i = 0; i < this.segments.length; i++) {
-        if (Math.abs(this.segments[i].startSec - sec) < 1e-4) {
-          targetSegment = this.segments[i]
-          break
+      this.isRawFull = false
+      this.selectedSegmentId = next.length > 0 ? next[0].id : 0
+    } else {
+      const next = splitOrInsertAt(this.segments, sec, this.tripDurationSec, false)
+      if (next.length !== this.segments.length) {
+        this.segments = next
+        // 切分后优先选中从当前落刀点开始的后半段（符合剪辑操作直觉：落刀后调整后续内容）
+        let targetSegment: Segment | undefined = undefined
+        for (let i = 0; i < this.segments.length; i++) {
+          if (Math.abs(this.segments[i].startSec - sec) < 1e-4) {
+            targetSegment = this.segments[i]
+            break
+          }
         }
-      }
-      if (targetSegment !== undefined) {
-        this.selectedSegmentId = targetSegment.id
-      } else {
-        const at = segmentIndexAtSec(this.segments, sec)
-        if (at >= 0) {
-          this.selectedSegmentId = this.segments[at].id
+        if (targetSegment !== undefined) {
+          this.selectedSegmentId = targetSegment.id
+        } else {
+          const at = segmentIndexAtSec(this.segments, sec)
+          if (at >= 0) {
+            this.selectedSegmentId = this.segments[at].id
+          }
         }
       }
     }
@@ -889,7 +915,40 @@ export class CoreBridge {
 
   /** 剪刀置灰判据（纯读）。 */
   canSplitAtPlayhead(): boolean {
-    return canSplitAt(this.segments, this.playheadMs / 1000, this.tripDurationSec)
+    return canSplitOrInsertAt(this.segments, this.playheadMs / 1000, this.tripDurationSec, this.isRawFull)
+  }
+
+  deleteSegment(id: number): EditorStateModel {
+    this.segments = removeSegment(this.segments, id)
+    if (this.segments.length === 0) {
+      this.segments = createFullSegment(this.tripDurationSec)
+      this.isRawFull = true
+      if (this.segments.length > 0) {
+        this.segments[0].speedLabel = '1.0X'
+        this.segments[0].muted = false
+      }
+      this.selectedSegmentId = 0
+    } else {
+      const sec = this.playheadMs / 1000
+      const atIndex = segmentIndexAtSec(this.segments, sec)
+      if (atIndex >= 0) {
+        this.selectedSegmentId = this.segments[atIndex].id
+      } else {
+        this.selectedSegmentId = -1
+      }
+    }
+    const snapshot = this.trips.get(this.tripId)
+    return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
+  }
+
+  adjustSegmentBoundary(id: number, edge: 'start' | 'end', sec: number): EditorStateModel {
+    if (edge === 'start') {
+      this.segments = adjustSegmentStart(this.segments, id, sec, this.tripDurationSec)
+    } else if (edge === 'end') {
+      this.segments = adjustSegmentEnd(this.segments, id, sec, this.tripDurationSec)
+    }
+    const snapshot = this.trips.get(this.tripId)
+    return this.buildEditorState(snapshot, this.previewCamera, this.currentClipIndex)
   }
 
   /** 灰段恢复 / 启用段置灰；关掉当前选中段时选中顺延到下一个启用段（plan:742）。 */
