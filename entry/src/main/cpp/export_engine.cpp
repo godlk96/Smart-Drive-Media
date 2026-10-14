@@ -155,38 +155,30 @@ void applyPacketTimestampFallback(int64_t &pts,
     if (!state.initialized) {
         if (pts == AV_NOPTS_VALUE && dts != AV_NOPTS_VALUE) {
             pts = dts;
-        }
-        if (dts == AV_NOPTS_VALUE && pts != AV_NOPTS_VALUE) {
+        } else if (dts == AV_NOPTS_VALUE && pts != AV_NOPTS_VALUE) {
             dts = pts;
-        }
-        if (pts == AV_NOPTS_VALUE) {
+        } else if (pts == AV_NOPTS_VALUE && dts == AV_NOPTS_VALUE) {
             pts = 0;
-        }
-        if (dts == AV_NOPTS_VALUE || dts > pts) {
-            dts = pts;
+            dts = 0;
         }
         state.nextPts = pts + step;
         state.nextDts = dts + step;
         state.initialized = true;
         return;
     }
-    if (pts == AV_NOPTS_VALUE) {
-        pts = dts != AV_NOPTS_VALUE ? dts : state.nextPts;
-    }
     if (dts == AV_NOPTS_VALUE) {
-        dts = pts;
-    }
-    if (pts < state.nextPts) {
-        pts = state.nextPts;
+        dts = (pts != AV_NOPTS_VALUE) ? pts : state.nextDts;
     }
     if (dts < state.nextDts) {
         dts = state.nextDts;
     }
-    if (dts > pts) {
-        dts = pts;
+    if (pts == AV_NOPTS_VALUE) {
+        pts = dts;
     }
-    state.nextPts = pts + step;
     state.nextDts = dts + step;
+    if (pts + step > state.nextPts) {
+        state.nextPts = pts + step;
+    }
 }
 
 std::string escapeFilterPath(const std::string &path)
@@ -270,9 +262,9 @@ std::string buildTemplateFilterDesc(const std::string &templateId,
     }
     if (templateId == "T4") {
         std::ostringstream oss;
-        oss << buildMovieSourceFilter(sidePath, "crop=960:1080:960:0", startSec, endSec, speed, frameRate) << "[" << left << "];"
+        oss << buildMovieSourceFilter(sidePath, "scale=1920:1080,crop=960:1080:960:0", startSec, endSec, speed, frameRate) << "[" << left << "];"
             << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << middle << "];"
-            << buildMovieSourceFilter(backPath, "crop=960:1080:0:0", startSec, endSec, speed, frameRate) << "[" << right << "];"
+            << buildMovieSourceFilter(backPath, "scale=1920:1080,crop=960:1080:0:0", startSec, endSec, speed, frameRate) << "[" << right << "];"
             << "[" << left << "][" << middle << "][" << right << "]hstack=inputs=3" << formatFilter << out;
         return oss.str();
     }
@@ -477,6 +469,11 @@ bool composeTemplateToMp4(const std::string &templateId,
         ctx->width = width;
         ctx->height = height;
         ctx->time_base = av_inv_q(frameRate);
+        // The OHCodec hardware encoders convert frame->pts to microseconds through
+        // avctx->pkt_timebase (libavcodec/ohenc.c), whose default is {0,1}. Left unset,
+        // av_rescale_q() collapses every frame timestamp to 0, which freezes the whole
+        // video track onto a single DTS while the audio keeps playing.
+        ctx->pkt_timebase = ctx->time_base;
         ctx->framerate = frameRate;
         ctx->thread_count = threadCount;
         ctx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
@@ -587,6 +584,7 @@ bool composeTemplateToMp4(const std::string &templateId,
         av_channel_layout_default(&audioEncoderCtx->ch_layout, 2);
         audioEncoderCtx->bit_rate = 128000;
         audioEncoderCtx->time_base = AVRational{1, 48000};
+        audioEncoderCtx->pkt_timebase = audioEncoderCtx->time_base;
         if (outputFmt->oformat->flags & AVFMT_GLOBALHEADER) {
             audioEncoderCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
         }
@@ -824,8 +822,10 @@ bool composeTemplateToMp4(const std::string &templateId,
     if (effectiveDurationSec <= 0.0) {
         effectiveDurationSec = (endSec > startSec) ? (endSec - startSec) : expectedDurationSec;
     }
-    const int64_t videoCutoffPts = effectiveDurationSec > 0.0
-        ? static_cast<int64_t>(std::ceil(effectiveDurationSec * static_cast<double>(outVideoStream->time_base.den) /
+    // segments 存在时由滤镜链各个 trim/concat 严格自然终止并触发 EOF；
+    // 仅在无 segments 且指定时长时作为安全保护上限，并留 1.0 秒容差避免浮点舍入误伤尾帧。
+    const int64_t videoCutoffPts = (segments.empty() && effectiveDurationSec > 0.0)
+        ? static_cast<int64_t>(std::ceil((effectiveDurationSec + 1.0) * static_cast<double>(outVideoStream->time_base.den) /
                                          static_cast<double>(outVideoStream->time_base.num)))
         : 0;
 
@@ -850,7 +850,12 @@ bool composeTemplateToMp4(const std::string &templateId,
         if (audioSinkCtx == nullptr || audioEncoderCtx == nullptr || audioFrame == nullptr) {
             return true;
         }
+        const int sampleRate = audioEncoderCtx->sample_rate > 0 ? audioEncoderCtx->sample_rate : 48000;
         while (true) {
+            const double currentAudioSec = static_cast<double>(audioNextPts) / static_cast<double>(sampleRate);
+            if (currentAudioSec >= targetTimeSec) {
+                return true;
+            }
             av_frame_unref(audioFrame);
             const int sinkAudioRet = av_buffersink_get_frame(audioSinkCtx, audioFrame);
             if (sinkAudioRet == AVERROR_EOF || sinkAudioRet == AVERROR(EAGAIN)) {
@@ -859,9 +864,6 @@ bool composeTemplateToMp4(const std::string &templateId,
             if (sinkAudioRet < 0) {
                 return false;
             }
-            const double audioTimeSec = audioFrame->pts != AV_NOPTS_VALUE
-                ? (static_cast<double>(audioFrame->pts) * av_q2d(av_buffersink_get_time_base(audioSinkCtx)))
-                : 0.0;
             audioFrame->pts = audioNextPts;
             audioNextPts += audioFrame->nb_samples;
             if (avcodec_send_frame(audioEncoderCtx, audioFrame) < 0) {
@@ -869,9 +871,6 @@ bool composeTemplateToMp4(const std::string &templateId,
             }
             if (!writeEncodedAudio()) {
                 return false;
-            }
-            if (audioTimeSec > targetTimeSec) {
-                return true;
             }
         }
     };
@@ -933,26 +932,24 @@ bool composeTemplateToMp4(const std::string &templateId,
         while (avcodec_receive_packet(encoderCtx, packet) == 0) {
             packet->stream_index = outVideoStream->index;
             av_packet_rescale_ts(packet, encoderCtx->time_base, outVideoStream->time_base);
+            if (packet->dts == AV_NOPTS_VALUE) {
+                packet->dts = packet->pts;
+            }
+            if (packet->duration <= 0) {
+                packet->duration = av_rescale_q(1, encoderCtx->time_base, outVideoStream->time_base);
+            }
             if (videoCutoffPts > 0 && packet->pts != AV_NOPTS_VALUE && packet->pts >= videoCutoffPts) {
                 av_packet_unref(packet);
                 break;
             }
-            double videoTimeSec = (packet->pts != AV_NOPTS_VALUE)
+            const double videoTimeSec = (packet->pts != AV_NOPTS_VALUE)
                 ? (static_cast<double>(packet->pts) * av_q2d(outVideoStream->time_base))
-                : ((packet->dts != AV_NOPTS_VALUE) ? (static_cast<double>(packet->dts) * av_q2d(outVideoStream->time_base)) : 0.0);
+                : 0.0;
             if (!pumpAudioUntil(videoTimeSec)) {
                 av_packet_unref(packet);
                 av_packet_free(&audioPkt);
                 cleanupComposeResources();
                 error = "compose_write_interleaved_audio_failed";
-                return false;
-            }
-            const int writeRet = av_interleaved_write_frame(outputFmt, packet);
-            if (writeRet < 0) {
-                av_packet_unref(packet);
-                av_packet_free(&audioPkt);
-                cleanupComposeResources();
-                error = "compose_write_packet_failed:" + avErrorText(writeRet);
                 return false;
             }
             if (packet->pts != AV_NOPTS_VALUE) {
@@ -961,7 +958,14 @@ bool composeTemplateToMp4(const std::string &templateId,
                     videoEndPts = endPts;
                 }
             }
+            const int writeRet = av_interleaved_write_frame(outputFmt, packet);
             av_packet_unref(packet);
+            if (writeRet < 0) {
+                av_packet_free(&audioPkt);
+                cleanupComposeResources();
+                error = "compose_write_packet_failed:" + avErrorText(writeRet);
+                return false;
+            }
         }
     }
     {
@@ -976,26 +980,24 @@ bool composeTemplateToMp4(const std::string &templateId,
     while (avcodec_receive_packet(encoderCtx, packet) == 0) {
         packet->stream_index = outVideoStream->index;
         av_packet_rescale_ts(packet, encoderCtx->time_base, outVideoStream->time_base);
+        if (packet->dts == AV_NOPTS_VALUE) {
+            packet->dts = packet->pts;
+        }
+        if (packet->duration <= 0) {
+            packet->duration = av_rescale_q(1, encoderCtx->time_base, outVideoStream->time_base);
+        }
         if (videoCutoffPts > 0 && packet->pts != AV_NOPTS_VALUE && packet->pts >= videoCutoffPts) {
             av_packet_unref(packet);
             break;
         }
-        double videoTimeSec = (packet->pts != AV_NOPTS_VALUE)
+        const double videoTimeSec = (packet->pts != AV_NOPTS_VALUE)
             ? (static_cast<double>(packet->pts) * av_q2d(outVideoStream->time_base))
-            : ((packet->dts != AV_NOPTS_VALUE) ? (static_cast<double>(packet->dts) * av_q2d(outVideoStream->time_base)) : 0.0);
+            : 0.0;
         if (!pumpAudioUntil(videoTimeSec)) {
             av_packet_unref(packet);
             av_packet_free(&audioPkt);
             cleanupComposeResources();
             error = "compose_write_interleaved_audio_failed";
-            return false;
-        }
-        const int flushRet = av_interleaved_write_frame(outputFmt, packet);
-        if (flushRet < 0) {
-            av_packet_unref(packet);
-            av_packet_free(&audioPkt);
-            cleanupComposeResources();
-            error = "compose_flush_packet_failed:" + avErrorText(flushRet);
             return false;
         }
         if (packet->pts != AV_NOPTS_VALUE) {
@@ -1004,7 +1006,14 @@ bool composeTemplateToMp4(const std::string &templateId,
                 videoEndPts = endPts;
             }
         }
+        const int flushRet = av_interleaved_write_frame(outputFmt, packet);
         av_packet_unref(packet);
+        if (flushRet < 0) {
+            av_packet_free(&audioPkt);
+            cleanupComposeResources();
+            error = "compose_flush_packet_failed:" + avErrorText(flushRet);
+            return false;
+        }
     }
     pumpAudioUntil(1e9);
     if (audioEncoderCtx != nullptr) {
@@ -1043,6 +1052,8 @@ bool concatTrackToMp4(const std::vector<std::string> &inputs,
     AVRational inAudioTb = {1, 1000};
     int64_t videoPtsOffset = 0;
     int64_t audioPtsOffset = 0;
+    PacketTimestampState videoTsState;
+    PacketTimestampState audioTsState;
     bool outputReady = false;
     for (const std::string &rawInput : inputs) {
         const std::string inputPath = normalizeUri(rawInput);
@@ -1143,29 +1154,21 @@ bool concatTrackToMp4(const std::vector<std::string> &inputs,
         }
         int64_t maxVideoPts = videoPtsOffset;
         int64_t maxAudioPts = audioPtsOffset;
-        int64_t firstVideoPts = AV_NOPTS_VALUE;
-        int64_t firstAudioPts = AV_NOPTS_VALUE;
-        PacketTimestampState videoTsState;
-        PacketTimestampState audioTsState;
+        int64_t firstVideoDts = AV_NOPTS_VALUE;
+        int64_t firstAudioDts = AV_NOPTS_VALUE;
         while (av_read_frame(inputFmt, packet) >= 0) {
             if (packet->stream_index == videoIndex) {
                 AVStream *inStream = inputFmt->streams[videoIndex];
                 packet->stream_index = outVideo->index;
-                int64_t mappedPts = packet->pts == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : av_rescale_q(packet->pts, inStream->time_base, outVideo->time_base);
-                int64_t mappedDts = packet->dts == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : av_rescale_q(packet->dts, inStream->time_base, outVideo->time_base);
-                if (mappedPts != AV_NOPTS_VALUE && firstVideoPts == AV_NOPTS_VALUE) {
-                    firstVideoPts = mappedPts;
+                if (firstVideoDts == AV_NOPTS_VALUE) {
+                    firstVideoDts = (packet->dts != AV_NOPTS_VALUE) ? packet->dts : ((packet->pts != AV_NOPTS_VALUE) ? packet->pts : 0);
                 }
-                if (firstVideoPts != AV_NOPTS_VALUE) {
-                    if (mappedPts != AV_NOPTS_VALUE) {
-                        mappedPts -= firstVideoPts;
-                    }
-                    if (mappedDts != AV_NOPTS_VALUE) {
-                        mappedDts -= firstVideoPts;
-                    }
-                }
-                packet->pts = mappedPts == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : mappedPts + videoPtsOffset;
-                packet->dts = mappedDts == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : mappedDts + videoPtsOffset;
+                int64_t relPts = (packet->pts != AV_NOPTS_VALUE) ? (packet->pts - firstVideoDts) : AV_NOPTS_VALUE;
+                int64_t relDts = (packet->dts != AV_NOPTS_VALUE) ? (packet->dts - firstVideoDts) : AV_NOPTS_VALUE;
+                int64_t mappedPts = (relPts != AV_NOPTS_VALUE) ? av_rescale_q(relPts, inStream->time_base, outVideo->time_base) : AV_NOPTS_VALUE;
+                int64_t mappedDts = (relDts != AV_NOPTS_VALUE) ? av_rescale_q(relDts, inStream->time_base, outVideo->time_base) : AV_NOPTS_VALUE;
+                packet->pts = (mappedPts != AV_NOPTS_VALUE) ? (mappedPts + videoPtsOffset) : AV_NOPTS_VALUE;
+                packet->dts = (mappedDts != AV_NOPTS_VALUE) ? (mappedDts + videoPtsOffset) : AV_NOPTS_VALUE;
                 packet->duration = av_rescale_q(packet->duration, inStream->time_base, outVideo->time_base);
                 applyPacketTimestampFallback(packet->pts, packet->dts, packet->duration, videoTsState);
                 if (packet->pts != AV_NOPTS_VALUE) {
@@ -1188,21 +1191,15 @@ bool concatTrackToMp4(const std::vector<std::string> &inputs,
             } else if (audioIndex >= 0 && outAudio != nullptr && packet->stream_index == audioIndex) {
                 AVStream *inStream = inputFmt->streams[audioIndex];
                 packet->stream_index = outAudio->index;
-                int64_t mappedPts = packet->pts == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : av_rescale_q(packet->pts, inStream->time_base, outAudio->time_base);
-                int64_t mappedDts = packet->dts == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : av_rescale_q(packet->dts, inStream->time_base, outAudio->time_base);
-                if (mappedPts != AV_NOPTS_VALUE && firstAudioPts == AV_NOPTS_VALUE) {
-                    firstAudioPts = mappedPts;
+                if (firstAudioDts == AV_NOPTS_VALUE) {
+                    firstAudioDts = (packet->dts != AV_NOPTS_VALUE) ? packet->dts : ((packet->pts != AV_NOPTS_VALUE) ? packet->pts : 0);
                 }
-                if (firstAudioPts != AV_NOPTS_VALUE) {
-                    if (mappedPts != AV_NOPTS_VALUE) {
-                        mappedPts -= firstAudioPts;
-                    }
-                    if (mappedDts != AV_NOPTS_VALUE) {
-                        mappedDts -= firstAudioPts;
-                    }
-                }
-                packet->pts = mappedPts == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : mappedPts + audioPtsOffset;
-                packet->dts = mappedDts == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : mappedDts + audioPtsOffset;
+                int64_t relPts = (packet->pts != AV_NOPTS_VALUE) ? (packet->pts - firstAudioDts) : AV_NOPTS_VALUE;
+                int64_t relDts = (packet->dts != AV_NOPTS_VALUE) ? (packet->dts - firstAudioDts) : AV_NOPTS_VALUE;
+                int64_t mappedPts = (relPts != AV_NOPTS_VALUE) ? av_rescale_q(relPts, inStream->time_base, outAudio->time_base) : AV_NOPTS_VALUE;
+                int64_t mappedDts = (relDts != AV_NOPTS_VALUE) ? av_rescale_q(relDts, inStream->time_base, outAudio->time_base) : AV_NOPTS_VALUE;
+                packet->pts = (mappedPts != AV_NOPTS_VALUE) ? (mappedPts + audioPtsOffset) : AV_NOPTS_VALUE;
+                packet->dts = (mappedDts != AV_NOPTS_VALUE) ? (mappedDts + audioPtsOffset) : AV_NOPTS_VALUE;
                 packet->duration = av_rescale_q(packet->duration, inStream->time_base, outAudio->time_base);
                 applyPacketTimestampFallback(packet->pts, packet->dts, packet->duration, audioTsState);
                 if (packet->pts != AV_NOPTS_VALUE) {
@@ -1226,9 +1223,9 @@ bool concatTrackToMp4(const std::vector<std::string> &inputs,
             av_packet_unref(packet);
         }
         av_packet_free(&packet);
-        videoPtsOffset = maxVideoPts;
+        videoPtsOffset = videoTsState.nextDts > maxVideoPts ? videoTsState.nextDts : maxVideoPts;
         if (audioIndex >= 0 && outAudio != nullptr) {
-            audioPtsOffset = maxAudioPts;
+            audioPtsOffset = audioTsState.nextDts > maxAudioPts ? audioTsState.nextDts : maxAudioPts;
         }
         avformat_close_input(&inputFmt);
     }
@@ -1237,158 +1234,6 @@ bool concatTrackToMp4(const std::vector<std::string> &inputs,
         return false;
     }
     av_write_trailer(outputFmt);
-    if (!(outputFmt->oformat->flags & AVFMT_NOFILE) && outputFmt->pb != nullptr) {
-        avio_closep(&outputFmt->pb);
-    }
-    avformat_free_context(outputFmt);
-    return true;
-}
-
-bool muxVideoWithFrontAudio(const std::string &videoPath,
-                            const std::string &frontTrackPath,
-                            const std::string &outputPath,
-                            std::string &error)
-{
-    AVFormatContext *videoFmt = nullptr;
-    AVFormatContext *frontFmt = nullptr;
-    if (avformat_open_input(&videoFmt, videoPath.c_str(), nullptr, nullptr) < 0) {
-        error = "mux_open_video_failed";
-        return false;
-    }
-    if (avformat_find_stream_info(videoFmt, nullptr) < 0) {
-        avformat_close_input(&videoFmt);
-        error = "mux_find_video_info_failed";
-        return false;
-    }
-    if (avformat_open_input(&frontFmt, frontTrackPath.c_str(), nullptr, nullptr) < 0) {
-        avformat_close_input(&videoFmt);
-        error = "mux_open_front_failed";
-        return false;
-    }
-    if (avformat_find_stream_info(frontFmt, nullptr) < 0) {
-        avformat_close_input(&videoFmt);
-        avformat_close_input(&frontFmt);
-        error = "mux_find_front_info_failed";
-        return false;
-    }
-    int videoIndex = av_find_best_stream(videoFmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
-    int audioIndex = av_find_best_stream(frontFmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
-    if (videoIndex < 0 || audioIndex < 0) {
-        avformat_close_input(&videoFmt);
-        avformat_close_input(&frontFmt);
-        error = "mux_required_stream_not_found";
-        return false;
-    }
-    AVFormatContext *outputFmt = nullptr;
-    if (avformat_alloc_output_context2(&outputFmt, nullptr, "mp4", outputPath.c_str()) < 0 || outputFmt == nullptr) {
-        avformat_close_input(&videoFmt);
-        avformat_close_input(&frontFmt);
-        error = "mux_alloc_output_context_failed";
-        return false;
-    }
-    AVStream *videoOut = avformat_new_stream(outputFmt, nullptr);
-    AVStream *audioOut = avformat_new_stream(outputFmt, nullptr);
-    if (videoOut == nullptr || audioOut == nullptr) {
-        avformat_close_input(&videoFmt);
-        avformat_close_input(&frontFmt);
-        avformat_free_context(outputFmt);
-        error = "mux_create_stream_failed";
-        return false;
-    }
-    if (avcodec_parameters_copy(videoOut->codecpar, videoFmt->streams[videoIndex]->codecpar) < 0 ||
-        avcodec_parameters_copy(audioOut->codecpar, frontFmt->streams[audioIndex]->codecpar) < 0) {
-        avformat_close_input(&videoFmt);
-        avformat_close_input(&frontFmt);
-        avformat_free_context(outputFmt);
-        error = "mux_copy_codecpar_failed";
-        return false;
-    }
-    videoOut->codecpar->codec_tag = 0;
-    audioOut->codecpar->codec_tag = 0;
-    if (!(outputFmt->oformat->flags & AVFMT_NOFILE)) {
-        if (avio_open(&outputFmt->pb, outputPath.c_str(), AVIO_FLAG_WRITE) < 0) {
-            avformat_close_input(&videoFmt);
-            avformat_close_input(&frontFmt);
-            avformat_free_context(outputFmt);
-            error = "mux_open_output_failed";
-            return false;
-        }
-    }
-    if (avformat_write_header(outputFmt, nullptr) < 0) {
-        avformat_close_input(&videoFmt);
-        avformat_close_input(&frontFmt);
-        if (!(outputFmt->oformat->flags & AVFMT_NOFILE) && outputFmt->pb != nullptr) {
-            avio_closep(&outputFmt->pb);
-        }
-        avformat_free_context(outputFmt);
-        error = "mux_write_header_failed";
-        return false;
-    }
-    AVPacket *packet = av_packet_alloc();
-    if (packet == nullptr) {
-        avformat_close_input(&videoFmt);
-        avformat_close_input(&frontFmt);
-        if (!(outputFmt->oformat->flags & AVFMT_NOFILE) && outputFmt->pb != nullptr) {
-            avio_closep(&outputFmt->pb);
-        }
-        avformat_free_context(outputFmt);
-        error = "mux_alloc_packet_failed";
-        return false;
-    }
-    PacketTimestampState videoTsState;
-    PacketTimestampState audioTsState;
-    while (av_read_frame(videoFmt, packet) >= 0) {
-        if (packet->stream_index != videoIndex) {
-            av_packet_unref(packet);
-            continue;
-        }
-        AVStream *inStream = videoFmt->streams[videoIndex];
-        packet->stream_index = videoOut->index;
-        av_packet_rescale_ts(packet, inStream->time_base, videoOut->time_base);
-        packet->duration = av_rescale_q(packet->duration, inStream->time_base, videoOut->time_base);
-        applyPacketTimestampFallback(packet->pts, packet->dts, packet->duration, videoTsState);
-        if (av_interleaved_write_frame(outputFmt, packet) < 0) {
-            av_packet_unref(packet);
-            av_packet_free(&packet);
-            avformat_close_input(&videoFmt);
-            avformat_close_input(&frontFmt);
-            if (!(outputFmt->oformat->flags & AVFMT_NOFILE) && outputFmt->pb != nullptr) {
-                avio_closep(&outputFmt->pb);
-            }
-            avformat_free_context(outputFmt);
-            error = "mux_write_video_packet_failed";
-            return false;
-        }
-        av_packet_unref(packet);
-    }
-    while (av_read_frame(frontFmt, packet) >= 0) {
-        if (packet->stream_index != audioIndex) {
-            av_packet_unref(packet);
-            continue;
-        }
-        AVStream *inStream = frontFmt->streams[audioIndex];
-        packet->stream_index = audioOut->index;
-        av_packet_rescale_ts(packet, inStream->time_base, audioOut->time_base);
-        packet->duration = av_rescale_q(packet->duration, inStream->time_base, audioOut->time_base);
-        applyPacketTimestampFallback(packet->pts, packet->dts, packet->duration, audioTsState);
-        if (av_interleaved_write_frame(outputFmt, packet) < 0) {
-            av_packet_unref(packet);
-            av_packet_free(&packet);
-            avformat_close_input(&videoFmt);
-            avformat_close_input(&frontFmt);
-            if (!(outputFmt->oformat->flags & AVFMT_NOFILE) && outputFmt->pb != nullptr) {
-                avio_closep(&outputFmt->pb);
-            }
-            avformat_free_context(outputFmt);
-            error = "mux_write_audio_packet_failed";
-            return false;
-        }
-        av_packet_unref(packet);
-    }
-    av_packet_free(&packet);
-    av_write_trailer(outputFmt);
-    avformat_close_input(&videoFmt);
-    avformat_close_input(&frontFmt);
     if (!(outputFmt->oformat->flags & AVFMT_NOFILE) && outputFmt->pb != nullptr) {
         avio_closep(&outputFmt->pb);
     }
@@ -1412,7 +1257,7 @@ std::string normalizeUri(const std::string &uri)
 void logPipeline(const std::string &stage, const std::string &message)
 {
     std::fprintf(stderr, "[export_engine][%s] %s\n", stage.c_str(), message.c_str());
-    OH_LOG_Print(LOG_APP, LOG_INFO, 0x3200, "export_engine", "[%{public}s] %{public}s",
+    OH_LOG_Print(LOG_APP, LOG_INFO, 0x3200, "智驾影音", "【Native】【%{public}s】%{public}s",
                  stage.c_str(), message.c_str());
 }
 
@@ -1841,10 +1686,20 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
                     << " startMs=" << startMs << " endMs=" << endMs
                     << " segments=" << segments.size() << " output=" << outputPath;
         logPipeline("request", requestInfo.str());
+        for (size_t i = 0; i < frontUris.size(); i++) {
+            logPipeline("request.front", "[" + std::to_string(i) + "] " + frontUris[i]);
+        }
+        for (size_t i = 0; i < backUris.size(); i++) {
+            logPipeline("request.back", "[" + std::to_string(i) + "] " + backUris[i]);
+        }
+        for (size_t i = 0; i < sideUris.size(); i++) {
+            logPipeline("request.side", "[" + std::to_string(i) + "] " + sideUris[i]);
+        }
         for (size_t i = 0; i < segments.size(); i++) {
             std::ostringstream one;
-            one << "#" << i << " startMs=" << segments[i].startMs << " endMs=" << segments[i].endMs
-                << " speed=" << segments[i].speed << " muted=" << (segments[i].muted ? 1 : 0);
+            one << "#" << i << " [startMs=" << segments[i].startMs << "ms ~ endMs=" << segments[i].endMs << "ms] ("
+                << (segments[i].startMs / 1000.0) << "s ~ " << (segments[i].endMs / 1000.0) << "s) speed="
+                << segments[i].speed << " muted=" << (segments[i].muted ? "YES" : "NO");
             logPipeline("request.segment", one.str());
         }
     }
