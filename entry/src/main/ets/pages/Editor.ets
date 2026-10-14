@@ -70,7 +70,8 @@ struct Editor {
     segments: createFullSegment(60),
     selectedSegmentId: 0,
     watermarkEnabled: true,
-    exportStatusText: '待导出'
+    exportStatusText: '待导出',
+    isRawFull: true
   }
 
   private applyState(nextState: EditorStateModel): void {
@@ -271,16 +272,23 @@ struct Editor {
   }
 
   /**
-   * 剪刀：在播放头处落刀。规则见 spec §5.3；满 3 段或切出短于 2 秒的段时拒绝并提示（spec §5.5）。
+   * 剪刀：在播放头处落刀。规则见 spec §3.2/§3.4。
    */
   private splitAtPlayhead(): void {
-    if (enabledCount(this.state.segments) >= MAX_SEGMENTS) {
-      this.showToast('最多只能添加3个剪辑点')
-      return
-    }
-    if (!this.viewModel.canSplitAtPlayhead()) {
-      this.showToast('片段太短，至少 2 秒')
-      return
+    if (this.state.isRawFull) {
+      if (!this.viewModel.canSplitAtPlayhead()) {
+        this.showToast('距离片尾不足10秒，无法截取')
+        return
+      }
+    } else {
+      if (this.state.segments.length >= MAX_SEGMENTS) {
+        this.showToast('最多只能添加3个剪辑点')
+        return
+      }
+      if (!this.viewModel.canSplitAtPlayhead()) {
+        this.showToast('片段需至少20秒可切分，或空档需至少10秒')
+        return
+      }
     }
     this.applyState(this.viewModel.splitAtPlayhead())
     this.markUnsaved()
@@ -292,22 +300,34 @@ struct Editor {
     this.showControlsTemporarily()
   }
 
-  /** 点片段块：选中该段，圆钮跳到该段起点（spec §5.4）。 */
+  /** 点片段块：选中该段。 */
   private handleSelectSegment(id: number): void {
-    const target = this.state.segments.find((item: Segment) => item.id === id)
     this.applyState(this.viewModel.selectSegment(id))
-    if (target !== undefined) {
-      this.syncGlobalPlayhead(target.startSec, false)
+  }
+
+  /** 拖圆钮：先跳转，再让圆钮落点所在的那一段选中（空档则为 -1）。 */
+  private handleScrubTo(sec: number): void {
+    this.syncGlobalPlayhead(sec, true)
+    if (!this.state.isRawFull) {
+      const index = segmentIndexAtSec(this.state.segments, sec)
+      const targetId = index >= 0 ? this.state.segments[index].id : -1
+      this.applyState(this.viewModel.selectSegment(targetId))
     }
   }
 
-  /** 拖圆钮：先跳转，再让圆钮落点所在的那一段选中（spec §5.4）。 */
-  private handleScrubTo(sec: number): void {
-    this.syncGlobalPlayhead(sec, true)
-    const index = segmentIndexAtSec(this.state.segments, sec)
-    if (index >= 0) {
-      this.applyState(this.viewModel.selectSegment(this.state.segments[index].id))
+  private handleAdjustBoundary(id: number, edge: 'start' | 'end', sec: number): void {
+    this.applyState(this.viewModel.adjustSegmentBoundary(id, edge, sec))
+    this.markUnsaved()
+  }
+
+  private handleDeleteSegment(id: number): void {
+    const wasSegmented = !this.state.isRawFull
+    this.applyState(this.viewModel.deleteSegment(id))
+    this.markUnsaved()
+    if (wasSegmented && this.state.isRawFull) {
+      this.showToast('已恢复为完整视频')
     }
+    this.showControlsTemporarily()
   }
 
   private handleCycleSegmentSpeed(): void {
@@ -323,9 +343,7 @@ struct Editor {
   }
 
   private handleToggleSegmentEnabled(id: number): void {
-    this.applyState(this.viewModel.toggleSegmentEnabled(id))
-    this.markUnsaved()
-    this.showControlsTemporarily()
+    this.handleDeleteSegment(id)
   }
 
   /** 模板行只回传 id，这里翻回卡片复用既有的禁用校验与提示。 */
@@ -339,7 +357,10 @@ struct Editor {
   /** 参数行/轨道要展示的那一段；没有选中时退回第一段。 */
   private selectedSegment(): Segment {
     const found = this.viewModel.getSelectedSegment(this.state)
-    return found !== undefined ? found : this.state.segments[0]
+    if (found !== undefined) {
+      return found
+    }
+    return this.state.segments.length > 0 ? this.state.segments[0] : new Segment()
   }
 
   private selectedSegmentId(): number {
@@ -403,6 +424,13 @@ struct Editor {
     }
     this.updatePlayheadSec(nextSec)
     this.updatePlayheadText(this.viewModel.updatePlayheadText(nextSec))
+    if (!this.state.isRawFull) {
+      const atIndex = segmentIndexAtSec(this.state.segments, nextSec)
+      const targetId = atIndex >= 0 ? this.state.segments[atIndex].id : -1
+      if (this.state.selectedSegmentId !== targetId) {
+        this.applyState(this.viewModel.selectSegment(targetId))
+      }
+    }
   }
 
   private handlePreviewEnded(): void {
@@ -660,19 +688,24 @@ struct Editor {
 
       SegmentParamRow({
         segment: this.selectedSegment(),
-        canToggle: this.canToggleSelected(),
+        isRawFull: this.state.isRawFull,
+        isGap: this.viewModel.isGap(this.state),
+        canToggle: !this.state.isRawFull && !this.viewModel.isGap(this.state),
         canScissors: this.viewModel.canSplitAtPlayhead(),
         onCycleSpeed: () => this.handleCycleSegmentSpeed(),
         onToggleMute: () => this.handleToggleSegmentMute(),
         onScissors: () => this.splitAtPlayhead(),
-        onToggleEnabled: () => this.handleToggleSegmentEnabled(this.selectedSegmentId())
+        onDeleteSegment: () => this.handleDeleteSegment(this.selectedSegmentId()),
+        onToggleEnabled: () => this.handleDeleteSegment(this.selectedSegmentId())
       })
 
       SegmentTrack({
         segments: this.state.segments,
         totalDurationSec: this.state.totalDurationSec,
         selectedSegmentId: this.selectedSegmentId(),
-        onSelectSegment: (id: number) => this.handleSelectSegment(id)
+        isRawFull: this.state.isRawFull,
+        onSelectSegment: (id: number) => this.handleSelectSegment(id),
+        onAdjustBoundary: (id: number, edge: 'start' | 'end', sec: number) => this.handleAdjustBoundary(id, edge, sec)
       })
     }
     .width('100%')
