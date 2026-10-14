@@ -31,7 +31,6 @@ struct Editor {
   private controlsTimer: number = -1
   private lastLoggedSecond: number = -1
   @State private showPlayerControls: boolean = true
-  @State private showPreviewCover: boolean = true
   @State private previewPlaying: boolean = false
   private lastStablePlayheadSec: number = 0
   /**
@@ -108,7 +107,6 @@ struct Editor {
     this.exportSessionSeed = hydrateResult.exportSessionSeed
     this.applyState(hydrateResult.state)
     this.tripSnapshot = hydrateResult.tripSnapshot
-    this.showPreviewCover = this.hasPreviewSource()
     this.previewPlaying = false
     this.showPlayerControls = true
     // 把"宿主认为的播放头"作为一次显式跳转交给预览区。预览区挂载时会消费这个待处理请求，
@@ -170,7 +168,6 @@ struct Editor {
   }
 
   private startAllPreview(): void {
-    this.showPreviewCover = false
     this.previewPlaying = true
     debugLog('剪辑诊断', `触发统一播放，目标倍速=${this.getPlaybackRate()}X`)
   }
@@ -189,7 +186,6 @@ struct Editor {
         this.syncGlobalPlayhead(0, true)
       }
       this.startAllPreview()
-      this.showPreviewCover = false
       debugLog('剪辑诊断', '点击播放预览，已同步播放全部画面')
     }
     this.showControlsTemporarily()
@@ -291,12 +287,8 @@ struct Editor {
     this.showControlsTemporarily()
   }
 
-  /** 点画面：有封面就先起播并收掉封面，其余情况把控制条唤回来（spec §5.2）。 */
+  /** 点画面：把控制条唤回来（spec §5.2）。 */
   private handleStageTap(): void {
-    if (this.showPreviewCover && this.hasPreviewSource()) {
-      this.startAllPreview()
-      this.showPreviewCover = false
-    }
     this.showControlsTemporarily()
   }
 
@@ -415,7 +407,6 @@ struct Editor {
 
   private handlePreviewEnded(): void {
     this.previewPlaying = false
-    this.showPreviewCover = true
     this.updatePlayheadSec(this.state.totalDurationSec)
     this.updatePlayheadText(this.viewModel.updatePlayheadText(this.state.totalDurationSec))
     this.showControlsTemporarily()
@@ -493,7 +484,6 @@ struct Editor {
     this.applyState(this.viewModel.switchCamera(camera))
     this.tripSnapshot = this.viewModel.getTripSnapshot(this.state.tripId)
     this.requestPreviewSeek(this.state.playheadSec * 1000)
-    this.showPreviewCover = this.hasPreviewSource()
     this.viewModel.logPreviewPayload(this.state)
     debugLog('剪辑页', `切换播放器视角=${camera}，片段=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
     this.showControlsTemporarily()
@@ -511,7 +501,7 @@ struct Editor {
    * 就绪看门狗和 2200ms 兜底，外加 1500ms release 等待。三个独立超时、两处
    * resolve、四处 isTemplateSwitchTaskValid 复查交错在一起 —— 这正是"修好这个
    * 冒出那个"的源头。预览区的几何与段绑定现在是同步的，切换后只需要把播放
-   * 意图同步下去；时钟位置不变（播放头由 TimelineClock 持有，不必在此重设）。
+   * 意图同步下去，并触发显式跳转将新绑定机位对齐到当前播放头。
    */
   private selectTemplate(card: TemplateCardModel): void {
     const wasPlaying = this.previewPlaying
@@ -522,7 +512,7 @@ struct Editor {
       this.updatePlayheadSec(this.state.playheadSec)
       this.updatePlayheadText(this.viewModel.updatePlayheadText(this.state.playheadSec))
       this.tripSnapshot = this.viewModel.getTripSnapshot(this.state.tripId)
-      this.showPreviewCover = !wasPlaying
+      this.requestPreviewSeek(targetSec * 1000)
       if (wasPlaying) {
         this.startAllPreview()
       }
@@ -616,8 +606,7 @@ struct Editor {
             onPlayheadChanged: (playheadMs: number) => this.handlePreviewPlayheadChanged(playheadMs),
             onPlaybackEnded: () => this.handlePreviewEnded()
           })
-        }
-        if (this.showPreviewCover && this.hasImageCover()) {
+        } else if (this.hasImageCover()) {
           Image(this.formatCoverUri(this.tripSnapshot.previewFrameUri))
             .width('100%')
             // 不能用 height('100%')：父 Stack 的高度来自它自己的 aspectRatio，
@@ -643,7 +632,7 @@ struct Editor {
             .backgroundColor($r('app.color.stage_btn_bg'))
             .border({ width: 1, color: $r('app.color.stage_btn_border') })
             .onClick(() => this.togglePreviewPlay())
-          } else if (!this.hasPreviewSource()) {
+          } else if (!this.hasPreviewSource() && !this.hasImageCover()) {
             Text('预览区')
               .fontSize(13)
               .fontColor($r('app.color.overlay_text'))

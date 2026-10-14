@@ -29,6 +29,7 @@ import {
   SegmentKind,
   SegmentSpan,
   SegmentTarget,
+  SEEK_TOLERANCE_MS,
   checkSeek,
   gapHoldIndex,
   segmentAt
@@ -413,8 +414,8 @@ export class SingleTrackController {
         `${this.trackId} 收到 surface（首次=${isFirst ? '是' : '否'} 已prepare=${this.prepared ? '是' : '否'} 已绑播放器=${this.player ? '是' : '否'}）`
       )
     }
-    // surface 是后来才到的：重新对账一次，让"等 surface 才能载入"的路径自动接上。
-    void this.reconcile(this.desired, false)
+    // surface 是后来才到的：重新对账一次。若播放器已就绪，强制 seek 让新 surface 立即渲染首帧
+    void this.reconcile(this.desired, this.prepared)
   }
 
   /**
@@ -1197,8 +1198,8 @@ export class SingleTrackController {
         } catch (_) {}
         void this.applyVolume()
         void this.applyPlaybackRate()
-        // 就绪后重新对账：该 seek 就 seek，该播就播。
-        void this.reconcile(this.desired, false)
+        // 就绪后重新对账：强制 seek 定位到当前播放头（确保即使在 0ms 也能强制解码首帧出画，避免黑屏）
+        void this.reconcile(this.desired, true)
         return
       }
 
