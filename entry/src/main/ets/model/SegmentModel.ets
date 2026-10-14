@@ -17,7 +17,9 @@ import { ExportSegment } from './TripModels'
 /** 启用段的数量上限 */
 export const MAX_SEGMENTS: number = 3
 /** 单段最短时长（秒） */
-export const MIN_SEGMENT_SEC: number = 2
+export const MIN_SEGMENT_SEC: number = 10
+/** 首次与空档剪辑默认窗口（秒） */
+export const DEFAULT_CLIP_WINDOW_SEC: number = 15
 /** 倍速循环顺序，点击单按钮依次切换 */
 export const SPEED_CYCLE: Array<string> = ['0.75X', '1.0X', '1.25X', '1.5X', '2.0X']
 
@@ -156,94 +158,259 @@ function nextSegmentId(segments: Array<Segment>): number {
 }
 
 /**
- * 无条件执行切分或插入，不做任何上限校验（校验归 canSplitAt）。
- * 三条规则见 spec §5.3：启用段内切两半、灰段内只把后半段补回来、
- * 空档里插入 [sec, 下一个边界]。落到已有边界上则结构不变。
+ * 拖动左手柄调整片段起点。
+ * - 向左不越过前一段终点（若无前段则为 0）
+ * - 向右不越过 endSec - 10
+ * - 保持硬阻挡，不挤压前段
  */
-function rawSplit(segments: Array<Segment>, sec: number, totalDurationSec: number): Array<Segment> {
-  const freshId = nextSegmentId(segments)
-  const out: Array<Segment> = []
-  let inserted = false
-
+export function adjustSegmentStart(
+  segments: Array<Segment>,
+  id: number,
+  targetSec: number,
+  totalDurationSec: number
+): Array<Segment> {
+  let targetIdx = -1
   for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i]
-    if (sec > segment.startSec && sec < segment.endSec) {
-      const head = cloneSegment(segment)
-      head.endSec = sec
-      const tail = cloneSegment(segment)
-      tail.id = freshId
-      tail.startSec = sec
-      tail.enabled = true
-      out.push(head)
-      out.push(tail)
-      inserted = true
-    } else {
-      out.push(cloneSegment(segment))
-    }
-  }
-  if (inserted) {
-    return out
-  }
-
-  let onBoundary = false
-  for (let i = 0; i < out.length; i++) {
-    if (out[i].startSec === sec || out[i].endSec === sec) {
-      onBoundary = true
+    if (segments[i].id === id) {
+      targetIdx = i
       break
     }
   }
-  if (onBoundary) {
+  if (targetIdx === -1) {
+    const out: Array<Segment> = []
+    for (let i = 0; i < segments.length; i++) {
+      out.push(cloneSegment(segments[i]))
+    }
     return out
   }
 
-  let boundary = totalDurationSec
-  let at = out.length
-  for (let i = 0; i < out.length; i++) {
-    if (out[i].startSec > sec) {
-      boundary = out[i].startSec
-      at = i
-      break
+  const targetSeg = segments[targetIdx]
+  const minSec = targetIdx > 0 ? segments[targetIdx - 1].endSec : 0
+  const maxSec = targetSeg.endSec - MIN_SEGMENT_SEC
+  const clampedSec = Math.max(minSec, Math.min(targetSec, maxSec))
+
+  const out: Array<Segment> = []
+  for (let i = 0; i < segments.length; i++) {
+    const copy = cloneSegment(segments[i])
+    if (copy.id === id) {
+      copy.startSec = clampedSec
     }
+    out.push(copy)
   }
-  const fresh = new Segment()
-  fresh.id = freshId
-  fresh.startSec = sec
-  fresh.endSec = boundary
-  out.splice(at, 0, fresh)
   return out
 }
 
 /**
- * 能否在此落刀。拒绝：启用段已满、sec 不在 (0, 总时长) 内、
- * 或切分后会出现短于 MIN_SEGMENT_SEC 的启用段。
- * 用 MIN_SEGMENT_SEC - 1e-9 比较，避免 60 - 58 这类减法误差误拒。
+ * 拖动右手柄调整片段终点。
+ * - 向左不低于 startSec + 10
+ * - 向右不越过后一段起点（若无后段则为 totalDurationSec）
+ * - 保持硬阻挡，不挤压后段
  */
-export function canSplitAt(segments: Array<Segment>, sec: number, totalDurationSec: number): boolean {
-  if (enabledCount(segments) >= MAX_SEGMENTS) {
+export function adjustSegmentEnd(
+  segments: Array<Segment>,
+  id: number,
+  targetSec: number,
+  totalDurationSec: number
+): Array<Segment> {
+  let targetIdx = -1
+  for (let i = 0; i < segments.length; i++) {
+    if (segments[i].id === id) {
+      targetIdx = i
+      break
+    }
+  }
+  if (targetIdx === -1) {
+    const out: Array<Segment> = []
+    for (let i = 0; i < segments.length; i++) {
+      out.push(cloneSegment(segments[i]))
+    }
+    return out
+  }
+
+  const targetSeg = segments[targetIdx]
+  const minSec = targetSeg.startSec + MIN_SEGMENT_SEC
+  const maxSec = targetIdx < segments.length - 1 ? segments[targetIdx + 1].startSec : totalDurationSec
+  const clampedSec = Math.max(minSec, Math.min(targetSec, maxSec))
+
+  const out: Array<Segment> = []
+  for (let i = 0; i < segments.length; i++) {
+    const copy = cloneSegment(segments[i])
+    if (copy.id === id) {
+      copy.endSec = clampedSec
+    }
+    out.push(copy)
+  }
+  return out
+}
+
+/**
+ * 物理移除目标片段并返回新数组，保持剩余片段顺序不变。
+ */
+export function removeSegment(segments: Array<Segment>, id: number): Array<Segment> {
+  const out: Array<Segment> = []
+  for (let i = 0; i < segments.length; i++) {
+    if (segments[i].id !== id) {
+      out.push(cloneSegment(segments[i]))
+    }
+  }
+  return out
+}
+
+/**
+ * 判断在 sec 处能否执行剪辑（落刀一分为二或空档插入）。
+ * - 若 isRawFull 为 true：需满足 sec >= 0 且 totalDurationSec - sec >= 10。
+ * - 若 isRawFull 为 false：
+ *   - 片段数已达 MAX_SEGMENTS (3) 时返回 false
+ *   - sec 超出 [0, totalDurationSec) 时返回 false
+ *   - 若落在某个段内 [start, end]：需满足 sec - start >= 10 且 end - sec >= 10（原段长必须 >= 20s）
+ *   - 若落在已有段起点 start 上：返回 false
+ *   - 若落在空档内：寻找 sec 后方下一个片段起点 nextStart（若无则为 totalDurationSec），需满足 nextStart - sec >= 10
+ */
+export function canSplitOrInsertAt(
+  segments: Array<Segment>,
+  sec: number,
+  totalDurationSec: number,
+  isRawFull: boolean
+): boolean {
+  if (sec < 0 || sec >= totalDurationSec) {
     return false
   }
-  if (sec <= 0 || sec >= totalDurationSec) {
+
+  if (isRawFull) {
+    return (totalDurationSec - sec) >= (MIN_SEGMENT_SEC - 1e-9)
+  }
+
+  if (segments.length >= MAX_SEGMENTS) {
     return false
   }
-  const result = rawSplit(segments, sec, totalDurationSec)
-  if (enabledCount(result) <= enabledCount(segments)) {
-    return false
+
+  // 落在某段内部 (startSec, endSec)
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]
+    if (sec > seg.startSec && sec < seg.endSec) {
+      const leftValid = (sec - seg.startSec) >= (MIN_SEGMENT_SEC - 1e-9)
+      const rightValid = (seg.endSec - sec) >= (MIN_SEGMENT_SEC - 1e-9)
+      return leftValid && rightValid
+    }
   }
-  const enabled = enabledSegments(result)
-  for (let i = 0; i < enabled.length; i++) {
-    if (segmentDurationSec(enabled[i]) < MIN_SEGMENT_SEC - 1e-9) {
+
+  // 已有片段起点处不可落刀
+  for (let i = 0; i < segments.length; i++) {
+    if (segments[i].startSec === sec) {
       return false
     }
   }
-  return true
+
+  // 落在空档内（包括前段 endSec），寻找后方第一个起点
+  let nextStart = totalDurationSec
+  for (let i = 0; i < segments.length; i++) {
+    if (segments[i].startSec > sec) {
+      nextStart = segments[i].startSec
+      break
+    }
+  }
+
+  return (nextStart - sec) >= (MIN_SEGMENT_SEC - 1e-9)
 }
 
-/** 被拒绝时原样返回输入，不改结构。 */
-export function splitSegmentAt(segments: Array<Segment>, sec: number, totalDurationSec: number): Array<Segment> {
-  if (!canSplitAt(segments, sec, totalDurationSec)) {
+/**
+ * 执行剪辑：
+ * - isRawFull 为 true：生成 [sec, min(totalDurationSec, sec + 15)] 唯一高光选区，id = 0；
+ * - 落在段内：切分成 [start, sec] 与 [sec, end]；
+ * - 落在空档：插入 [sec, min(nextStart, sec + 15)]。
+ * - 拒绝时原样返回。
+ */
+export function splitOrInsertAt(
+  segments: Array<Segment>,
+  sec: number,
+  totalDurationSec: number,
+  isRawFull: boolean
+): Array<Segment> {
+  if (!canSplitOrInsertAt(segments, sec, totalDurationSec, isRawFull)) {
     return segments
   }
-  return rawSplit(segments, sec, totalDurationSec)
+
+  if (isRawFull) {
+    const seg = new Segment()
+    seg.id = 0
+    seg.startSec = sec
+    seg.endSec = Math.min(totalDurationSec, sec + DEFAULT_CLIP_WINDOW_SEC)
+    seg.speedLabel = segments.length > 0 ? segments[0].speedLabel : DEFAULT_SPEED_LABEL
+    seg.muted = segments.length > 0 ? segments[0].muted : false
+    seg.enabled = true
+    return [seg]
+  }
+
+  // 落在某段内部 (startSec, endSec)
+  let splitIdx = -1
+  for (let i = 0; i < segments.length; i++) {
+    if (sec > segments[i].startSec && sec < segments[i].endSec) {
+      splitIdx = i
+      break
+    }
+  }
+
+  if (splitIdx >= 0) {
+    const target = segments[splitIdx]
+    const freshId = nextSegmentId(segments)
+    const out: Array<Segment> = []
+    for (let i = 0; i < segments.length; i++) {
+      if (i === splitIdx) {
+        const head = cloneSegment(target)
+        head.endSec = sec
+        const tail = cloneSegment(target)
+        tail.id = freshId
+        tail.startSec = sec
+        tail.enabled = true
+        out.push(head)
+        out.push(tail)
+      } else {
+        out.push(cloneSegment(segments[i]))
+      }
+    }
+    return out
+  }
+
+  // 落在空档内，计算后方边界并插入
+  let nextStart = totalDurationSec
+  let insertAt = segments.length
+  for (let i = 0; i < segments.length; i++) {
+    if (segments[i].startSec > sec) {
+      nextStart = segments[i].startSec
+      insertAt = i
+      break
+    }
+  }
+
+  const fresh = new Segment()
+  fresh.id = nextSegmentId(segments)
+  fresh.startSec = sec
+  fresh.endSec = Math.min(nextStart, sec + DEFAULT_CLIP_WINDOW_SEC)
+  fresh.speedLabel = DEFAULT_SPEED_LABEL
+  fresh.muted = false
+  fresh.enabled = true
+
+  const out: Array<Segment> = []
+  for (let i = 0; i < segments.length; i++) {
+    if (i === insertAt) {
+      out.push(fresh)
+    }
+    out.push(cloneSegment(segments[i]))
+  }
+  if (insertAt === segments.length) {
+    out.push(fresh)
+  }
+  return out
+}
+
+/** 兼容旧接口：多片段模式下检查能否切分或插入 */
+export function canSplitAt(segments: Array<Segment>, sec: number, totalDurationSec: number): boolean {
+  return canSplitOrInsertAt(segments, sec, totalDurationSec, false)
+}
+
+/** 兼容旧接口：多片段模式下执行切分或插入 */
+export function splitSegmentAt(segments: Array<Segment>, sec: number, totalDurationSec: number): Array<Segment> {
+  return splitOrInsertAt(segments, sec, totalDurationSec, false)
 }
 
 /**
