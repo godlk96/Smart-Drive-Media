@@ -259,10 +259,9 @@ export struct PreviewOverlay {
     Column() {
       this.progressRow()
       this.timeRow()
-      this.controlRow()
     }
     .width('100%')
-    .height(84)
+    .height(54)
     .padding({ left: 12, right: 12, bottom: 8 })
     .justifyContent(FlexAlign.End)
     .linearGradient({

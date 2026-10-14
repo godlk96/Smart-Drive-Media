@@ -92,11 +92,11 @@ export struct TemplateStrip {
           this.card(card)
         }, (card: TemplateCardModel) => `${card.id}-${card.id === this.activeTemplateId}-${this.missingViews(card).length > 0}`)
       }
-      .padding({ left: 16, right: 16 })
+      .padding({ left: 14, right: 14 })
     }
     .scrollable(ScrollDirection.Horizontal)
     .scrollBar(BarState.Off)
     .width('100%')
-    .padding({ top: 16, bottom: 20 })
+    .padding({ top: 8, bottom: 14 })
   }
 }

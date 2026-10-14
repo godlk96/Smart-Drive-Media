@@ -568,8 +568,15 @@ struct Editor {
   @Builder
   TopBar() {
     Row() {
-      AppIcon({ name: AppIconName.Back, iconSize: 20, iconColor: $r('app.color.text_secondary') })
-        .onClick(() => this.handleBack())
+      Stack({ alignContent: Alignment.Center }) {
+        AppIcon({ name: AppIconName.Back, iconSize: 20, iconColor: $r('app.color.text_secondary') })
+      }
+      .width(34)
+      .height(34)
+      .borderRadius(17)
+      .backgroundColor($r('app.color.topbar_btn_bg'))
+      .border({ width: 1, color: $r('app.color.topbar_btn_border') })
+      .onClick(() => this.handleBack())
       Text(this.state.timeRange.length > 0 ? this.state.timeRange : this.state.tripTitle)
         .fontSize(13)
         .fontColor($r('app.color.text_secondary'))
@@ -581,8 +588,9 @@ struct Editor {
       Button('导出')
         .type(ButtonType.Normal)
         .fontSize(13)
+        .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.card_bg'))
-        .backgroundColor($r('app.color.ink'))
+        .backgroundColor($r('app.color.amber'))
         .height(32)
         .borderRadius(8)
         .padding({ left: 14, right: 14 })
@@ -664,8 +672,10 @@ struct Editor {
       SegmentParamRow({
         segment: this.selectedSegment(),
         canToggle: this.canToggleSelected(),
+        canScissors: this.viewModel.canSplitAtPlayhead(),
         onCycleSpeed: () => this.handleCycleSegmentSpeed(),
         onToggleMute: () => this.handleToggleSegmentMute(),
+        onScissors: () => this.splitAtPlayhead(),
         onToggleEnabled: () => this.handleToggleSegmentEnabled(this.selectedSegmentId())
       })
 
@@ -687,6 +697,38 @@ struct Editor {
     .margin({ left: 16, right: 16, top: 8 })
   }
 
+  @Builder
+  TemplateCard() {
+    Column({ space: 0 }) {
+      Row() {
+        Text('智能分屏版式')
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary'))
+        Blank()
+        Text('横滑选择版式')
+          .fontSize(11)
+          .fontColor($r('app.color.text_tertiary'))
+      }
+      .width('100%')
+      .padding({ left: 14, right: 14, top: 14, bottom: 2 })
+
+      TemplateStrip({
+        cards: this.state.templateCards,
+        timeline: this.state.timeline,
+        activeTemplateId: this.state.activeTemplateId,
+        onSelectTemplate: (id: string) => this.selectTemplateById(id),
+        onRejected: (message: string) => this.showToast(message)
+      })
+    }
+    .width('100%')
+    .backgroundColor($r('app.color.card_bg'))
+    .borderRadius(16)
+    .border({ width: 1, color: $r('app.color.card_border') })
+    .shadow({ radius: 10, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 2 })
+    .margin({ left: 16, right: 16, top: 12, bottom: 24 })
+  }
+
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
       Column({ space: 0 }) {
@@ -695,13 +737,7 @@ struct Editor {
         Scroll() {
           Column({ space: 0 }) {
             this.PlayerCard()
-            TemplateStrip({
-              cards: this.state.templateCards,
-              timeline: this.state.timeline,
-              activeTemplateId: this.state.activeTemplateId,
-              onSelectTemplate: (id: string) => this.selectTemplateById(id),
-              onRejected: (message: string) => this.showToast(message)
-            })
+            this.TemplateCard()
           }
           .width('100%')
           // Scroll 的内容默认垂直居中：内容比视口矮时（这一页正是如此）会在播放器

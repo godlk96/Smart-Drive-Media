@@ -249,7 +249,7 @@ async function checkNativeContract() {
  * 页面与组件里不许再写十六进制色值，所以这里红一次就意味着「某个颜色没进资源」。
  */
 const REQUIRED_COLOR_TOKENS = new Map([
-  ['page_bg', '#F7F6F3'], ['card_bg', '#FFFFFF'], ['page_border', '#EAE8E3'],
+  ['page_bg', '#F2F4F7'], ['card_bg', '#FFFFFF'], ['page_border', '#EAE8E3'],
   ['card_border', '#EDEAE4'], ['track_bg', '#F4F2ED'], ['segment_border', '#E4E1DA'],
   ['text_primary', '#1C1B18'], ['text_secondary', '#57534A'], ['text_tertiary', '#8A867D'],
   ['text_disabled', '#B5B0A6'], ['ink', '#111111'], ['amber', '#D98324'],

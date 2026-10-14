@@ -58,13 +58,18 @@ function isImagePath(uri: string): boolean {
   return lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png') || lower.endsWith('.webp')
 }
 
-async function isUsableThumbnail(path: string): Promise<boolean> {
+export async function isUsableThumbnail(path: string): Promise<boolean> {
   try {
     const stat = await fs.stat(path)
     return Number(stat.size ?? 0) > 0
   } catch (_) {
     return false
   }
+}
+
+export function resolveThumbnailCachePath(cacheDir: string, cacheKey: string): string {
+  const sanitizedKey = cacheKey.replace(/[^a-zA-Z0-9_-]/g, '_')
+  return `${cacheDir}/thumb_${THUMB_CACHE_VERSION}_${sanitizedKey}.jpg`
 }
 
 async function writeArrayBufferToFile(targetPath: string, buffer: ArrayBuffer): Promise<void> {
@@ -103,8 +108,7 @@ export async function extractFirstFrameByService(
     return sourceUri
   }
 
-  const sanitizedKey = cacheKey.replace(/[^a-zA-Z0-9_-]/g, '_')
-  const targetImagePath = `${cacheDir}/thumb_${THUMB_CACHE_VERSION}_${sanitizedKey}.jpg`
+  const targetImagePath = resolveThumbnailCachePath(cacheDir, cacheKey)
 
   if (await isUsableThumbnail(targetImagePath)) {
     return targetImagePath

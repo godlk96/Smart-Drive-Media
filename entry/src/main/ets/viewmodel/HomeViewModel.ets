@@ -20,6 +20,7 @@ export interface HomeViewState {
   selectionMode: boolean
   selectedTripIds: Array<string>
   libraryState: LibraryStateModel
+  isLoading: boolean
 }
 
 function createEmptyHomeState(): HomeViewState {
@@ -34,13 +35,46 @@ function createEmptyHomeState(): HomeViewState {
       empty: true,
       emptyText: '',
       permissionTip: ''
-    }
+    },
+    isLoading: true
   }
 }
 
 export class HomeViewModel {
   private state: HomeViewState = createEmptyHomeState()
   private bridge = sharedCoreBridge
+  private isRefreshing: boolean = false
+  private onStateChangedListener?: () => void
+
+  constructor() {
+    this.bridge.setOnCoverReadyListener((tripId: string, coverPath: string) => {
+      this.handleCoverReady(tripId, coverPath)
+    })
+  }
+
+  setOnStateChangedListener(listener?: () => void): void {
+    this.onStateChangedListener = listener
+  }
+
+  private notifyStateChanged(): void {
+    if (this.onStateChangedListener) {
+      this.onStateChangedListener()
+    }
+  }
+
+  private handleCoverReady(tripId: string, coverPath: string): void {
+    let updated = false
+    for (let i = 0; i < this.state.libraryState.cards.length; i++) {
+      if (this.state.libraryState.cards[i].id === tripId) {
+        this.state.libraryState.cards[i].previewFrameUri = coverPath
+        updated = true
+        break
+      }
+    }
+    if (updated) {
+      this.notifyStateChanged()
+    }
+  }
 
   private cloneTripCard(card: TripCardModel): TripCardModel {
     const next: TripCardModel = {
@@ -68,16 +102,30 @@ export class HomeViewModel {
         empty: this.state.libraryState.empty,
         emptyText: this.state.libraryState.emptyText,
         permissionTip: this.state.libraryState.permissionTip
-      }
+      },
+      isLoading: this.state.isLoading
     }
   }
 
   async refresh(context: common.UIAbilityContext): Promise<void> {
-    debugLog('首页VM', `刷新列表，授权状态=${this.state.permissionGranted}`)
-    const next = await this.bridge.createLibraryState(this.state.permissionGranted, context)
-    this.state.libraryState = next
-    this.state.selectedTripIds = this.state.selectedTripIds
-      .filter((id: string) => next.cards.some((item: TripCardModel) => item.id === id))
+    if (this.isRefreshing) {
+      debugLog('首页VM', '正在刷新中，跳过重复刷新')
+      return
+    }
+    this.isRefreshing = true
+    this.state.isLoading = true
+    this.notifyStateChanged()
+    try {
+      debugLog('首页VM', `刷新列表，授权状态=${this.state.permissionGranted}`)
+      const next = await this.bridge.createLibraryState(this.state.permissionGranted, context)
+      this.state.libraryState = next
+      this.state.selectedTripIds = this.state.selectedTripIds
+        .filter((id: string) => next.cards.some((item: TripCardModel) => item.id === id))
+    } finally {
+      this.isRefreshing = false
+      this.state.isLoading = false
+      this.notifyStateChanged()
+    }
   }
 
   toggleTripSelection(cardId: string): void {
@@ -149,25 +197,35 @@ export class HomeViewModel {
 
   async requestMediaPermissionAndRefresh(context: common.UIAbilityContext, shouldGuideToSetting: boolean): Promise<void> {
     this.state.hasAutoRequestedPermission = true
+    this.state.isLoading = true
+    this.notifyStateChanged()
     const atManager = abilityAccessCtrl.createAtManager()
     try {
       const result = await atManager.requestPermissionsFromUser(context, REQUIRED_MEDIA_PERMISSIONS)
       const allGranted = result.authResults.every((item: number) => item === 0)
       if (allGranted) {
         this.state.permissionGranted = true
+        this.state.isLoading = true
+        this.notifyStateChanged()
         await this.refresh(context)
         return
       }
       if (!shouldGuideToSetting) {
         this.state.permissionGranted = false
+        this.state.isLoading = false
+        this.notifyStateChanged()
         await this.refresh(context)
         return
       }
       const settingResult = await atManager.requestPermissionOnSetting(context, REQUIRED_MEDIA_PERMISSIONS)
       this.state.permissionGranted = settingResult.every((item: number) => item === 0)
+      this.state.isLoading = this.state.permissionGranted
+      this.notifyStateChanged()
       await this.refresh(context)
     } catch (error) {
       this.state.permissionGranted = false
+      this.state.isLoading = false
+      this.notifyStateChanged()
       const message = error instanceof Error ? error.message : String(error)
       debugLog('首页VM', `权限链路失败：${message}`)
       await this.refresh(context)

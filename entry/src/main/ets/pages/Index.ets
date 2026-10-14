@@ -28,6 +28,7 @@ struct Index {
   private viewModel: HomeViewModel = new HomeViewModel()
   @State private permissionGranted: boolean = false
   @State private hasAutoRequestedPermission: boolean = false
+  @State private isLoading: boolean = true
   @State private selectionMode: boolean = false
   @State private selectedTripIds: Array<string> = []
   @State private displayCards: Array<TripCardModel> = []
@@ -40,11 +41,20 @@ struct Index {
   }
 
   aboutToAppear(): void {
+    this.viewModel.setOnStateChangedListener(() => {
+      this.syncViewState()
+    })
     this.syncViewState()
     if (!this.permissionGranted && !this.hasAutoRequestedPermission) {
+      this.isLoading = true
       void this.requestMediaPermissionAndRefresh(false)
+    } else {
+      void this.refreshState()
     }
-    void this.refreshState()
+  }
+
+  aboutToDisappear(): void {
+    this.viewModel.setOnStateChangedListener(undefined)
   }
 
   private getHostContextOrNull(): common.UIAbilityContext | null {
@@ -64,6 +74,7 @@ struct Index {
     const state = this.viewModel.getState()
     this.permissionGranted = state.permissionGranted
     this.hasAutoRequestedPermission = state.hasAutoRequestedPermission
+    this.isLoading = state.isLoading
     this.selectionMode = state.selectionMode
     this.selectedTripIds = state.selectedTripIds
     this.state = state.libraryState
@@ -375,9 +386,27 @@ struct Index {
   }
 
   @Builder
+  loadingBlock() {
+    Column({ space: 14 }) {
+      LoadingProgress()
+        .width(36)
+        .height(36)
+        .color($r('app.color.amber'))
+      Text('正在扫描行车记录视频...')
+        .fontSize(14)
+        .fontColor($r('app.color.text_secondary'))
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .padding({ left: 20, right: 20 })
+  }
+
+  @Builder
   emptyBlock() {
     Column() {
-      Text(this.state.emptyText)
+      Text(this.state.emptyText.length > 0 ? this.state.emptyText : '未发现行车记录仪视频')
         .fontSize(13)
         .fontColor($r('app.color.text_tertiary'))
         .textAlign(TextAlign.Center)
@@ -401,7 +430,7 @@ struct Index {
             last: index === this.displayCards.length - 1
           })
         }
-      }, (item: TripCardModel) => item.id)
+      }, (item: TripCardModel) => `${item.id}_${item.previewFrameUri}`)
     }
     .layoutWeight(1)
     .width('100%')
@@ -420,7 +449,9 @@ struct Index {
           .padding({ left: 16, right: 16, bottom: 8 })
       }
 
-      if (!this.permissionGranted && this.state.empty) {
+      if (this.isLoading) {
+        this.loadingBlock()
+      } else if (!this.permissionGranted && this.state.empty) {
         this.permissionBlock()
       } else if (this.state.empty) {
         this.emptyBlock()

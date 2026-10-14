@@ -18,7 +18,7 @@ import {
 import { DvrMeta, TripSnapshot } from '../model/TripModels'
 import { parseDvrFileName, pickPreviewSource } from '../service/DvrScannerService'
 import { buildTimeline, mergeTimeline } from '../service/TimelineService'
-import { extractFirstFrameByService } from '../service/ExportNativeService'
+import { extractFirstFrameByService, isUsableThumbnail, resolveThumbnailCachePath } from '../service/ExportNativeService'
 import { PreferencesService } from '../service/PreferencesService'
 import { debugLog } from '../utils/Logger'
 import { RUN_GAP_MS, SLICE_MS } from '../media/TimelineMath'
@@ -46,7 +46,18 @@ const HUAWEI_SHARE_ALBUM_NAMES: Array<string> = ['华为分享', 'Huawei Share']
 const CLIP_DURATION_SEC: number = SLICE_MS / 1000
 const TRIP_GAP_THRESHOLD_MS: number = RUN_GAP_MS
 const DVR_FILE_PATTERN: RegExp = /^(?:.+_)?DVR_LoopRecording_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_.+_camera\.(mp4|mov|ts)$/i
+const SENTRY_FILE_PATTERN: RegExp = /^(?:.+_)?Sentry_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_[a-z]+\.(mp4|mov|ts)$/i
 const VIDEO_FILE_URI_PATTERN: RegExp = /^((file|datashare):\/\/.+|\/data\/storage\/.+)\.(mp4|mov|ts)(\?.*)?$/i
+
+function createDvrFetchOptions(): photoAccessHelper.FetchOptions {
+  const predicates = new dataSharePredicates.DataSharePredicates()
+  predicates.equalTo(photoAccessHelper.PhotoKeys.PHOTO_TYPE, photoAccessHelper.PhotoType.VIDEO)
+  predicates.orderByDesc(photoAccessHelper.PhotoKeys.DATE_ADDED)
+  return {
+    fetchColumns: [photoAccessHelper.PhotoKeys.DISPLAY_NAME, photoAccessHelper.PhotoKeys.DATE_ADDED],
+    predicates: predicates
+  }
+}
 
 function toTimeText(date: Date): string {
   const hh = date.getHours().toString().padStart(2, '0')
@@ -64,7 +75,7 @@ function secondsToClock(totalSec: number): string {
 }
 
 function isDvrCandidateName(name: string): boolean {
-  return DVR_FILE_PATTERN.test(name)
+  return DVR_FILE_PATTERN.test(name) || SENTRY_FILE_PATTERN.test(name)
 }
 
 function canExtractPreviewFrame(uri: string): boolean {
@@ -141,49 +152,53 @@ export class CoreBridge {
   private exportStatusText: string = '待导出'
   private lastContext?: common.UIAbilityContext = undefined
   private previewFrameCache: Map<string, string> = new Map()
+  private previewResolutionToken: number = 0
+  private onCoverReadyListener?: (tripId: string, coverPath: string) => void
+
+  setOnCoverReadyListener(listener?: (tripId: string, coverPath: string) => void): void {
+    this.onCoverReadyListener = listener
+  }
 
   getRequiredPermissions(): Array<string> {
     return [...this.requiredPermissions]
   }
 
   private async collectDvrMetas(fetchResult: photoAccessHelper.FetchResult<photoAccessHelper.PhotoAsset>): Promise<Array<DvrMeta>> {
-    let count: number = 0
+    let assets: Array<photoAccessHelper.PhotoAsset> = []
     try {
-      count = fetchResult.getCount()
+      assets = await fetchResult.getAllObjects()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      debugLog('扫描', `读取资源数量失败，原因=${message}`)
+      debugLog('扫描', `读取资源列表失败，原因=${message}`)
       return []
-    }
-    const metas: Array<DvrMeta> = []
-    for (let i = 0; i < count; i++) {
+    } finally {
       try {
-        const asset = await fetchResult.getObjectByPosition(i)
-        const name = String(asset?.displayName ?? '')
-        const uri = String(asset?.uri ?? '')
-        if (name.length === 0 || uri.length === 0) {
-          continue
-        }
-        if (!isDvrCandidateName(name)) {
-          continue
-        }
-        const parsed = parseDvrFileName(name, uri)
-        if (parsed !== null) {
-          metas.push(parsed)
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        debugLog('扫描', `跳过异常资源，索引=${i}，原因=${message}`)
+        fetchResult.close()
+      } catch (_) {
+      }
+    }
+
+    const metas: Array<DvrMeta> = []
+    for (let i = 0; i < assets.length; i++) {
+      const asset = assets[i]
+      const name = String(asset?.displayName ?? '')
+      const uri = String(asset?.uri ?? '')
+      if (name.length === 0 || uri.length === 0) {
+        continue
+      }
+      if (!isDvrCandidateName(name)) {
+        continue
+      }
+      const parsed = parseDvrFileName(name, uri)
+      if (parsed !== null) {
+        metas.push(parsed)
       }
     }
     return metas
   }
 
   private async fallbackScanAllAssets(helper: photoAccessHelper.PhotoAccessHelper): Promise<Array<DvrMeta>> {
-    const fallbackFetchOptions: photoAccessHelper.FetchOptions = {
-      fetchColumns: [],
-      predicates: new dataSharePredicates.DataSharePredicates()
-    }
+    const fallbackFetchOptions = createDvrFetchOptions()
     let fallbackList: photoAccessHelper.FetchResult<photoAccessHelper.PhotoAsset>
     try {
       fallbackList = await helper.getAssets(fallbackFetchOptions)
@@ -192,7 +207,7 @@ export class CoreBridge {
       throw new Error(`降级扫描获取资产失败：${message}`)
     }
     const fallbackMetas = await this.collectDvrMetas(fallbackList)
-    debugLog('扫描', `降级全量扫描完成，匹配DVR视频=${fallbackMetas.length}`)
+    debugLog('扫描', `全图库精准扫描完成，匹配DVR视频=${fallbackMetas.length}`)
     return fallbackMetas
   }
 
@@ -201,6 +216,7 @@ export class CoreBridge {
     let album: photoAccessHelper.Album | undefined = undefined
     let albumLookupFailed: boolean = false
     for (let i = 0; i < HUAWEI_SHARE_ALBUM_NAMES.length; i++) {
+      let albumList: photoAccessHelper.FetchResult<photoAccessHelper.Album> | undefined = undefined
       try {
         const albumPredicates = new dataSharePredicates.DataSharePredicates()
         albumPredicates.equalTo('album_name', HUAWEI_SHARE_ALBUM_NAMES[i])
@@ -208,7 +224,7 @@ export class CoreBridge {
           fetchColumns: [],
           predicates: albumPredicates
         }
-        const albumList = await helper.getAlbums(photoAccessHelper.AlbumType.USER, photoAccessHelper.AlbumSubtype.USER_GENERIC, albumFetchOptions)
+        albumList = await helper.getAlbums(photoAccessHelper.AlbumType.USER, photoAccessHelper.AlbumSubtype.USER_GENERIC, albumFetchOptions)
         const found = await albumList.getFirstObject()
         if (found) {
           album = found
@@ -218,35 +234,43 @@ export class CoreBridge {
         albumLookupFailed = true
         const message = error instanceof Error ? error.message : String(error)
         debugLog('扫描', `查询华为分享专辑失败，名称=${HUAWEI_SHARE_ALBUM_NAMES[i]}，原因=${message}`)
+      } finally {
+        if (albumList) {
+          try {
+            albumList.close()
+          } catch (_) {
+          }
+        }
       }
     }
     if (!album) {
       if (albumLookupFailed) {
-        debugLog('扫描', '查询专辑失败，准备降级全量扫描')
-        return this.fallbackScanAllAssets(helper)
+        debugLog('扫描', '查询专辑失败，降级全图库精准过滤扫描')
+      } else {
+        debugLog('扫描', '未找到“华为分享/Huawei Share”相册，使用全图库精准过滤扫描')
       }
-      debugLog('扫描', '未找到“华为分享/Huawei Share”相册')
-      return []
+      return this.fallbackScanAllAssets(helper)
     }
     try {
-      const assetFetchOptions: photoAccessHelper.FetchOptions = {
-        fetchColumns: [],
-        predicates: new dataSharePredicates.DataSharePredicates()
-      }
+      const assetFetchOptions = createDvrFetchOptions()
       const assetList = await album.getAssets(assetFetchOptions)
       const metas = await this.collectDvrMetas(assetList)
       debugLog('扫描', `华为分享匹配DVR视频=${metas.length}`)
-      return metas
+      if (metas.length > 0) {
+        return metas
+      }
+      debugLog('扫描', '华为分享相册未匹配到DVR视频，回退全图库精准扫描')
+      return this.fallbackScanAllAssets(helper)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      debugLog('扫描', `读取华为分享专辑失败，准备降级全量扫描，原因=${message}`)
+      debugLog('扫描', `读取华为分享专辑失败，降级全量扫描，原因=${message}`)
       return this.fallbackScanAllAssets(helper)
     }
   }
 
-  private async resolveTripPreviewFrames(trips: Array<TripSnapshot>): Promise<void> {
-    const cacheDir = this.lastContext?.cacheDir ?? '/data/storage/el2/base/cache'
-    for (const trip of trips) {
+  private async resolveCachedPreviewFrames(trips: Array<TripSnapshot>, cacheDir: string): Promise<void> {
+    for (let i = 0; i < trips.length; i++) {
+      const trip = trips[i]
       if (trip.previewUri.length === 0) {
         trip.previewFrameUri = ''
         continue
@@ -257,28 +281,67 @@ export class CoreBridge {
         continue
       }
       const cacheKey = `${trip.id}_${trip.startTs}`
-      debugLog('扫描', `封面处理，行程=${trip.id}，URI=${trip.previewUri}`)
-      if (!canExtractPreviewFrame(trip.previewUri)) {
-        trip.previewFrameUri = ''
-        debugLog('扫描', `封面格式不支持提取，使用占位图，行程=${trip.id}`)
+      const targetImagePath = resolveThumbnailCachePath(cacheDir, cacheKey)
+      if (await isUsableThumbnail(targetImagePath)) {
+        this.previewFrameCache.set(trip.previewUri, targetImagePath)
+        trip.previewFrameUri = targetImagePath
         continue
       }
+      trip.previewFrameUri = ''
+    }
+  }
+
+  private async resolvePendingTripPreviewFrames(
+    trips: Array<TripSnapshot>,
+    cacheDir: string,
+    generationToken: number
+  ): Promise<void> {
+    // 逆序遍历：因为 displayCards 是反转显示的，最新的行程在列表最顶端，优先为靠前行程提取封面！
+    for (let i = trips.length - 1; i >= 0; i--) {
+      if (this.previewResolutionToken !== generationToken) {
+        debugLog('扫描', `取消旧的封面提取任务，token=${generationToken}`)
+        return
+      }
+      const trip = trips[i]
+      if (trip.previewFrameUri.length > 0 || trip.previewUri.length === 0) {
+        continue
+      }
+      if (!canExtractPreviewFrame(trip.previewUri)) {
+        continue
+      }
+      const cacheKey = `${trip.id}_${trip.startTs}`
       try {
         const framePath = await extractFirstFrameByService(trip.previewUri, cacheDir, cacheKey)
-        trip.previewFrameUri = framePath
+        if (this.previewResolutionToken !== generationToken) {
+          return
+        }
         if (framePath.length > 0) {
+          trip.previewFrameUri = framePath
           this.previewFrameCache.set(trip.previewUri, framePath)
-          debugLog('扫描', `封面提取成功，行程=${trip.id}，封面=${framePath}`)
-        } else {
-          debugLog('扫描', `封面提取为空，使用占位图，行程=${trip.id}`)
+          this.updateCardCover(trip.id, framePath)
+          debugLog('扫描', `异步封面提取成功，行程=${trip.id}，封面=${framePath}`)
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        trip.previewFrameUri = ''
-        debugLog('扫描', `提取首帧异常，使用占位图，行程=${trip.id}，原因=${message}`)
+        debugLog('扫描', `异步提取封面异常，行程=${trip.id}，原因=${message}`)
       }
     }
   }
+
+  private updateCardCover(tripId: string, coverPath: string): void {
+    const card = this.cards.find((c: TripCardModel) => c.id === tripId)
+    if (card) {
+      card.previewFrameUri = coverPath
+    }
+    const trip = this.trips.get(tripId)
+    if (trip) {
+      trip.previewFrameUri = coverPath
+    }
+    if (this.onCoverReadyListener) {
+      this.onCoverReadyListener(tripId, coverPath)
+    }
+  }
+
 
   private getTemplateSlotDefs(templateId: string): Array<PreviewSlotModel> {
     const definition = resolveTemplateDefinition(templateId)
@@ -516,7 +579,25 @@ export class CoreBridge {
     try {
       const metas = await this.readHuaweiShareDvrFiles(context)
       const tripSnapshots = this.buildTripsFromMetas(metas)
-      await this.resolveTripPreviewFrames(tripSnapshots)
+      const cacheDir = context.cacheDir ?? '/data/storage/el2/base/cache'
+      await this.resolveCachedPreviewFrames(tripSnapshots, cacheDir)
+      const currentToken = ++this.previewResolutionToken
+      if (tripSnapshots.length > 0) {
+        const newestTrip = tripSnapshots[tripSnapshots.length - 1]
+        if (newestTrip.previewFrameUri.length === 0 && newestTrip.previewUri.length > 0 && canExtractPreviewFrame(newestTrip.previewUri)) {
+          const cacheKey = `${newestTrip.id}_${newestTrip.startTs}`
+          try {
+            const framePath = await extractFirstFrameByService(newestTrip.previewUri, cacheDir, cacheKey)
+            if (framePath.length > 0) {
+              newestTrip.previewFrameUri = framePath
+              this.previewFrameCache.set(newestTrip.previewUri, framePath)
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            debugLog('扫描', `首屏最新行程提取封面异常：${message}`)
+          }
+        }
+      }
       this.trips.clear()
       this.cards = tripSnapshots.map((item: TripSnapshot) => {
         this.trips.set(item.id, item)
@@ -533,6 +614,7 @@ export class CoreBridge {
         debugLog('扫描', `首页卡片，行程=${card.id}，封面长度=${card.previewFrameUri.length}，预览URI长度=${card.previewUri.length}`)
         return card
       })
+      void this.resolvePendingTripPreviewFrames(tripSnapshots, cacheDir, currentToken)
       if (tripSnapshots.length > 0) {
         const tripSummary = tripSnapshots.map((item: TripSnapshot) => `${item.id}:${item.subtitle}`).join(' | ')
         debugLog('扫描', `分组明细=${tripSummary}`)

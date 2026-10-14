@@ -38,13 +38,41 @@ export struct AppIcon {
     return this.name === AppIconName.Play || this.name === AppIconName.Check
   }
 
+  /** 将逻辑描边换算为 Shape(24px) 局部坐标系内的物理描边 */
+  private stroke(val?: number): number {
+    const raw = val !== undefined ? val : this.strokeWidth
+    const converted = px2vp(raw)
+    return converted > 0 ? converted : raw
+  }
+
+  /**
+   * 将 24px 局部坐标系放大到 iconSize vp 所对应的设备物理像素。
+   *
+   * 根因说明：ArkUI 的 Path.commands 严格按物理像素 (px) 解释数值，
+   * 整个矢量图绘制在 24px × 24px 画布上。在 Retina 屏（如 Mate 60 / Pura 70，
+   * 像素密度比 D = vp2px(1) ≈ 3.0）上，若直接使用 24vp 容器或 viewPort({ width: 24, height: 24 })，
+   * 系统将 24 理解为 24vp = 72px，导致 24px 的路径仅占画布的 1/3，视觉上极小且贴在左上角。
+   *
+   * 正确做法：
+   * 1. Shape 显式声明为 '24px' × '24px'，使路径 (0..24px) 撑满 Shape 边界。
+   * 2. scale 缩放比例设为 vp2px(iconSize) / 24，将 24px 放大至 iconSize vp 对应的实际物理像素。
+   * 3. 外层包裹居中的 Stack(iconSize, iconSize)，保证在任何 DPI 屏幕上矢量图标既完全充满 iconSize，又严格居中。
+   */
+  private scaleFactor(): number {
+    const targetPx = vp2px(this.iconSize)
+    if (!targetPx || targetPx <= 0) {
+      return 1
+    }
+    return targetPx / VIEW_BOX
+  }
+
   @Builder
   glyph() {
     if (this.name === AppIconName.Back) {
       Path()
         .commands('M14.5 5 L7.5 12 L14.5 19')
         .stroke(this.iconColor)
-        .strokeWidth(this.strokeWidth)
+        .strokeWidth(this.stroke())
         .strokeLineCap(LineCapStyle.Round)
         .strokeLineJoin(LineJoinStyle.Round)
         .fill(Color.Transparent)
@@ -58,13 +86,13 @@ export struct AppIcon {
       Path()
         .commands('M9.2 5.5 L9.2 18.5')
         .stroke(this.iconColor)
-        .strokeWidth(2.4)
+        .strokeWidth(this.stroke(2.4))
         .strokeLineCap(LineCapStyle.Round)
         .fill(Color.Transparent)
       Path()
         .commands('M14.8 5.5 L14.8 18.5')
         .stroke(this.iconColor)
-        .strokeWidth(2.4)
+        .strokeWidth(this.stroke(2.4))
         .strokeLineCap(LineCapStyle.Round)
         .fill(Color.Transparent)
     } else if (this.name === AppIconName.Scissors) {
@@ -72,36 +100,36 @@ export struct AppIcon {
       Path()
         .commands('M6.8 14.9 a2.35 2.35 0 1 0 0.01 0')
         .stroke(this.iconColor)
-        .strokeWidth(this.strokeWidth)
+        .strokeWidth(this.stroke())
         .fill(Color.Transparent)
       Path()
         .commands('M17.2 14.9 a2.35 2.35 0 1 0 0.01 0')
         .stroke(this.iconColor)
-        .strokeWidth(this.strokeWidth)
+        .strokeWidth(this.stroke())
         .fill(Color.Transparent)
       Path()
         .commands('M8.6 15.6 L17.4 5.4')
         .stroke(this.iconColor)
-        .strokeWidth(this.strokeWidth)
+        .strokeWidth(this.stroke())
         .strokeLineCap(LineCapStyle.Round)
         .fill(Color.Transparent)
       Path()
         .commands('M15.4 15.6 L6.6 5.4')
         .stroke(this.iconColor)
-        .strokeWidth(this.strokeWidth)
+        .strokeWidth(this.stroke())
         .strokeLineCap(LineCapStyle.Round)
         .fill(Color.Transparent)
     } else if (this.name === AppIconName.Close) {
       Path()
         .commands('M6.5 6.5 L17.5 17.5')
         .stroke(this.iconColor)
-        .strokeWidth(this.strokeWidth)
+        .strokeWidth(this.stroke())
         .strokeLineCap(LineCapStyle.Round)
         .fill(Color.Transparent)
       Path()
         .commands('M17.5 6.5 L6.5 17.5')
         .stroke(this.iconColor)
-        .strokeWidth(this.strokeWidth)
+        .strokeWidth(this.stroke())
         .strokeLineCap(LineCapStyle.Round)
         .fill(Color.Transparent)
     } else if (this.name === AppIconName.Speaker || this.name === AppIconName.Muted) {
@@ -114,26 +142,26 @@ export struct AppIcon {
         Path()
           .commands('M15 9.5 L20 14.5')
           .stroke(this.iconColor)
-          .strokeWidth(this.strokeWidth)
+          .strokeWidth(this.stroke())
           .strokeLineCap(LineCapStyle.Round)
           .fill(Color.Transparent)
         Path()
           .commands('M20 9.5 L15 14.5')
           .stroke(this.iconColor)
-          .strokeWidth(this.strokeWidth)
+          .strokeWidth(this.stroke())
           .strokeLineCap(LineCapStyle.Round)
           .fill(Color.Transparent)
       } else {
         Path()
           .commands('M15.2 9.2 A4.4 4.4 0 0 1 15.2 14.8')
           .stroke(this.iconColor)
-          .strokeWidth(this.strokeWidth)
+          .strokeWidth(this.stroke())
           .strokeLineCap(LineCapStyle.Round)
           .fill(Color.Transparent)
         Path()
           .commands('M18 6.6 A8 8 0 0 1 18 17.4')
           .stroke(this.iconColor)
-          .strokeWidth(this.strokeWidth)
+          .strokeWidth(this.stroke())
           .strokeLineCap(LineCapStyle.Round)
           .fill(Color.Transparent)
       }
@@ -141,7 +169,7 @@ export struct AppIcon {
       Path()
         .commands('M5.2 12.6 L10 17.4 L18.8 6.8')
         .stroke(this.iconColor)
-        .strokeWidth(2.6)
+        .strokeWidth(this.stroke(2.6))
         .strokeLineCap(LineCapStyle.Round)
         .strokeLineJoin(LineJoinStyle.Round)
         .fill(Color.Transparent)
@@ -149,17 +177,18 @@ export struct AppIcon {
   }
 
   build() {
-    // 刻意不用 Shape.viewPort 做缩放：真机上它把路径画成约一半大小、并且贴在外框左上角，
-    // 观感就是「图标又小又不居中」（截图实测返回箭头 12×20 设备px，期望 22×40）。
-    // 改成在 24vp 的真实坐标系里画（盒子也设成 24，任何自动适配的缩放系数都是 1），
-    // 再以 Stack 中心为原点整体缩放到 iconSize —— 尺寸和居中都由这里保证。
     Stack({ alignContent: Alignment.Center }) {
       Shape() {
         this.glyph()
       }
-      .width(VIEW_BOX)
-      .height(VIEW_BOX)
-      .scale({ x: this.iconSize / VIEW_BOX, y: this.iconSize / VIEW_BOX })
+      .width('24px')
+      .height('24px')
+      .scale({
+        x: this.scaleFactor(),
+        y: this.scaleFactor(),
+        centerX: '12px',
+        centerY: '12px'
+      })
     }
     .width(this.iconSize)
     .height(this.iconSize)

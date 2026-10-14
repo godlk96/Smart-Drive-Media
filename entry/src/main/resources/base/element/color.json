@@ -6,7 +6,7 @@
     },
     {
       "name": "page_bg",
-      "value": "#F7F6F3"
+      "value": "#F2F4F7"
     },
     {
       "name": "card_bg",
@@ -143,6 +143,66 @@
     {
       "name": "shadow_amber",
       "value": "#33D98324"
+    },
+    {
+      "name": "chip_amber_border",
+      "value": "#F0DEC5"
+    },
+    {
+      "name": "chip_sage_bg",
+      "value": "#F0F5F1"
+    },
+    {
+      "name": "chip_sage_border",
+      "value": "#DAE7DC"
+    },
+    {
+      "name": "chip_sage_fg",
+      "value": "#2D6A4F"
+    },
+    {
+      "name": "chip_neutral_bg",
+      "value": "#F4F2ED"
+    },
+    {
+      "name": "chip_neutral_border",
+      "value": "#E4E1DA"
+    },
+    {
+      "name": "chip_neutral_fg",
+      "value": "#8A867D"
+    },
+    {
+      "name": "chip_rose_bg",
+      "value": "#FDF2F2"
+    },
+    {
+      "name": "chip_rose_border",
+      "value": "#F6D8D8"
+    },
+    {
+      "name": "chip_rose_fg",
+      "value": "#C53030"
+    },
+    {
+      "name": "chip_disabled_bg",
+      "value": "#F7F6F3"
+    },
+    {
+      "name": "chip_disabled_border",
+      "value": "#EAE8E3"
+    },
+    {
+      "name": "chip_disabled_fg",
+      "value": "#B5B0A6"
+    },
+    {
+      "name": "topbar_btn_bg",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "topbar_btn_border",
+      "value": "#E1E6ED"
     }
   ]
 }
