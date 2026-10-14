@@ -5,7 +5,7 @@ import { PreviewOverlay, SegmentTrack } from '../components/SegmentTrack'
 import { TemplateStrip } from '../components/TemplateStrip'
 import { sharedCoreBridge } from '../bridge/CoreBridge'
 import { EditorStateModel, PreviewSeekRequest, TemplateCardModel, TimelineTrackModel } from '../model/AppState'
-import { Segment, MAX_SEGMENTS, canToggleSegment, createFullSegment, enabledCount, playbackSkipTargetSec, segmentIndexAtSec } from '../model/SegmentModel'
+import { Segment, MAX_SEGMENTS, createFullSegment, playbackSkipTargetSec, segmentIndexAtSec } from '../model/SegmentModel'
 import { TripSnapshot } from '../model/TripModels'
 import { startNativeExport } from '../NativeExportManager'
 import { debugLog } from '../utils/Logger'
@@ -275,7 +275,8 @@ struct Editor {
    * 剪刀：在播放头处落刀。规则见 spec §3.2/§3.4。
    */
   private splitAtPlayhead(): void {
-    if (this.state.isRawFull) {
+    const wasRawFull = this.state.isRawFull
+    if (wasRawFull) {
       if (!this.viewModel.canSplitAtPlayhead()) {
         this.showToast('距离片尾不足10秒，无法截取')
         return
@@ -292,6 +293,7 @@ struct Editor {
     }
     this.applyState(this.viewModel.splitAtPlayhead())
     this.markUnsaved()
+    this.showToast(wasRawFull ? '已生成高光片段' : '已添加剪辑点')
     this.showControlsTemporarily()
   }
 
@@ -368,9 +370,6 @@ struct Editor {
     return found !== undefined ? found.id : -1
   }
 
-  private canToggleSelected(): boolean {
-    return canToggleSegment(this.state.segments, this.selectedSegmentId())
-  }
 
   /** 预览区要按播放头所在段的倍速出画（所见即所得，spec §5.4）；落在空档就用默认 1.0x。 */
   private previewSpeedLabel(): string {

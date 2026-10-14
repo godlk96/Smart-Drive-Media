@@ -967,7 +967,7 @@ export class CoreBridge {
   }
 
   selectSegment(id: number): EditorStateModel {
-    if (this.segmentById(id)) {
+    if (id === -1 || this.segmentById(id) !== undefined) {
       this.selectedSegmentId = id
     }
     const snapshot = this.trips.get(this.tripId)
