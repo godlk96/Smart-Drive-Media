@@ -2,24 +2,28 @@ import { Segment, formatSegmentDuration } from '../model/SegmentModel'
 import { AppIcon, AppIconName } from './AppIcon'
 
 /**
- * 参数行：`片段 N` · 时长 · 倍速胶囊 · 声音微胶囊 · 剪辑微胶囊 · 关闭微胶囊(✕)。
+ * 参数行：`片段 N` / `全片` / `空白区间` 三态支持。
  *
  * 方案 B 语义微胶囊设计：
- * - 倍速：琥珀金胶囊（$r('app.color.amber_soft') 底 + $r('app.color.chip_amber_border') 边框 + $r('app.color.amber') 字）。
- * - 声音：开启时鼠尾草淡绿微胶囊（$r('app.color.chip_sage_bg') + $r('app.color.chip_sage_border') + $r('app.color.chip_sage_fg')），
- *   静音时中性灰微胶囊。
- * - 剪辑：剪辑按钮移动到声音按钮右侧！可用时琥珀金微胶囊，不可用（满3段）时灰调。
- * - ✕：关闭/停用微胶囊。可操作时柔和淡粉微胶囊，不可操作时浅灰。
+ * - 空白区间态 (`isGap`):
+ *   显示 `空白区间`，仅保留剪刀按钮，隐藏倍速、声音、删除。
+ * - 全片态 (`isRawFull`):
+ *   显示 `全片` · 时长 · 倍速微胶囊 · 声音微胶囊 · 剪辑微胶囊；隐藏删除【✕】按钮。
+ * - 片段编辑态 (默认):
+ *   显示 `片段 N` · 时长 · 倍速微胶囊 · 声音微胶囊 · 剪辑微胶囊 · 关闭微胶囊(✕)。
  */
 @Component
 export struct SegmentParamRow {
   @Prop segment: Segment = new Segment()
   @Prop canToggle: boolean = true
   @Prop canScissors: boolean = false
+  @Prop isRawFull: boolean = false
+  @Prop isGap: boolean = false
   onCycleSpeed?: () => void
   onToggleMute?: () => void
   onScissors?: () => void
   onToggleEnabled?: () => void
+  onDeleteSegment?: () => void
 
   @Builder
   speedChip() {
@@ -106,29 +110,52 @@ export struct SegmentParamRow {
     .opacity(this.canToggle ? 1 : 0.35)
     .margin({ left: 6 })
     .onClick(() => {
-      if (this.canToggle && this.onToggleEnabled) {
-        this.onToggleEnabled()
+      if (this.canToggle) {
+        if (this.onDeleteSegment) {
+          this.onDeleteSegment()
+        } else if (this.onToggleEnabled) {
+          this.onToggleEnabled()
+        }
       }
     })
   }
 
   build() {
     Row() {
-      Text(`片段 ${this.segment.id + 1}`)
-        .fontSize(12)
-        .fontColor($r('app.color.text_tertiary'))
-      Text(formatSegmentDuration(this.segment))
-        .fontSize(15)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-        .margin({ left: 8 })
-      Blank()
-      if (this.segment.enabled) {
+      if (this.isGap) {
+        Text('空白区间')
+          .fontSize(13)
+          .fontColor($r('app.color.text_tertiary'))
+        Blank()
+        this.scissorsButton()
+      } else if (this.isRawFull) {
+        Text('全片')
+          .fontSize(12)
+          .fontColor($r('app.color.text_tertiary'))
+        Text(formatSegmentDuration(this.segment))
+          .fontSize(15)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary'))
+          .margin({ left: 8 })
+        Blank()
         this.speedChip()
         this.soundIcon()
         this.scissorsButton()
+      } else {
+        Text('片段 ' + (this.segment.id + 1))
+          .fontSize(12)
+          .fontColor($r('app.color.text_tertiary'))
+        Text(formatSegmentDuration(this.segment))
+          .fontSize(15)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary'))
+          .margin({ left: 8 })
+        Blank()
+        this.speedChip()
+        this.soundIcon()
+        this.scissorsButton()
+        this.closeButton()
       }
-      this.closeButton()
     }
     .width('100%')
     .height(40)
