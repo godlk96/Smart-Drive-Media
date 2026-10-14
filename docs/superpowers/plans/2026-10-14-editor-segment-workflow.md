@@ -40,7 +40,7 @@
 - Modify: `entry/src/ohosTest/ets/test/SegmentModelCases.ets`
 - Test: `tools/offline-test.mjs`
 
-- [ ] **Step 1: 编写手柄调节与新工作流的失败测试用例**
+- [x] **Step 1: 编写手柄调节与新工作流的失败测试用例**
   - 在 `entry/src/ohosTest/ets/test/SegmentModelCases.ets` 中增加测试用例：
     - `MIN_SEGMENT_SEC 变为 10 秒`
     - `adjustSegmentStart：向左不越过前一段终点，向右不越过 endSec - 10`
@@ -49,17 +49,17 @@
     - `首次剪辑生成 15 秒高光选区（不满 15 秒延伸至片尾且保底 10 秒）`
     - `片段内落刀一分为二：>=20 秒且两端均 >=10 秒才允许切分，否则拒绝`
     - `空档落刀：需 >=10 秒空间，生成默认 15 秒片段`
-- [ ] **Step 2: 运行离线测试确认测试失败**
+- [x] **Step 2: 运行离线测试确认测试失败**
   - 执行 `& "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" tools/offline-test.mjs`，验证新用例失败。
-- [ ] **Step 3: 在 `SegmentModel.ets` 中实现核心算法**
+- [x] **Step 3: 在 `SegmentModel.ets` 中实现核心算法**
   - 修改 `MIN_SEGMENT_SEC = 10`，添加 `DEFAULT_CLIP_WINDOW_SEC = 15`。
   - 实现 `adjustSegmentStart(segments, id, targetSec, totalDurationSec): Array<Segment>`。
   - 实现 `adjustSegmentEnd(segments, id, targetSec, totalDurationSec): Array<Segment>`。
   - 实现 `removeSegment(segments, id): Array<Segment>`。
   - 重构 `canSplitAt` / `splitSegmentAt`，区分全片模式与多片段模式（支持一分为二与空档插入）。
-- [ ] **Step 4: 运行离线测试确认全部通过**
+- [x] **Step 4: 运行离线测试确认全部通过**
   - 执行 `& "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" tools/offline-test.mjs`，确保全部测试绿灯。
-- [ ] **Step 5: 提交更改**
+- [x] **Step 5: 提交更改**
   - `git add entry/src/main/ets/model/SegmentModel.ets entry/src/ohosTest/ets/test/SegmentModelCases.ets`
   - `git commit -m "feat(model): implement segment boundary adjustment and new workflow algorithms"`
 
@@ -72,24 +72,24 @@
 - Modify: `entry/src/main/ets/bridge/CoreBridge.ets`
 - Modify: `entry/src/main/ets/viewmodel/EditorViewModel.ets`
 
-- [ ] **Step 1: 扩展状态模型**
+- [x] **Step 1: 扩展状态模型**
   - 在 `EditorStateModel` 中添加 `isRawFull: boolean = true` 字段。
-- [ ] **Step 2: 在 `CoreBridge.ets` 中重构全片模式与首次落刀**
+- [x] **Step 2: 在 `CoreBridge.ets` 中重构全片模式与首次落刀**
   - 初始化时 `isRawFull = true`，`segments = createFullSegment(tripDurationSec)`。
   - `splitAtPlayhead()`:
     - 若 `isRawFull`：切为 `[playheadSec, min(total, playheadSec + 15)]`，设置 `isRawFull = false`，选中该片段（id=0）。
     - 若非 `isRawFull`：调用新 `splitSegmentAt`，成功后选中新生成的后半段。
-- [ ] **Step 3: 在 `CoreBridge.ets` 中实现物理删除与空白区状态联动**
+- [x] **Step 3: 在 `CoreBridge.ets` 中实现物理删除与空白区状态联动**
   - `deleteSegment(id)`：
     - 调用 `removeSegment` 物理移除非当前段；
     - 播放头保持原位不动（不修改 `playheadMs`）；
     - 若数组变为空：调用 `createFullSegment` 恢复原片，设置 `isRawFull = true`，倍速设为 1.0X，静音设为 false，`selectedSegmentId = 0`；
     - 若数组非空：若播放头在某个活段内，选中该段；若播放头在空白区，设置 `selectedSegmentId = -1`。
-- [ ] **Step 4: 在 `CoreBridge.ets` 中支持手柄拖动边界更新**
+- [x] **Step 4: 在 `CoreBridge.ets` 中支持手柄拖动边界更新**
   - 新增 `adjustSegmentBoundary(id: number, edge: 'start' | 'end', sec: number)`，调用 `adjustSegmentStart` 或 `adjustSegmentEnd`，返回更新后的 state。
-- [ ] **Step 5: 在 `EditorViewModel.ets` 中透传方法**
+- [x] **Step 5: 在 `EditorViewModel.ets` 中透传方法**
   - 透传 `deleteSegment(id)`、`adjustSegmentBoundary(id, edge, sec)` 以及状态计算方法。
-- [ ] **Step 6: 提交更改**
+- [x] **Step 6: 提交更改**
   - `git add entry/src/main/ets/model/AppState.ets entry/src/main/ets/bridge/CoreBridge.ets entry/src/main/ets/viewmodel/EditorViewModel.ets`
   - `git commit -m "feat(bridge): implement raw-full mode, physical deletion, and gap state management"`
 
@@ -101,14 +101,14 @@
 - Modify: `entry/src/main/ets/components/SegmentParamRow.ets`
 - Modify: `entry/src/main/ets/components/SegmentTrack.ets`
 
-- [ ] **Step 1: 重构 `SegmentParamRow.ets` 支持全片态、片段编辑态、空白态**
+- [x] **Step 1: 重构 `SegmentParamRow.ets` 支持全片态、片段编辑态、空白态**
   - 增加 `@Prop isRawFull: boolean = false`。
   - 增加 `@Prop isGap: boolean = false`（当 `selectedSegmentId === -1` 时为 true）。
   - UI 逻辑：
     - **全片态** (`isRawFull`): 显示 `全片` · `${duration}s` · 倍速微胶囊 · 声音图标 · 剪辑微胶囊；**隐藏删除按钮**。
     - **空白态** (`isGap`): 显示 `空白区间`；**隐藏倍速、声音、删除微胶囊**；仅显示剪辑微胶囊。
     - **片段编辑态** (默认): 显示 `片段 N` · `${duration}s` · 倍速 · 声音 · 剪刀 · 删除【✕】微胶囊。
-- [ ] **Step 2: 重构 `SegmentTrack.ets` 双向手柄与手势**
+- [x] **Step 2: 重构 `SegmentTrack.ets` 双向手柄与手势**
   - 增加对 `isRawFull` 的判断：若为全片态，片段块不渲染手柄。
   - 仅给当前选中的片段（`isSelected && !isRawFull`）渲染左右两个拉动手柄。
   - 手柄样式保持琥珀竖条 + 三颗小圆点。
@@ -118,7 +118,7 @@
   - 右手柄绑定 `PanGesture`:
     - `onActionUpdate(event)`: 仅更新本地右侧偏移量与时间气泡，**严禁触发 seek**！
     - `onActionEnd(event)`: 计算最终秒数，调用 `onAdjustBoundary?.(segment.id, 'end', newSec)`。
-- [ ] **Step 3: 提交更改**
+- [x] **Step 3: 提交更改**
   - `git add entry/src/main/ets/components/SegmentParamRow.ets entry/src/main/ets/components/SegmentTrack.ets`
   - `git commit -m "feat(ui): add three-state parameter row and zero-seek handle gesture dragging"`
 
@@ -129,18 +129,18 @@
 **Files:**
 - Modify: `entry/src/main/ets/pages/Editor.ets`
 
-- [ ] **Step 1: 页面状态集成**
+- [x] **Step 1: 页面状态集成**
   - 接入 `onAdjustBoundary`：调用 `viewModel.adjustSegmentBoundary(id, edge, sec)` 并 `applyState`，标记 `hasUnsavedChanges`。
   - 接入 `onDeleteSegment`：点击参数行【✕】时调用 `viewModel.deleteSegment(id)`。若删光切回全片态，弹出 Toast：“已恢复为完整视频”。
   - 进度条拖动与播放推进联动：检测当前秒数 `sec`，若落入空白区（`segmentIndexAtSec == -1`），且当前非 `isRawFull`，设置 `state.selectedSegmentId = -1`。
-- [ ] **Step 2: 导出快照校验**
+- [x] **Step 2: 导出快照校验**
   - 检查 `buildExportSnapshot`：
     - 在 `RAW_FULL` 模式下，导出整段 `0 ~ totalDurationSec`。
     - 在 `SEGMENTED` 模式下，仅导出当前存在的有效片段。
-- [ ] **Step 3: 运行全量离线测试验证纯函数**
+- [x] **Step 3: 运行全量离线测试验证纯函数**
   - 执行 `& "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" tools/offline-test.mjs`，确保全部测试通过。
-- [ ] **Step 4: 语法与类型检查**
+- [x] **Step 4: 语法与类型检查**
   - 检查代码语法，确保无类型报错。
-- [ ] **Step 5: 提交最终集成代码**
+- [x] **Step 5: 提交最终集成代码**
   - `git add entry/src/main/ets/pages/Editor.ets`
   - `git commit -m "feat(editor): integrate new segment clipping, handle adjustment, and reset workflow"`
