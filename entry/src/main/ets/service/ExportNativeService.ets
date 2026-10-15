@@ -19,6 +19,8 @@ interface NativeExportPipelineRequest {
   frontUris: Array<string>
   backUris: Array<string>
   sideUris: Array<string>
+  /** T6 四机位专用第 4 路（右下 / 右后）；其余模板为空数组。 */
+  side2Uris: Array<string>
   templateId: string
   expectedDurationSec: number
   startMs: number
@@ -269,12 +271,14 @@ function buildNativeExportPayload(
   request: ExportComposeRequest,
   frontInputUris: Array<string>,
   backInputUris: Array<string>,
-  sideInputUris: Array<string>
+  sideInputUris: Array<string>,
+  side2InputUris: Array<string>
 ): NativeExportPipelineRequest {
   const payload: NativeExportPipelineRequest = {
     frontUris: frontInputUris,
     backUris: backInputUris,
     sideUris: sideInputUris,
+    side2Uris: side2InputUris,
     templateId: request.templateId,
     expectedDurationSec: request.expectedDurationSec,
     startMs: request.rangeStartMs,
@@ -310,7 +314,8 @@ export async function executeComposeByService(
   // 阶段 1: 素材准备与切片物化 (5% ~ 20%)
   onProgress(5)
   const materializeStart = Date.now()
-  const totalClips = Math.max(1, isolatedRequest.frontUris.length + isolatedRequest.backUris.length + isolatedRequest.sideUris.length)
+  const totalClips = Math.max(1, isolatedRequest.frontUris.length + isolatedRequest.backUris.length +
+    isolatedRequest.sideUris.length + isolatedRequest.side2Uris.length)
   let copiedClipsCount = 0
   const onFileCopied = () => {
     copiedClipsCount++
@@ -320,21 +325,29 @@ export async function executeComposeByService(
   const materialized = await Promise.all([
     materializeInputUris(isolatedRequest.frontUris, isolatedRequest.outputPath, 'front', onLog, onFileCopied),
     materializeInputUris(isolatedRequest.backUris, isolatedRequest.outputPath, 'back', onLog, onFileCopied),
-    materializeInputUris(isolatedRequest.sideUris, isolatedRequest.outputPath, 'side', onLog, onFileCopied)
+    materializeInputUris(isolatedRequest.sideUris, isolatedRequest.outputPath, 'side', onLog, onFileCopied),
+    materializeInputUris(isolatedRequest.side2Uris, isolatedRequest.outputPath, 'side2', onLog, onFileCopied)
   ])
   const frontInputUris = materialized[0]?.inputUris ?? []
   const backInputUris = materialized[1]?.inputUris ?? []
   const sideInputUris = materialized[2]?.inputUris ?? []
+  const side2InputUris = materialized[3]?.inputUris ?? []
   const tempUris = [
     ...(materialized[0]?.tempUris ?? []),
     ...(materialized[1]?.tempUris ?? []),
-    ...(materialized[2]?.tempUris ?? [])
+    ...(materialized[2]?.tempUris ?? []),
+    ...(materialized[3]?.tempUris ?? [])
   ]
   onLog(`Native导出阶段 素材落地耗时=${Date.now() - materializeStart}ms`)
-  const payload = buildNativeExportPayload(isolatedRequest, frontInputUris, backInputUris, sideInputUris)
+  // T6 需要 4 路素材；缺第 4 路时提前给出中文原因，而不是让原生返回一个裸错误码。
+  if (isolatedRequest.templateId === 'T6' && side2InputUris.length === 0) {
+    throw new Error('导出失败：四机位模板需要右后（Right）素材')
+  }
+  const payload = buildNativeExportPayload(isolatedRequest, frontInputUris, backInputUris, sideInputUris, side2InputUris)
   onLog(`【Native入参-落地文件】Front=[${frontInputUris.join(', ')}]`)
   onLog(`【Native入参-落地文件】Back=[${backInputUris.join(', ')}]`)
   onLog(`【Native入参-落地文件】Side=[${sideInputUris.join(', ')}]`)
+  onLog(`【Native入参-落地文件】Side2=[${side2InputUris.join(', ')}]`)
   onLog(`【Native入参-输出路径】outputPath=${payload.outputPath}`)
   let segmentText = ''
   for (let index = 0; index < payload.segments.length; index++) {

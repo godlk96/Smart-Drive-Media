@@ -25,6 +25,9 @@ export function getTemplateUiNameById(templateId: string): string {
   if (templateId === 'T5') {
     return '单视角'
   }
+  if (templateId === 'T6') {
+    return '四机位'
+  }
   return ''
 }
 
@@ -40,6 +43,9 @@ export function getTemplateResolutionById(templateId: string): string {
   }
   if (templateId === 'T5') {
     return '1920×1080'
+  }
+  if (templateId === 'T6') {
+    return '3840×2160'
   }
   return ''
 }

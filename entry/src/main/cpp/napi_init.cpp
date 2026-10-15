@@ -59,6 +59,7 @@ struct NativeExportPipelineRequest {
     std::vector<std::string> frontUris;
     std::vector<std::string> backUris;
     std::vector<std::string> sideUris;
+    std::vector<std::string> side2Uris;
     std::string templateId;
     double expectedDurationSec = 0.0;
     std::string outputPath;
@@ -81,6 +82,7 @@ static constexpr int32_t EXPORT_ERR_TEMPLATE_ID_INVALID = 1004;
 static constexpr int32_t EXPORT_ERR_OUTPUT_PATH_EMPTY = 1005;
 static constexpr int32_t EXPORT_ERR_EXPECTED_DURATION_INVALID = 1006;
 static constexpr int32_t EXPORT_ERR_SEGMENTS_INVALID = 1007;
+static constexpr int32_t EXPORT_ERR_SIDE2_URIS_INVALID = 1008;
 static constexpr int32_t EXPORT_ERR_NATIVE_EMPTY = 2001;
 static constexpr int32_t EXPORT_ERR_NATIVE_FAILED = 2002;
 static constexpr int32_t EXPORT_ERR_ASYNC_WORK_FAILED = 2003;
@@ -232,6 +234,14 @@ static bool parseExportPipelineRequest(napi_env env, napi_callback_info info, Na
         error = makeErrorResult(EXPORT_ERR_INVALID_ARG, "ERR_SIDE_URIS_INVALID");
         return false;
     }
+    // 第 4 路（T6 四机位的右下 / 右后）。可选：只有 T6 会带，其余模板缺省为空。
+    request.side2Uris.clear();
+    napi_value side2Value = nullptr;
+    if (getNamedProperty(env, args[0], "side2Uris", side2Value) &&
+        !readStringArrayFromJs(env, side2Value, request.side2Uris)) {
+        error = makeErrorResult(EXPORT_ERR_SIDE2_URIS_INVALID, "ERR_SIDE2_URIS_INVALID");
+        return false;
+    }
     napi_value templateValue = nullptr;
     if (!getNamedProperty(env, args[0], "templateId", templateValue)) {
         error = makeErrorResult(EXPORT_ERR_INVALID_ARG, "ERR_TEMPLATE_ID_INVALID");
@@ -302,6 +312,7 @@ static NativeExportPipelineResult runPipelineAndWrapResult(const NativeExportPip
         request.frontUris,
         request.backUris,
         request.sideUris,
+        request.side2Uris,
         request.templateId,
         request.expectedDurationSec,
         request.outputPath,

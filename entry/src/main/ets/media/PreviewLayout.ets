@@ -16,8 +16,14 @@ import {
   toLegacyCamera
 } from '../model/Models'
 
-/** 常驻槽位数量上限。组件树里永远渲染这么多个 XComponent，模板只改属性，避免重建 Surface。 */
-export const MAX_PREVIEW_SLOTS: number = 3
+/**
+ * 常驻槽位数量上限。组件树里永远渲染这么多个 XComponent，模板只改属性，避免重建 Surface。
+ *
+ * 取 4 是因为 T6「四机位」是 2×2 四宫格。对 T1–T5 来说多出来的第 4 个槽位
+ * `visible=false` 且 `bindSegments([])`，既不显示也不解码，代价与原来第 3 个槽位在
+ * T1/T5 下闲置时完全一致。
+ */
+export const MAX_PREVIEW_SLOTS: number = 4
 
 /** 一个渲染槽位的完整描述：几何 + 机位 + 可见性。 */
 export class SlotGeometry {

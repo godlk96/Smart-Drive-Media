@@ -48,6 +48,8 @@ export class ExportComposeRequest {
   frontUris: Array<string> = []
   backUris: Array<string> = []
   sideUris: Array<string> = []
+  /** T6 四机位专用第 4 路（右下 / 右后）；其余模板保持空数组。 */
+  side2Uris: Array<string> = []
   expectedDurationSec: number = 0
   rangeStartMs: number = 0
   rangeEndMs: number = 0

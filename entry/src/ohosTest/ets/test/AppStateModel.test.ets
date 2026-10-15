@@ -50,9 +50,25 @@ export default function appStateModelTest(): void {
       expect(t5.requiredCameras[0]).assertEqual(CameraPosition.FRONT)
     })
 
-    it('共 5 套模板且默认模板为 T2', 0, () => {
-      expect(listTemplateDefinitions().length).assertEqual(5)
+    it('共 6 套模板且默认模板为 T2', 0, () => {
+      expect(listTemplateDefinitions().length).assertEqual(6)
       expect(DEFAULT_TEMPLATE_ID).assertEqual(TemplateId.T2)
+    })
+
+    it('T6 四机位：2×2 四格、四路必需机位、画布 3840×2160', 0, () => {
+      const t6 = resolveTemplateDefinition('T6')
+      expect(t6.canvasWidth).assertEqual(3840)
+      expect(t6.canvasHeight).assertEqual(2160)
+      expect(t6.slotBindings.length).assertEqual(4)
+      expect(t6.previewSlots.length).assertEqual(4)
+      expect(t6.requiredCameras.length).assertEqual(4)
+      expect(t6.requiredCameras[0]).assertEqual(CameraPosition.FRONT)
+      expect(t6.requiredCameras[1]).assertEqual(CameraPosition.REAR)
+      expect(t6.requiredCameras[2]).assertEqual(CameraPosition.LEFT)
+      expect(t6.requiredCameras[3]).assertEqual(CameraPosition.RIGHT)
+      // 四机位是唯一需要第 4 路轨道的模板：原生契约与 ffmpegPolicy 必须同时为真。
+      expect(t6.ffmpegPolicy.needSideTrack).assertTrue()
+      expect(t6.ffmpegPolicy.needSide2Track).assertTrue()
     })
 
     it('非法模板 ID 归一化为默认模板', 0, () => {

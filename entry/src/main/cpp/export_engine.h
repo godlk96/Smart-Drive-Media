@@ -33,6 +33,7 @@ void resetNativeExportProgress();
 std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
                                     const std::vector<std::string> &backUris,
                                     const std::vector<std::string> &sideUris,
+                                    const std::vector<std::string> &side2Uris,
                                     const std::string &templateId,
                                     double expectedDurationSec,
                                     const std::string &outputPath,

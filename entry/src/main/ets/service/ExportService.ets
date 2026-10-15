@@ -6,6 +6,8 @@ class TemplateTrackSelection {
   frontUris: Array<string> = []
   backUris: Array<string> = []
   sideUris: Array<string> = []
+  /** 第 4 路（T6 四机位的右下 / 右后）。 */
+  side2Uris: Array<string> = []
 }
 
 function pickTrackUris(clips: Array<DvrMeta>, preferredCameras: Array<string>): Array<string> {
@@ -91,6 +93,7 @@ function resolveTemplateTracks(
   const frontCandidates = ffmpegPolicy.frontTrackCandidates.map((camera) => toLegacyCamera(camera))
   const backCandidates = ffmpegPolicy.backTrackCandidates.map((camera) => toLegacyCamera(camera))
   const sideCandidates = ffmpegPolicy.sideTrackCandidates.map((camera) => toLegacyCamera(camera))
+  const side2Candidates = ffmpegPolicy.side2TrackCandidates.map((camera) => toLegacyCamera(camera))
   if (!ffmpegPolicy.ignoreNativeTrackSelection && nativeFrontUris.length > 0) {
     selection.frontUris = nativeFrontUris
   } else {
@@ -109,6 +112,15 @@ function resolveTemplateTracks(
     }
   } else {
     selection.sideUris = []
+  }
+  if (ffmpegPolicy.needSide2Track) {
+    if (ffmpegPolicy.alignSideByFrontTimeline) {
+      selection.side2Uris = alignSideUrisByFront(clips, selection.frontUris, nativeFrontIndexes, side2Candidates)
+    } else {
+      selection.side2Uris = pickTrackUris(clips, side2Candidates)
+    }
+  } else {
+    selection.side2Uris = []
   }
   return selection
 }
@@ -153,5 +165,6 @@ export function buildComposeRequestByService(
   request.frontUris = templateTracks.frontUris
   request.backUris = templateTracks.backUris
   request.sideUris = templateTracks.sideUris
+  request.side2Uris = templateTracks.side2Uris
   return request
 }

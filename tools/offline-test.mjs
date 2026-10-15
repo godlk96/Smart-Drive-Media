@@ -189,13 +189,14 @@ function readNativeContracts() {
   }
   const contracts = new Map()
   for (const row of table[1].matchAll(
-    /\{\s*"([^"]+)"\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(true|false)\s*,\s*(true|false)\s*\}/g
+    /\{\s*"([^"]+)"\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(true|false)\s*,\s*(true|false)\s*,\s*(true|false)\s*\}/g
   )) {
     contracts.set(row[1], {
       width: Number(row[2]),
       height: Number(row[3]),
       needSideTrack: row[4] === 'true',
-      disableFrontAudio: row[5] === 'true'
+      disableFrontAudio: row[5] === 'true',
+      needSide2Track: row[6] === 'true'
     })
   }
   if (contracts.size === 0) {
@@ -231,6 +232,11 @@ async function checkNativeContract() {
       if (def.ffmpegPolicy.disableFrontAudio !== contract.disableFrontAudio) {
         problems.push(
           `${def.templateId} disableFrontAudio ${def.ffmpegPolicy.disableFrontAudio} != 原生 ${contract.disableFrontAudio}`
+        )
+      }
+      if (def.ffmpegPolicy.needSide2Track !== contract.needSide2Track) {
+        problems.push(
+          `${def.templateId} needSide2Track ${def.ffmpegPolicy.needSide2Track} != 原生 ${contract.needSide2Track}`
         )
       }
     }

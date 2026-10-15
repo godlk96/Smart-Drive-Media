@@ -112,14 +112,17 @@ struct NativeTemplateContract {
     int targetHeight = 1620;
     bool needSideTrack = true;
     bool disableFrontAudio = false;
+    /** T6 四机位专用：除 front/back/side 之外还需要第 4 路（右下 = 右后）轨道。 */
+    bool needSide2Track = false;
 };
 
-const std::array<NativeTemplateContract, 5> kNativeTemplateContracts = {{
-    {"T1", 1920, 2160, false, false},
-    {"T2", 1920, 1620, true, false},
-    {"T3", 3840, 1080, false, true},
-    {"T4", 3840, 1080, true, false},
-    {"T5", 1920, 1080, false, false},
+const std::array<NativeTemplateContract, 6> kNativeTemplateContracts = {{
+    {"T1", 1920, 2160, false, false, false},
+    {"T2", 1920, 1620, true, false, false},
+    {"T3", 3840, 1080, false, true, false},
+    {"T4", 3840, 1080, true, false, false},
+    {"T5", 1920, 1080, false, false, false},
+    {"T6", 3840, 2160, true, false, true},
 }};
 
 const NativeTemplateContract *findTemplateContract(const std::string &templateId)
@@ -228,6 +231,7 @@ std::string buildTemplateFilterDesc(const std::string &templateId,
                                     const std::string &frontPath,
                                     const std::string &backPath,
                                     const std::string &sidePath,
+                                    const std::string &side2Path,
                                     double startSec,
                                     double endSec,
                                     double speed,
@@ -283,6 +287,24 @@ std::string buildTemplateFilterDesc(const std::string &templateId,
             << formatFilter << out;
         return oss.str();
     }
+    if (templateId == "T6") {
+        // 四机位 2×2：左上=前、右上=后、左下=左后、右下=右后。
+        // 画布 3840×2160，每格 1920×1080 正好等于各机位原生分辨率 —— 只做等比缩放 + 居中补边，
+        // 不裁剪、不拉伸，源是 1920×1080 时 scale 与 pad 都是恒等变换，零重采样损失。
+        const std::string cell =
+            "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2";
+        const std::string rowTop = labelPrefix + "rowTop";
+        const std::string rowBottom = labelPrefix + "rowBottom";
+        std::ostringstream oss;
+        oss << buildMovieSourceFilter(frontPath, cell, startSec, endSec, speed, frameRate) << "[" << top << "];"
+            << buildMovieSourceFilter(backPath, cell, startSec, endSec, speed, frameRate) << "[" << right << "];"
+            << buildMovieSourceFilter(sidePath, cell, startSec, endSec, speed, frameRate) << "[" << bottomLeft << "];"
+            << buildMovieSourceFilter(side2Path, cell, startSec, endSec, speed, frameRate) << "[" << bottomRight << "];"
+            << "[" << top << "][" << right << "]hstack=inputs=2[" << rowTop << "];"
+            << "[" << bottomLeft << "][" << bottomRight << "]hstack=inputs=2[" << rowBottom << "];"
+            << "[" << rowTop << "][" << rowBottom << "]vstack=inputs=2" << formatFilter << out;
+        return oss.str();
+    }
     return "";
 }
 
@@ -291,6 +313,7 @@ std::string buildSegmentsVideoDesc(const std::string &templateId,
                                    const std::string &frontPath,
                                    const std::string &backPath,
                                    const std::string &sidePath,
+                                   const std::string &side2Path,
                                    const std::vector<NativeExportSegment> &segments,
                                    const AVRational &frameRate,
                                    const std::string &pixFmt = "yuv420p")
@@ -302,6 +325,7 @@ std::string buildSegmentsVideoDesc(const std::string &templateId,
                                                         frontPath,
                                                         backPath,
                                                         sidePath,
+                                                        side2Path,
                                                         segments[i].startMs / 1000.0,
                                                         segments[i].endMs / 1000.0,
                                                         segments[i].speed,
@@ -368,6 +392,7 @@ bool composeTemplateToMp4(const std::string &templateId,
                           const std::string &frontPath,
                           const std::string &backPath,
                           const std::string &sidePath,
+                          const std::string &side2Path,
                           const bool includeFrontAudio,
                           const std::string &frontAudioPath,
                           double expectedDurationSec,
@@ -717,7 +742,8 @@ bool composeTemplateToMp4(const std::string &templateId,
     inputs->next = nullptr;
     const char *outPixFmt = av_get_pix_fmt_name(encoderCtx->pix_fmt);
     const std::string filterDesc = buildSegmentsVideoDesc(
-        templateId, frontPath, backPath, sidePath, segments, frameRate, outPixFmt != nullptr ? outPixFmt : "yuv420p");
+        templateId, frontPath, backPath, sidePath, side2Path, segments, frameRate,
+        outPixFmt != nullptr ? outPixFmt : "yuv420p");
     {
         std::ostringstream filterInfo;
         filterInfo << "template=" << templateId << " " << width << "x" << height
@@ -1671,6 +1697,7 @@ std::string normalizeTemplateId(const std::string &templateId)
 std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
                                     const std::vector<std::string> &backUris,
                                     const std::vector<std::string> &sideUris,
+                                    const std::vector<std::string> &side2Uris,
                                     const std::string &templateId,
                                     double expectedDurationSec,
                                     const std::string &outputPath,
@@ -1681,7 +1708,8 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
     {
         std::ostringstream requestInfo;
         requestInfo << "front=" << frontUris.size() << " back=" << backUris.size()
-                    << " side=" << sideUris.size() << " template=" << templateId
+                    << " side=" << sideUris.size() << " side2=" << side2Uris.size()
+                    << " template=" << templateId
                     << " expectedDurationSec=" << expectedDurationSec
                     << " startMs=" << startMs << " endMs=" << endMs
                     << " segments=" << segments.size() << " output=" << outputPath;
@@ -1694,6 +1722,9 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
         }
         for (size_t i = 0; i < sideUris.size(); i++) {
             logPipeline("request.side", "[" + std::to_string(i) + "] " + sideUris[i]);
+        }
+        for (size_t i = 0; i < side2Uris.size(); i++) {
+            logPipeline("request.side2", "[" + std::to_string(i) + "] " + side2Uris[i]);
         }
         for (size_t i = 0; i < segments.size(); i++) {
             std::ostringstream one;
@@ -1743,7 +1774,11 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
     logPipeline("template", "apply " + normalizedTemplate + " target=" + std::to_string(targetResolution.first) +
         "x" + std::to_string(targetResolution.second));
     const bool needSideTrack = templateContract.needSideTrack;
+    const bool needSide2Track = templateContract.needSide2Track;
     const std::vector<std::string> sideSource = !sideUris.empty() ? sideUris : backUris;
+    // 第 4 路刻意**不做回退**：T6 右下格是「右后」，拿别的机位顶替只会静默产出一段机位错误的画面，
+    // 宁可让导出明确失败，也不要"看起来成功但内容是错的"。
+    const std::vector<std::string> side2Source = side2Uris;
     if (!validateTrackSpecs(frontUris, "front", error)) {
         logPipeline("validate", "front track spec invalid: " + error);
         return "__ERROR__:pipeline_spec_" + error;
@@ -1756,6 +1791,16 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
         logPipeline("validate", "side track spec invalid: " + error);
         return "__ERROR__:pipeline_spec_" + error;
     }
+    if (needSide2Track) {
+        if (side2Source.empty()) {
+            logPipeline("validate", "side2 track required but side2Uris empty");
+            return "__ERROR__:pipeline_spec_side2_empty";
+        }
+        if (!validateTrackSpecs(side2Source, "side2", error)) {
+            logPipeline("validate", "side2 track spec invalid: " + error);
+            return "__ERROR__:pipeline_spec_" + error;
+        }
+    }
     std::string bridgeWarmupError;
     if (!tryWarmupOhosBridge(frontPrimary, probe, bridgeWarmupError)) {
         logPipeline("bridge", "oh_bridge_unavailable_fallback_ffmpeg_only reason=" + bridgeWarmupError);
@@ -1766,9 +1811,11 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
     std::string frontTrackPath;
     std::string backTrackPath;
     std::string sideTrackPath;
+    std::string side2TrackPath;
     std::string frontConcatPath;
     std::string backConcatPath;
     std::string sideConcatPath;
+    std::string side2ConcatPath;
 
     if (frontUris.size() == 1) {
         frontTrackPath = normalizeUri(frontUris[0]);
@@ -1793,6 +1840,17 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
         }
     } else {
         sideTrackPath = frontTrackPath;
+    }
+
+    if (needSide2Track) {
+        if (side2Source.size() == 1) {
+            side2TrackPath = normalizeUri(side2Source[0]);
+        } else {
+            side2ConcatPath = outputPath + ".side2.concat.mp4";
+            side2TrackPath = side2ConcatPath;
+        }
+    } else {
+        side2TrackPath = frontTrackPath;
     }
 
     const int threadCount = resolveThreadCount();
@@ -1831,6 +1889,23 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
         }
     }
 
+    if (!side2ConcatPath.empty()) {
+        std::string localError;
+        if (!concatTrackToMp4(side2Source, false, side2ConcatPath, localError)) {
+            logPipeline("track", "concat side2 failed: " + localError);
+            if (!frontConcatPath.empty()) {
+                std::remove(frontConcatPath.c_str());
+            }
+            if (!backConcatPath.empty()) {
+                std::remove(backConcatPath.c_str());
+            }
+            if (!sideConcatPath.empty()) {
+                std::remove(sideConcatPath.c_str());
+            }
+            return "__ERROR__:pipeline_track_side2_" + localError;
+        }
+    }
+
     bool includeFrontAudio = false;
     if (!templateContract.disableFrontAudio) {
         std::string audioError;
@@ -1849,7 +1924,8 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
     {
         std::ostringstream trackInfo;
         trackInfo << "frontTrack=" << frontTrackPath << " backTrack=" << backTrackPath
-                  << " sideTrack=" << sideTrackPath << " includeFrontAudio=" << (includeFrontAudio ? 1 : 0);
+                  << " sideTrack=" << sideTrackPath << " side2Track=" << side2TrackPath
+                  << " includeFrontAudio=" << (includeFrontAudio ? 1 : 0);
         logPipeline("track", trackInfo.str());
     }
     logPipeline("mux", "emit mp4 by ffmpeg template compose, template=" + normalizedTemplate);
@@ -1868,6 +1944,7 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
                               frontTrackPath,
                               backTrackPath,
                               sideTrackPath,
+                              side2TrackPath,
                               includeFrontAudio,
                               frontTrackPath,
                               expectedDurationSec,
@@ -1888,6 +1965,9 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
         if (!sideConcatPath.empty()) {
             std::remove(sideConcatPath.c_str());
         }
+        if (!side2ConcatPath.empty()) {
+            std::remove(side2ConcatPath.c_str());
+        }
         return "__ERROR__:pipeline_mux_" + error;
     }
 
@@ -1899,6 +1979,9 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
     }
     if (!sideConcatPath.empty()) {
         std::remove(sideConcatPath.c_str());
+    }
+    if (!side2ConcatPath.empty()) {
+        std::remove(side2ConcatPath.c_str());
     }
 
     {

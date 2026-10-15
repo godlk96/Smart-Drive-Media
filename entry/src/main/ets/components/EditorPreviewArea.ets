@@ -23,7 +23,7 @@ interface PersistentSlotState {
 
 /**
  * 预览区 —— 只做两件事：
- *   1. 把「模板 + 行程切片」**同步翻译**成 3 个常驻槽位的状态（纯函数层 PreviewLayout / TimelineMath）；
+ *   1. 把「模板 + 行程切片」**同步翻译**成 4 个常驻槽位的状态（纯函数层 PreviewLayout / TimelineMath）；
  *   2. 把宿主的播放意图转交给 GlobalTimelineManager。
  *
  * 与上一版的区别（都是"删机制"而不是"加机制"）：
@@ -103,12 +103,12 @@ export struct EditorPreviewArea {
   }
 
   /**
-   * 3 个常驻槽位只建一次。controller 与槽位下标**终身绑定**（slot_0 永远是第 0 个 XComponent），
+   * 4 个常驻槽位只建一次。controller 与槽位下标**终身绑定**（slot_0 永远是第 0 个 XComponent），
    * 切模板时只调用 controller.setCamera / bindSegments —— 这是 XComponent 不被重建的前提。
    */
   private initPersistentSlots(): void {
     const initialSlots: Array<PersistentSlotState> = []
-    const defaultCameras = ['Front', 'Back', 'Left']
+    const defaultCameras = ['Front', 'Back', 'Left', 'Right']
     for (let i = 0; i < MAX_PREVIEW_SLOTS; i++) {
       const camera = defaultCameras[i]
       // 出声轨**不再**由这里按槽位下标决定（曾经是 `i === 0`）：槽位下标与机位不是一回事，
@@ -327,6 +327,7 @@ export struct EditorPreviewArea {
         this.slotAt(0)
         this.slotAt(1)
         this.slotAt(2)
+        this.slotAt(3)
       }
       .aspectRatio(templateAspectRatio(this.activeTemplateId))
       .width(templateAspectRatio(this.activeTemplateId) >= 16 / 9 ? '100%' : undefined)

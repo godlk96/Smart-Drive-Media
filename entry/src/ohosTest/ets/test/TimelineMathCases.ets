@@ -521,11 +521,11 @@ export function timelineMathCases(): Array<TimelineCase> {
   })
 
   cases.push({
-    name: 'PreviewLayout: 画布宽高比与原生契约一致（T1 0.8889 / T2 1.1852 / T3 3.5556 / T4 3.5556 / T5 1.7778）',
+    name: 'PreviewLayout: 画布宽高比与原生契约一致（T1 0.8889 / T2 1.1852 / T3 3.5556 / T4 3.5556 / T5 1.7778 / T6 1.7778）',
     run: (): string => {
       const errors: Array<string> = []
-      const expected: Array<string> = ['T1', 'T2', 'T3', 'T4', 'T5']
-      const ratios: Array<number> = [1920 / 2160, 1920 / 1620, 3840 / 1080, 3840 / 1080, 1920 / 1080]
+      const expected: Array<string> = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6']
+      const ratios: Array<number> = [1920 / 2160, 1920 / 1620, 3840 / 1080, 3840 / 1080, 1920 / 1080, 3840 / 2160]
       for (let i = 0; i < expected.length; i++) {
         const actual = templateAspectRatio(expected[i])
         if (Math.abs(actual - ratios[i]) > 0.0005) {

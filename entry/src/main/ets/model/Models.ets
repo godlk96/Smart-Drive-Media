@@ -15,7 +15,8 @@ export enum TemplateId {
   T2 = 'T2',
   T3 = 'T3',
   T4 = 'T4',
-  T5 = 'T5'
+  T5 = 'T5',
+  T6 = 'T6'
 }
 
 export interface ClipSegment {
@@ -65,10 +66,16 @@ export interface TemplatePreviewSlot {
 
 export interface TemplateFfmpegPolicy {
   needSideTrack: boolean
+  /**
+   * 是否需要第 4 路轨道（仅 T6 四机位为 true）。
+   * 与原生 kNativeTemplateContracts 的 needSide2Track 逐条对应，由 tools/offline-test.mjs 守着。
+   */
+  needSide2Track: boolean
   disableFrontAudio: boolean
   frontTrackCandidates: Array<CameraPosition>
   backTrackCandidates: Array<CameraPosition>
   sideTrackCandidates: Array<CameraPosition>
+  side2TrackCandidates: Array<CameraPosition>
   alignSideByFrontTimeline: boolean
   ignoreNativeTrackSelection: boolean
 }
@@ -112,10 +119,12 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
     ],
     ffmpegPolicy: {
       needSideTrack: false,
+      needSide2Track: false,
       disableFrontAudio: false,
       frontTrackCandidates: [CameraPosition.FRONT, CameraPosition.LEFT_FRONT, CameraPosition.RIGHT_FRONT],
       backTrackCandidates: [CameraPosition.REAR, CameraPosition.RIGHT, CameraPosition.RIGHT_FRONT, CameraPosition.LEFT],
       sideTrackCandidates: [],
+      side2TrackCandidates: [],
       alignSideByFrontTimeline: false,
       ignoreNativeTrackSelection: false
     }
@@ -140,10 +149,12 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
     ],
     ffmpegPolicy: {
       needSideTrack: true,
+      needSide2Track: false,
       disableFrontAudio: false,
       frontTrackCandidates: [CameraPosition.FRONT, CameraPosition.LEFT_FRONT, CameraPosition.RIGHT_FRONT],
       backTrackCandidates: [CameraPosition.RIGHT, CameraPosition.RIGHT_FRONT, CameraPosition.REAR, CameraPosition.LEFT],
       sideTrackCandidates: [CameraPosition.LEFT, CameraPosition.LEFT_FRONT, CameraPosition.FRONT, CameraPosition.RIGHT],
+      side2TrackCandidates: [],
       alignSideByFrontTimeline: true,
       ignoreNativeTrackSelection: false
     }
@@ -166,10 +177,12 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
     ],
     ffmpegPolicy: {
       needSideTrack: false,
+      needSide2Track: false,
       disableFrontAudio: true,
       frontTrackCandidates: [CameraPosition.LEFT, CameraPosition.LEFT_FRONT, CameraPosition.FRONT],
       backTrackCandidates: [CameraPosition.RIGHT, CameraPosition.RIGHT_FRONT, CameraPosition.REAR],
       sideTrackCandidates: [],
+      side2TrackCandidates: [],
       alignSideByFrontTimeline: false,
       ignoreNativeTrackSelection: true
     }
@@ -196,10 +209,12 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
     ],
     ffmpegPolicy: {
       needSideTrack: true,
+      needSide2Track: false,
       disableFrontAudio: false,
       frontTrackCandidates: [CameraPosition.FRONT, CameraPosition.LEFT_FRONT, CameraPosition.RIGHT_FRONT],
       backTrackCandidates: [CameraPosition.RIGHT_FRONT, CameraPosition.RIGHT, CameraPosition.REAR],
       sideTrackCandidates: [CameraPosition.LEFT_FRONT, CameraPosition.LEFT, CameraPosition.FRONT],
+      side2TrackCandidates: [],
       alignSideByFrontTimeline: true,
       ignoreNativeTrackSelection: true
     }
@@ -220,18 +235,55 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
     ],
     ffmpegPolicy: {
       needSideTrack: false,
+      needSide2Track: false,
       disableFrontAudio: false,
       frontTrackCandidates: [CameraPosition.FRONT],
       backTrackCandidates: [CameraPosition.FRONT],
       sideTrackCandidates: [],
+      side2TrackCandidates: [],
       alignSideByFrontTimeline: false,
+      ignoreNativeTrackSelection: true
+    }
+  },
+  [TemplateId.T6]: {
+    templateId: TemplateId.T6,
+    canvasWidth: 3840,
+    canvasHeight: 2160,
+    title: '四机位',
+    subtitle: '2×2 四宫格',
+    requiredCameras: [CameraPosition.FRONT, CameraPosition.REAR, CameraPosition.LEFT, CameraPosition.RIGHT],
+    optionalCameras: [CameraPosition.LEFT_FRONT, CameraPosition.RIGHT_FRONT],
+    slotBindings: [
+      { slotId: 'topLeft', camera: CameraPosition.FRONT },
+      { slotId: 'topRight', camera: CameraPosition.REAR },
+      { slotId: 'bottomLeft', camera: CameraPosition.LEFT },
+      { slotId: 'bottomRight', camera: CameraPosition.RIGHT }
+    ],
+    // 画布 3840×2160，四格各 1920×1080 —— 每格正好等于机位原生分辨率。
+    // 原生导出对这四路只做等比缩放 + 居中补边（不裁剪、不拉伸），所以预览也不需要 zoomX。
+    previewSlots: [
+      { slotId: 'topLeft', x: 0, y: 0, width: 0.5, height: 0.5 },
+      { slotId: 'topRight', x: 0.5, y: 0, width: 0.5, height: 0.5 },
+      { slotId: 'bottomLeft', x: 0, y: 0.5, width: 0.5, height: 0.5 },
+      { slotId: 'bottomRight', x: 0.5, y: 0.5, width: 0.5, height: 0.5 }
+    ],
+    ffmpegPolicy: {
+      needSideTrack: true,
+      needSide2Track: true,
+      disableFrontAudio: false,
+      frontTrackCandidates: [CameraPosition.FRONT, CameraPosition.LEFT_FRONT, CameraPosition.RIGHT_FRONT],
+      backTrackCandidates: [CameraPosition.REAR, CameraPosition.RIGHT_FRONT, CameraPosition.LEFT_FRONT],
+      sideTrackCandidates: [CameraPosition.LEFT, CameraPosition.LEFT_FRONT, CameraPosition.RIGHT_FRONT],
+      side2TrackCandidates: [CameraPosition.RIGHT, CameraPosition.RIGHT_FRONT, CameraPosition.LEFT_FRONT],
+      alignSideByFrontTimeline: true,
       ignoreNativeTrackSelection: true
     }
   }
 }
 
 export function isTemplateId(value: string): boolean {
-  return value === TemplateId.T1 || value === TemplateId.T2 || value === TemplateId.T3 || value === TemplateId.T4 || value === TemplateId.T5
+  return value === TemplateId.T1 || value === TemplateId.T2 || value === TemplateId.T3 ||
+    value === TemplateId.T4 || value === TemplateId.T5 || value === TemplateId.T6
 }
 
 export function normalizeTemplateIdValue(value: string): TemplateId {
@@ -252,8 +304,34 @@ export function listTemplateDefinitions(): Array<TemplateDefinition> {
     TEMPLATE_DEFINITION_MAP[TemplateId.T2],
     TEMPLATE_DEFINITION_MAP[TemplateId.T3],
     TEMPLATE_DEFINITION_MAP[TemplateId.T4],
-    TEMPLATE_DEFINITION_MAP[TemplateId.T5]
+    TEMPLATE_DEFINITION_MAP[TemplateId.T5],
+    TEMPLATE_DEFINITION_MAP[TemplateId.T6]
   ]
+}
+
+/**
+ * 剪辑页模板条的**展示顺序**，与模板定义的全量顺序解耦。
+ *
+ * `listTemplateDefinitions()` 保持 T1..T6 的稳定全量顺序（测试、原生契约一致性检查都依赖它），
+ * 这里只表达"用户在剪辑页看到什么顺序"：把常用的单视角/双录前置，四机位放在三分屏之前。
+ * 需求来源：用户要求剪辑页顺序为「T5 T1 T2 四机位 T3 T4」。
+ */
+export const EDITOR_TEMPLATE_DISPLAY_ORDER: Array<TemplateId> = [
+  TemplateId.T5,
+  TemplateId.T1,
+  TemplateId.T2,
+  TemplateId.T6,
+  TemplateId.T3,
+  TemplateId.T4
+]
+
+/** 剪辑页模板条用的模板定义列表（按 EDITOR_TEMPLATE_DISPLAY_ORDER 排列）。 */
+export function listEditorTemplateDefinitions(): Array<TemplateDefinition> {
+  const out: Array<TemplateDefinition> = []
+  for (let i = 0; i < EDITOR_TEMPLATE_DISPLAY_ORDER.length; i++) {
+    out.push(TEMPLATE_DEFINITION_MAP[EDITOR_TEMPLATE_DISPLAY_ORDER[i]])
+  }
+  return out
 }
 
 export interface PlaybackState {

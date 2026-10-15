@@ -11,6 +11,7 @@ import {
 import {
   DEFAULT_TEMPLATE_ID,
   listTemplateDefinitions,
+  listEditorTemplateDefinitions,
   normalizeTemplateIdValue,
   resolveTemplateDefinition,
   toLegacyCamera
@@ -743,7 +744,7 @@ export class CoreBridge {
       { name: 'timeline', heightRatio: 0.16 },
       { name: 'drawer', heightRatio: 0.20 }
     ]
-    const templateCards: Array<TemplateCardModel> = listTemplateDefinitions().map((item) => {
+    const templateCards: Array<TemplateCardModel> = listEditorTemplateDefinitions().map((item) => {
       const card: TemplateCardModel = { id: item.templateId, title: item.title, subtitle: item.subtitle }
       return card
     })
