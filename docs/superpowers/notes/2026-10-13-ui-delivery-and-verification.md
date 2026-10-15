@@ -143,7 +143,7 @@ tag 固定 `export_engine`，domain `0x3200`。会打出的关键行：
 - **音频**：每段 `amovie` → `atrim` → `asetpts` → `atempo=<speed>` → `volume=<1|0>` → `aresample=48000` →
   `aformat=fltp/stereo`；多段用 `concat=n=N:v=0:a=1` 拼接。**静音段用 `volume=0` 而不是丢音频**，保证时长对齐。
 - 音频从「包直通」改为「滤镜 + AAC 重编码」——`atempo`（保音调变速）和 `volume=0` 都必须解码到 PCM 才能做。
-- 灰段（`enabled=false`）不进 `segments`，因此天然被导出跳过，与预览的「播放跳过灰段」一致。
+- 灰段（`enabled=false`）不进 `segments`，因此天然被导出跳过。**⚠️ 2026-10-15 更正**：预览曾与导出一样跳过灰段，现已改为播整条源视频（进度条不受片段影响，`playbackSkipTargetSec` 已删）；两者只在「导出只含启用段」这一点上一致。
 
 ### 本次拿到的离线验证（不需要真机）
 

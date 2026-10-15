@@ -114,9 +114,11 @@
   - 手柄样式保持琥珀竖条 + 三颗小圆点。
   - 左手柄绑定 `PanGesture`:
     - `onActionUpdate(event)`: 仅更新本地拖动偏移量与时间气泡浮层（60Hz 响应），**严禁触发任何 seek 或外部回调**！
+      > ⚠️ 2026-10-15 修订：本行与 spec §3.6.1 冲突（spec 要求 80ms 节流寻道 + 松手补发精准寻道，做到所见即所得）。已按 spec 实现：`onActionUpdate` 增加 80ms 节流的 `onAdjustPreview?.(sec)` 上报，片段边界仍在 `onActionEnd` 一次性结算。
     - `onActionEnd(event)`: 计算最终秒数，调用 `onAdjustBoundary?.(segment.id, 'start', newSec)`。
   - 右手柄绑定 `PanGesture`:
     - `onActionUpdate(event)`: 仅更新本地右侧偏移量与时间气泡，**严禁触发 seek**！
+      > ⚠️ 2026-10-15 修订：同上，以 spec §3.6.1 为准，已加入 80ms 节流的 `onAdjustPreview?.(sec)` 上报。
     - `onActionEnd(event)`: 计算最终秒数，调用 `onAdjustBoundary?.(segment.id, 'end', newSec)`。
 - [x] **Step 3: 提交更改**
   - `git add entry/src/main/ets/components/SegmentParamRow.ets entry/src/main/ets/components/SegmentTrack.ets`

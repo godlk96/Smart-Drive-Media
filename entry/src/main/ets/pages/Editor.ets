@@ -5,7 +5,7 @@ import { PreviewOverlay, SegmentTrack } from '../components/SegmentTrack'
 import { TemplateStrip } from '../components/TemplateStrip'
 import { sharedCoreBridge } from '../bridge/CoreBridge'
 import { EditorStateModel, PreviewSeekRequest, TemplateCardModel, TimelineTrackModel } from '../model/AppState'
-import { Segment, MAX_SEGMENTS, createFullSegment, playbackSkipTargetSec, segmentIndexAtSec } from '../model/SegmentModel'
+import { Segment, MAX_SEGMENTS, createFullSegment, segmentIndexAtSec, segmentOrdinal } from '../model/SegmentModel'
 import { TripSnapshot } from '../model/TripModels'
 import { startNativeExport } from '../NativeExportManager'
 import { debugLog } from '../utils/Logger'
@@ -33,7 +33,6 @@ struct Editor {
   @State private showPlayerControls: boolean = true
   @State private previewPlaying: boolean = false
   private lastStablePlayheadSec: number = 0
-  private skippingToTargetSec: number = -1
   /**
    * 显式跳转请求。**只有**用户主动跳转才递增 token（见 requestPreviewSeek）。
    * 播放推进只改 playheadSec（展示用），不会发请求——位置由预览区的 TimelineClock 持有。
@@ -176,7 +175,6 @@ struct Editor {
 
   private pauseAllPreview(): void {
     this.previewPlaying = false
-    this.skippingToTargetSec = -1
     debugLog('剪辑诊断', `触发统一暂停，当前倍速=${this.getPlaybackRate()}X`)
   }
 
@@ -199,9 +197,6 @@ struct Editor {
   }
 
   private syncGlobalPlayhead(second: number, fromUser: boolean, commitSeek: boolean = true): void {
-    if (fromUser) {
-      this.skippingToTargetSec = -1
-    }
     const clamped = Math.max(0, Math.min(second, this.state.totalDurationSec))
     this.updatePlayheadSec(clamped)
     if (commitSeek) {
@@ -213,8 +208,10 @@ struct Editor {
       this.lastLoggedSecond = Math.floor(clamped)
       debugLog('剪辑页', `拖动全局进度，秒=${Math.floor(clamped)}，片段=${this.state.currentClipIndex}/${this.state.currentClipTotal}`)
     }
+    // fromUser 表示「用户直接操作了播放头」，那是导航而不是编辑：拖动进度条圆钮、
+    // 播完再点播放回到 0，都不该点亮「未保存」，否则返回时会平白弹「确认放弃修改？」。
+    // 真正的编辑一律走 markUnsaved()。
     if (fromUser) {
-      this.hasUnsavedChanges = true
       this.showControlsTemporarily()
     }
   }
@@ -308,13 +305,49 @@ struct Editor {
     this.showControlsTemporarily()
   }
 
-  /** 点片段块：选中该段。 */
+  /**
+   * 点片段块：选中该段，并把播放头与画面搬到该段起点（spec §5.4、验收 §4）。
+   *
+   * 91730a0 之前这里会先 `syncGlobalPlayhead(segment.startSec)` 再选中；那次提交把它
+   * 删成了「只选中」，于是点块只剩一圈琥珀描边，画面和进度条圆钮纹丝不动 ——
+   * 正是「点了这里应该影响另外一个地方，但实际没有影响」。
+   * 顺序上 seek 先做、显式选中后做：`seekGlobalPlayhead` 会按播放头重算选中
+   * （边界归前一段），必须让用户的显式选择最后落笔。
+   * `fromUser=false`：换选中/搬播放头是导航而非编辑，不该点亮「未保存」；
+   * 但控件条要按交互唤回，所以这里单独 showControlsTemporarily()。
+   */
   private handleSelectSegment(id: number): void {
+    const target = this.state.segments.find((item: Segment) => item.id === id)
+    if (target !== undefined) {
+      this.syncGlobalPlayhead(target.startSec, false)
+    }
     this.applyState(this.viewModel.selectSegment(id))
+    this.showControlsTemporarily()
+  }
+
+  /**
+   * 点轨道空档：播放头落进空档，参数行切到「空白区间」态（spec §3.1）。
+   *
+   * 空档起点必然等于前一段的终点，而 `segmentIndexAtSec` 把边界归前一段，
+   * 所以这里不能靠 `seekGlobalPlayhead` 反推选中，必须在 seek 之后显式选中 -1，
+   * 否则点空档会选中前一段、剪刀变成「切分」而不是「插入」。
+   */
+  private handleSelectGap(startSec: number): void {
+    // 播放中必须先停下：空档是编辑态（在这里插入新片段），本就该在暂停下停留；
+    // 否则播放头继续往前跑，下一 tick 就把选中态重算回「片段 N」——
+    // 同一个点击暂停时有效、播放时看起来毫无反应。
+    this.pauseAllPreview()
+    this.syncGlobalPlayhead(startSec, false)
+    this.applyState(this.viewModel.selectSegment(-1))
+    this.showControlsTemporarily()
   }
 
   /** 拖圆钮：先跳转，再让圆钮落点所在的那一段选中（空档则为 -1）。 */
   private handleScrubTo(sec: number): void {
+    // 进度条现在跟着控件条一起自动隐藏，所以拖动期间必须不断把隐藏倒计时往后推：
+    // 否则 3 秒一到 showPlayerControls 翻假，进度条连同正被按住的这个手势一起被卸载，
+    // 跳转停在手指划过的位置、松手也补不回来。手还按着、控件先没了，是新的自相矛盾。
+    this.showControlsTemporarily()
     this.syncGlobalPlayhead(sec, true)
     if (!this.state.isRawFull) {
       const index = segmentIndexAtSec(this.state.segments, sec)
@@ -323,8 +356,29 @@ struct Editor {
     }
   }
 
+  /**
+   * 拖手柄过程中的节流寻道（spec §3.6.1）：画面与进度条圆钮跟着手势走，做到所见即所得。
+   *
+   * 这里**只**搬画面与圆钮，既不动选中态、也不动片段数据：
+   * - 选中态不能按播放头重算（`seekGlobalPlayhead` 会做这件事）：左手柄被拖过播放头时，
+   *   播放头就落到这一段之外，选中态一改手柄会在拖动中途消失 —— 991ee01 修的正是这个抖动环；
+   * - 片段边界留到松手时一次性结算（见 handleAdjustBoundary），拖动期每帧改边界会让轨道块
+   *   宽度与相邻段约束跟着重算。
+   */
+  private handleAdjustPreview(sec: number): void {
+    this.updatePlayheadSec(sec)
+    this.requestPreviewSeek(this.state.playheadSec * 1000)
+  }
+
   private handleAdjustBoundary(id: number, edge: 'start' | 'end', sec: number): void {
     this.applyState(this.viewModel.adjustSegmentBoundary(id, edge, sec))
+    // spec §3.6.1：拖动过程中不发 Seek（避免原生解码器抖动），松手后补发一次最终精准寻道，
+    // 做到所见即所得。播放头必须跟着一起走，否则画面停在新边界、进度条圆钮还留在旧位置，
+    // 两者对不上——这正是「点/拖了这里，另一个地方没反应」的另一面。
+    this.syncGlobalPlayhead(sec, false)
+    // 边界动过之后播放头可能已经不在这一段里了（比如左手柄被拖过播放头），
+    // 这里保持用户正在编辑的那一段选中，手柄才不会在松手瞬间消失。
+    this.applyState(this.viewModel.selectSegment(id))
     this.markUnsaved()
   }
 
@@ -421,23 +475,13 @@ struct Editor {
       return
     }
     const nextSec = Math.max(0, Math.min(this.state.totalDurationSec, playheadMs / 1000))
-    // 播放跳过灰段与空档：落点不在活段内就直接跳到下一个活段起点（spec §5.4）。
-    const skipTarget = playbackSkipTargetSec(this.state.segments, nextSec, this.state.totalDurationSec)
-    if (Math.abs(skipTarget - nextSec) > 1e-6) {
-      if (this.skippingToTargetSec >= 0 && Math.abs(this.skippingToTargetSec - skipTarget) < 1e-3) {
-        return
-      }
-      if (skipTarget >= this.state.totalDurationSec) {
-        this.handlePreviewEnded()
-        return
-      }
-      this.skippingToTargetSec = skipTarget
-      this.syncGlobalPlayhead(skipTarget, false)
-      return
-    }
-    if (this.skippingToTargetSec >= 0 && nextSec >= this.skippingToTargetSec - 0.1) {
-      this.skippingToTargetSec = -1
-    }
+    // 播放头连续推进**整条源视频**，不再按片段跳过空档与灰段（2026-10-15 用户要求：
+    // 「期望进度条可以播放整个视频，不受片段影响」）。
+    // 旧写法按 playbackSkipTargetSec 跳段：末段之后的片尾空档其跳过目标正好是
+    // totalDurationSec，于是一播到最后一个片段的结束位置进度条就直接冲到视频末尾。
+    // 媒体层本来就不认识剪辑段（EditorPreviewArea 只吃 tripSnapshot.clips，
+    // buildSegmentSpans 按整条行程绑 span），跳过纯粹是页面自己加的；
+    // 「跳过灰段」只在导出时体现（toExportSegments 只取启用段）。
     this.updatePlayheadSec(nextSec)
     this.updatePlayheadText(this.viewModel.updatePlayheadText(nextSec))
     if (!this.state.isRawFull) {
@@ -451,7 +495,6 @@ struct Editor {
 
   private handlePreviewEnded(): void {
     this.previewPlaying = false
-    this.skippingToTargetSec = -1
     this.updatePlayheadSec(this.state.totalDurationSec)
     this.updatePlayheadText(this.viewModel.updatePlayheadText(this.state.totalDurationSec))
     this.showControlsTemporarily()
@@ -688,13 +731,16 @@ struct Editor {
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
         .onClick(() => this.handleStageTap())
-        PreviewOverlay({
-          playheadSec: this.state.playheadSec,
-          totalDurationSec: this.state.totalDurationSec,
-          canScissors: this.viewModel.canSplitAtPlayhead(),
-          onScrubTo: (sec: number) => this.handleScrubTo(sec),
-          onScissors: () => this.splitAtPlayhead()
-        })
+        // 进度条与播放/暂停按钮同生共死：同一个条件、同一个自动隐藏节奏。
+        // 此前它常驻 —— 控件条都收起来了它还杵在画面上；而只有封面图、没有可播源时
+        // 它又挂在那里拖不动任何东西。两个方向的自相矛盾一起修掉。
+        if (this.showPlayerControls && this.hasPreviewSource()) {
+          PreviewOverlay({
+            playheadSec: this.state.playheadSec,
+            totalDurationSec: this.state.totalDurationSec,
+            onScrubTo: (sec: number) => this.handleScrubTo(sec)
+          })
+        }
       }
       .width('100%')
       .aspectRatio(STAGE_ASPECT_RATIO)
@@ -705,6 +751,7 @@ struct Editor {
 
       SegmentParamRow({
         segment: this.selectedSegment(),
+        ordinal: segmentOrdinal(this.state.segments, this.selectedSegmentId()),
         isRawFull: this.state.isRawFull,
         isGap: this.viewModel.isGap(this.state),
         canToggle: !this.state.isRawFull && !this.viewModel.isGap(this.state),
@@ -722,7 +769,9 @@ struct Editor {
         selectedSegmentId: this.selectedSegmentId(),
         isRawFull: this.state.isRawFull,
         onSelectSegment: (id: number) => this.handleSelectSegment(id),
+        onSelectGap: (startSec: number) => this.handleSelectGap(startSec),
         onAdjustStart: () => this.pauseAllPreview(),
+        onAdjustPreview: (sec: number) => this.handleAdjustPreview(sec),
         onAdjustBoundary: (id: number, edge: 'start' | 'end', sec: number) => this.handleAdjustBoundary(id, edge, sec)
       })
     }

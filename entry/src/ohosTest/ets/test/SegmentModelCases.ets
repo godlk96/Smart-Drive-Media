@@ -1,9 +1,9 @@
 import { Segment, createFullSegment, canSplitAt, canToggleSegment, cycleSpeedLabel, enabledCount,
-  exportDurationSec, formatSegmentDuration, isAllDisabled, outputDurationSec, playbackSkipTargetSec,
+  exportDurationSec, formatSegmentDuration, isAllDisabled, outputDurationSec,
   segmentDurationSec, segmentIndexAtSec, setSegmentMuted, setSegmentSpeed, speedEnumForRate, speedFactor,
   splitSegmentAt, toExportSegments, toggleSegmentEnabled,
   MIN_SEGMENT_SEC, DEFAULT_CLIP_WINDOW_SEC,
-  adjustSegmentStart, adjustSegmentEnd, removeSegment, canSplitOrInsertAt, splitOrInsertAt }
+  adjustSegmentStart, adjustSegmentEnd, removeSegment, canSplitOrInsertAt, splitOrInsertAt, segmentOrdinal }
   from '../../../main/ets/model/SegmentModel'
 import { TimelineCase, expectNumber, expectString, expectTrue, firstError } from './TestSupport'
 
@@ -235,28 +235,6 @@ export function segmentModelCases(): Array<TimelineCase> {
     ])
   }))
 
-  cases.push(makeCase('播放跳过灰段与空档', () => {
-    const two = splitSegmentAt(createFullSegment(60), 30, 60)
-    const off = toggleSegmentEnabled(two, two[0].id)
-    const gapped: Array<Segment> = [
-      (() => { const s = new Segment(); s.id = 0; s.startSec = 15; s.endSec = 30; s.enabled = true; return s })(),
-      (() => { const s = new Segment(); s.id = 1; s.startSec = 40; s.endSec = 50; s.enabled = true; return s })()
-    ]
-    return firstError([
-      expectNumber(playbackSkipTargetSec(off, 10, 60), 30, '灰段跳到段尾'),
-      expectNumber(playbackSkipTargetSec(off, 40, 60), 40, '启用段原地不动'),
-      expectNumber(playbackSkipTargetSec(off, 60, 60), 60, '片尾'),
-      expectNumber(playbackSkipTargetSec(gapped, 0, 60), 15, '段前空白跳到首段起点'),
-      expectNumber(playbackSkipTargetSec(gapped, 20, 60), 20, '首段内部原地不动'),
-      expectNumber(playbackSkipTargetSec(gapped, 30, 60), 30, '首段终点算首段内'),
-      expectNumber(playbackSkipTargetSec(gapped, 30.1, 60), 40, '段间空白跳到下段起点'),
-      expectNumber(playbackSkipTargetSec(gapped, 35, 60), 40, '段间空白跳到下段起点'),
-      expectNumber(playbackSkipTargetSec(gapped, 45, 60), 45, '下段内部原地不动'),
-      expectNumber(playbackSkipTargetSec(gapped, 50.1, 60), 60, '末段之后空白跳到片尾'),
-      expectNumber(playbackSkipTargetSec(gapped, 60, 60), 60, '片尾原地不动')
-    ])
-  }))
-
   cases.push(makeCase('关不到 0 个启用段（不存在空成片路径）', () => {
     let two = splitSegmentAt(createFullSegment(60), 30, 60)
     two = toggleSegmentEnabled(two, two[0].id)
@@ -423,6 +401,26 @@ export function segmentModelCases(): Array<TimelineCase> {
       expectNumber(after[1].id, 2, '第三段留存'),
       expectNumber(empty.length, 0, '单段移除后为空数组'),
       expectNumber(unchanged.length, 3, '不存在 id 不受影响')
+    ])
+  }))
+
+  // 物理删除会留下 id 空洞（[0,1,2] 删掉 1 → [0,2]），所以轨道上的「片段 N」
+  // 必须按当前实际存在的段重新数，不能拿 id + 1 当序号，否则两块会显示成「片段 1 / 片段 3」。
+  cases.push(makeCase('segmentOrdinal：序号按起点升序从 1 数，不跟随 id', () => {
+    const afterDelete = removeSegment([makeSegment(0, 0, 15), makeSegment(1, 20, 35), makeSegment(2, 40, 55)], 1)
+    return firstError([
+      expectNumber(segmentOrdinal(afterDelete, 0), 1, '留存的第一段序号为 1'),
+      expectNumber(segmentOrdinal(afterDelete, 2), 2, '留存的第二段序号为 2（不是 id+1=3）'),
+      expectNumber(segmentOrdinal(afterDelete, 1), 0, '已删除的 id 返回 0'),
+      expectNumber(segmentOrdinal([], 0), 0, '空数组返回 0')
+    ])
+  }))
+
+  cases.push(makeCase('segmentOrdinal：按起点排序而非数组顺序', () => {
+    const unordered = [makeSegment(5, 40, 55), makeSegment(3, 0, 15)]
+    return firstError([
+      expectNumber(segmentOrdinal(unordered, 3), 1, '起点更早的段是 1'),
+      expectNumber(segmentOrdinal(unordered, 5), 2, '起点更晚的段是 2')
     ])
   }))
 

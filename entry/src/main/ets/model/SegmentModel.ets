@@ -83,6 +83,28 @@ export function segmentIndexAtSec(segments: Array<Segment>, sec: number): number
   return -1
 }
 
+/**
+ * 片段在轨道上的展示序号（1 起，按起点升序）。
+ *
+ * 为什么不用 `id + 1`：`removeSegment` 是物理删除，id 会留下空洞
+ * （切出 3 段后删掉中间那段，只剩 id 0 与 2），`id + 1` 就会把两块显示成
+ * 「片段 1 / 片段 3」，与轨道上只有两块的观感对不上。序号必须按当前
+ * 实际存在的段重新数。id 已失效或数组为空时返回 0。
+ */
+export function segmentOrdinal(segments: Array<Segment>, id: number): number {
+  const sorted: Array<Segment> = []
+  for (let i = 0; i < segments.length; i++) {
+    sorted.push(segments[i])
+  }
+  sorted.sort((a: Segment, b: Segment) => a.startSec - b.startSec)
+  for (let i = 0; i < sorted.length; i++) {
+    if (sorted[i].id === id) {
+      return i + 1
+    }
+  }
+  return 0
+}
+
 /** 解析倍速标签为因子。非法或超出 0.75–2.0 一律回落 1.0。 */
 export function speedFactor(speedLabel: string): number {
   const parsed = Number.parseFloat(speedLabel)
@@ -478,25 +500,6 @@ export function setSegmentMuted(segments: Array<Segment>, id: number, muted: boo
     out.push(copy)
   }
   return out
-}
-
-/**
- * 播放到 sec 时应该跳到哪一秒（所见即所得：预览与成片都跳过灰段与空档）。
- * 落在启用段内原地不动；落在灰段内跳到该段终点；落在空档里跳到空档终点
- * （之后第一个段的起点，没有则片尾）。
- */
-export function playbackSkipTargetSec(segments: Array<Segment>, sec: number, totalDurationSec: number): number {
-  const at = segmentIndexAtSec(segments, sec)
-  if (at >= 0) {
-    const segment = segments[at]
-    return segment.enabled ? sec : segment.endSec
-  }
-  for (let i = 0; i < segments.length; i++) {
-    if (segments[i].startSec > sec) {
-      return segments[i].startSec
-    }
-  }
-  return totalDurationSec
 }
 
 export function isAllDisabled(segments: Array<Segment>): boolean {

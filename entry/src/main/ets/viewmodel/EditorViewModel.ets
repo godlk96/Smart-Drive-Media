@@ -35,7 +35,9 @@ export class EditorViewModel {
   }
 
   seekGlobalPlayhead(second: number): EditorStateModel {
-    return this.bridge.seekGlobalPlayhead(Math.floor(second))
+    // 不在这里取整：片段边界是拖手柄拖出来的小数秒，取整会让播放头落到边界之外，
+    // 参数行、画面与剪刀各说各话。精度由 CoreBridge.seekGlobalPlayhead 按毫秒兜底。
+    return this.bridge.seekGlobalPlayhead(second)
   }
 
   updatePlayheadText(playheadSec: number): string {

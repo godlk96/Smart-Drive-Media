@@ -11,10 +11,15 @@ import { AppIcon, AppIconName } from './AppIcon'
  *   显示 `全片` · 时长 · 倍速微胶囊 · 声音微胶囊 · 剪辑微胶囊；隐藏删除【✕】按钮。
  * - 片段编辑态 (默认):
  *   显示 `片段 N` · 时长 · 倍速微胶囊 · 声音微胶囊 · 剪辑微胶囊 · 关闭微胶囊(✕)。
+ *
+ * `N` 由 `ordinal` 传入，取值来自 `SegmentModel.segmentOrdinal()`（按起点升序现数）。
+ * 曾经这里写 `segment.id + 1`：物理删除会留下 id 空洞，删掉中间段后两块会显示成
+ * 「片段 1 / 片段 3」，与轨道上只有两块对不上。
  */
 @Component
 export struct SegmentParamRow {
   @Prop segment: Segment = new Segment()
+  @Prop ordinal: number = 1
   @Prop canToggle: boolean = true
   @Prop canScissors: boolean = false
   @Prop isRawFull: boolean = false
@@ -142,7 +147,7 @@ export struct SegmentParamRow {
         this.soundIcon()
         this.scissorsButton()
       } else {
-        Text('片段 ' + (this.segment.id + 1))
+        Text('片段 ' + this.ordinal)
           .fontSize(12)
           .fontColor($r('app.color.text_tertiary'))
         Text(formatSegmentDuration(this.segment))

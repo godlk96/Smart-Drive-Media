@@ -815,8 +815,13 @@ export class CoreBridge {
   }
 
   seekGlobalPlayhead(second: number): EditorStateModel {
-    const clamped = Math.max(0, Math.min(Math.floor(second), this.tripDurationSec))
-    this.playheadMs = clamped * 1000
+    // 播放头保持毫秒精度。片段边界是用户拖手柄拖出来的小数秒（adjustSegmentBoundary
+    // 存的就是原始手势值），若在这里 Math.floor 成整秒，松手后的「最终精准寻道」会落到
+    // 边界之外的前一段或空档里：参数行显示「片段 N」、画面却停在前一秒，剪刀也会按错的
+    // 秒数去切分。毫秒精度同时让播放推进时进度条圆钮不再回跳。
+    const maxMs = this.tripDurationSec * 1000
+    this.playheadMs = Math.max(0, Math.min(Math.round(second * 1000), maxMs))
+    const clamped = this.playheadMs / 1000
     if (!this.isRawFull) {
       const at = segmentIndexAtSec(this.segments, clamped)
       this.selectedSegmentId = at >= 0 ? this.segments[at].id : -1
