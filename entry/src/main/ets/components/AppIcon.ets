@@ -1,4 +1,5 @@
-import { TemplateDefinition, TemplatePreviewSlot, resolveTemplateDefinition } from '../model/Models'
+import { TemplateDefinition, TemplatePreviewSlot, TemplateSlotBinding, resolveTemplateDefinition } from '../model/Models'
+import { getCameraZhNameById, normalizeCameraNameById } from '../constants/AppConstants'
 
 /**
  * 全 App 的矢量图标集。
@@ -238,25 +239,70 @@ export struct TemplateGlyph {
     return `${percent}%`
   }
 
+  /** 槽位 → 机位：直接读模板自己的 slotBindings，与 PreviewLayout 同源，不另维护映射表。 */
+  private cameraOfSlot(slotId: string): string {
+    const bindings: Array<TemplateSlotBinding> = this.definition().slotBindings
+    const hit = bindings.find((item: TemplateSlotBinding) => item.slotId === slotId)
+    return hit === undefined ? '' : String(hit.camera)
+  }
+
+  /**
+   * 机位色。六个机位一套暖灰微色差（远看是灰、近看分得开），
+   * 与卡面暖白、琥珀强调色同族 —— 早先那套黄/绿/粉糖果色太跳，读起来不像工具。
+   */
+  private slotColor(camera: string): Resource {
+    const name: string = normalizeCameraNameById(camera)
+    if (name === 'Front') {
+      return $r('app.color.slot_cam_front')
+    }
+    if (name === 'Back') {
+      return $r('app.color.slot_cam_back')
+    }
+    if (name === 'Left') {
+      return $r('app.color.slot_cam_left')
+    }
+    if (name === 'Right') {
+      return $r('app.color.slot_cam_right')
+    }
+    if (name === 'LeftFront') {
+      return $r('app.color.slot_cam_left_front')
+    }
+    if (name === 'RightFront') {
+      return $r('app.color.slot_cam_right_front')
+    }
+    return $r('app.color.ed_thumb_bg')
+  }
+
+  /** 槽位窄到 40vp 以下降一档字号，否则「左前」会顶到格子边。 */
+  private labelSize(slotWidthRatio: number): number {
+    return this.fittedWidth() * slotWidthRatio >= 40 ? 9.5 : 8.5
+  }
+
   build() {
     Stack({ alignContent: Alignment.Center }) {
       Stack({ alignContent: Alignment.TopStart }) {
         ForEach(this.definition().previewSlots, (slot: TemplatePreviewSlot) => {
-          Column()
-            .width(this.toPercent(slot.width))
-            .height(this.toPercent(slot.height))
-            .position({ x: this.toPercent(slot.x), y: this.toPercent(slot.y) })
-            // 原来用 stage_divider(#1E1B17) 画槽位，跟底色 stage_bg(#14120F) 每通道只差 10，
-            // 在 104×60 的缩略图里等于看不见 —— 一排模板全是同一块黑砖。
-            // 换成明显更亮的暖灰，让「切几格、谁大谁小」一眼能读出来。
-            .backgroundColor($r('app.color.stage_slot'))
-            .borderRadius(2)
-            .border({ width: 0.5, color: $r('app.color.stage_bg') })
+          Column() {
+            Text(getCameraZhNameById(normalizeCameraNameById(this.cameraOfSlot(slot.slotId))))
+              .fontSize(this.labelSize(slot.width))
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.ed_slot_fg'))
+              .maxLines(1)
+          }
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+          .width(this.toPercent(slot.width))
+          .height(this.toPercent(slot.height))
+          .position({ x: this.toPercent(slot.x), y: this.toPercent(slot.y) })
+          .backgroundColor(this.slotColor(this.cameraOfSlot(slot.slotId)))
+          .borderRadius(2)
+          // 0.5px 描边同时充当槽位之间的分隔线：底色已经不再是整块 stage_bg，
+          // 靠这层细线把相邻两格分开。
+          .border({ width: 0.5, color: $r('app.color.stage_bg') })
         }, (slot: TemplatePreviewSlot) => slot.slotId)
       }
       .width(this.fittedWidth())
       .height(this.fittedHeight())
-      .backgroundColor($r('app.color.stage_bg'))
       .borderRadius(2)
     }
     .width(this.boxWidth)

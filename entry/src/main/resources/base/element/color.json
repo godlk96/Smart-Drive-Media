@@ -114,15 +114,15 @@
     },
     {
       "name": "stage_btn_bg",
-      "value": "#24FFFFFF"
+      "value": "#6614120F"
     },
     {
       "name": "stage_btn_border",
-      "value": "#3DFFFFFF"
+      "value": "#6614120F"
     },
     {
       "name": "stage_btn_fg",
-      "value": "#F0FFFFFF"
+      "value": "#FFFFFF"
     },
     {
       "name": "export_scrim",
@@ -203,6 +203,54 @@
     {
       "name": "topbar_btn_border",
       "value": "#E1E6ED"
+    },
+    {
+      "name": "ed_bg",
+      "value": "#F3F1EC"
+    },
+    {
+      "name": "ed_surface",
+      "value": "#FBFAF7"
+    },
+    {
+      "name": "ed_line",
+      "value": "#E6E0D3"
+    },
+    {
+      "name": "ed_track",
+      "value": "#F1EDE3"
+    },
+    {
+      "name": "ed_thumb_bg",
+      "value": "#F2EEE5"
+    },
+    {
+      "name": "ed_slot_fg",
+      "value": "#4A453C"
+    },
+    {
+      "name": "slot_cam_front",
+      "value": "#EDE6D6"
+    },
+    {
+      "name": "slot_cam_back",
+      "value": "#DAD6CE"
+    },
+    {
+      "name": "slot_cam_left",
+      "value": "#D6DED7"
+    },
+    {
+      "name": "slot_cam_right",
+      "value": "#E2D6D2"
+    },
+    {
+      "name": "slot_cam_left_front",
+      "value": "#E4EBE2"
+    },
+    {
+      "name": "slot_cam_right_front",
+      "value": "#EDE0DB"
     }
   ]
 }

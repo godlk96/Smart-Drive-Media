@@ -33,13 +33,13 @@ export struct SegmentParamRow {
   @Builder
   speedChip() {
     Text(this.segment.speedLabel.replace('X', 'x'))
-      .fontSize(12)
+      .fontSize(14)
       .fontWeight(FontWeight.Medium)
       .fontColor($r('app.color.amber'))
       .textAlign(TextAlign.Center)
-      .height(26)
-      .padding({ left: 8, right: 8 })
-      .borderRadius(6)
+      .height(34)
+      .padding({ left: 12, right: 12 })
+      .borderRadius(10)
       .borderWidth(1)
       .borderColor($r('app.color.chip_amber_border'))
       .backgroundColor($r('app.color.amber_soft'))
@@ -55,13 +55,13 @@ export struct SegmentParamRow {
     Stack({ alignContent: Alignment.Center }) {
       AppIcon({
         name: this.segment.muted ? AppIconName.Muted : AppIconName.Speaker,
-        iconSize: 16,
+        iconSize: 20,
         iconColor: this.segment.muted ? $r('app.color.chip_neutral_fg') : $r('app.color.chip_sage_fg')
       })
     }
-    .width(26)
-    .height(26)
-    .borderRadius(6)
+    .width(34)
+    .height(34)
+    .borderRadius(10)
     .borderWidth(1)
     .borderColor(this.segment.muted ? $r('app.color.chip_neutral_border') : $r('app.color.chip_sage_border'))
     .backgroundColor(this.segment.muted ? $r('app.color.chip_neutral_bg') : $r('app.color.chip_sage_bg'))
@@ -78,13 +78,13 @@ export struct SegmentParamRow {
     Stack({ alignContent: Alignment.Center }) {
       AppIcon({
         name: AppIconName.Scissors,
-        iconSize: 15,
+        iconSize: 19,
         iconColor: this.canScissors ? $r('app.color.amber') : $r('app.color.chip_disabled_fg')
       })
     }
-    .width(26)
-    .height(26)
-    .borderRadius(6)
+    .width(34)
+    .height(34)
+    .borderRadius(10)
     .borderWidth(1)
     .borderColor(this.canScissors ? $r('app.color.chip_amber_border') : $r('app.color.chip_disabled_border'))
     .backgroundColor(this.canScissors ? $r('app.color.amber_soft') : $r('app.color.chip_disabled_bg'))
@@ -102,13 +102,13 @@ export struct SegmentParamRow {
     Stack({ alignContent: Alignment.Center }) {
       AppIcon({
         name: AppIconName.Close,
-        iconSize: 14,
+        iconSize: 18,
         iconColor: this.canToggle ? $r('app.color.chip_rose_fg') : $r('app.color.chip_disabled_fg')
       })
     }
-    .width(26)
-    .height(26)
-    .borderRadius(6)
+    .width(34)
+    .height(34)
+    .borderRadius(10)
     .borderWidth(1)
     .borderColor(this.canToggle ? $r('app.color.chip_rose_border') : $r('app.color.chip_disabled_border'))
     .backgroundColor(this.canToggle ? $r('app.color.chip_rose_bg') : $r('app.color.chip_disabled_bg'))
@@ -163,7 +163,10 @@ export struct SegmentParamRow {
       }
     }
     .width('100%')
-    .height(40)
+    // 40 → 44 → 50：胶囊从 26 一路放大到 34，行高跟着走，上下各留 8vp。
+    // 这一步是"所有按钮再大一点点"里的一条 —— 胶囊不能只自己变大，
+    // 不然 34 的胶囊塞在 44 的行里上下只剩 5vp，比放大前还挤。
+    .height(50)
     .alignItems(VerticalAlign.Center)
   }
 }

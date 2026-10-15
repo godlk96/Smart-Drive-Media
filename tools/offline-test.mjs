@@ -260,8 +260,16 @@ const REQUIRED_COLOR_TOKENS = new Map([
   ['overlay_track', '#4DFFFFFF'], ['overlay_text', '#D6FFFFFF'],
   ['overlay_btn_bg', '#29FFFFFF'], ['overlay_btn_border', '#42FFFFFF'],
   ['knob_shadow', '#8C000000'],
-  ['stage_btn_bg', '#24FFFFFF'], ['stage_btn_border', '#3DFFFFFF'], ['stage_btn_fg', '#F0FFFFFF'],
-  ['export_scrim', '#88000000'], ['export_text', '#F8FAFC']
+  // 播放钮的底：40% 暖黑 + 同色描边（2026-10-15 第三轮调整）。
+  // 中途试过全透明（#00000000），亮画面上白图标读不出来，用户否掉了 —— 这个钮必须有底。
+  ['stage_btn_bg', '#6614120F'], ['stage_btn_border', '#6614120F'], ['stage_btn_fg', '#FFFFFF'],
+  ['export_scrim', '#88000000'], ['export_text', '#F8FAFC'],
+  // 剪辑页暖白重设计（2026-10-15）：底色、卡面、描边、进度轨、模板卡留白与六个机位色
+  ['ed_bg', '#F3F1EC'], ['ed_surface', '#FBFAF7'], ['ed_line', '#E6E0D3'],
+  ['ed_track', '#F1EDE3'], ['ed_thumb_bg', '#F2EEE5'], ['ed_slot_fg', '#4A453C'],
+  ['slot_cam_front', '#EDE6D6'], ['slot_cam_back', '#DAD6CE'],
+  ['slot_cam_left', '#D6DED7'], ['slot_cam_right', '#E2D6D2'],
+  ['slot_cam_left_front', '#E4EBE2'], ['slot_cam_right_front', '#EDE0DB']
 ])
 
 function checkColorTokens() {

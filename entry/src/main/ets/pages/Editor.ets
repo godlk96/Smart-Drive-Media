@@ -9,18 +9,24 @@ import { Segment, MAX_SEGMENTS, createFullSegment, segmentIndexAtSec, segmentOrd
 import { TripSnapshot } from '../model/TripModels'
 import { startNativeExport } from '../NativeExportManager'
 import { debugLog } from '../utils/Logger'
+import { formatTripDay, formatTripDuration } from '../utils/TripFormat'
 import common from '@ohos.app.ability.common'
 import { EditorViewModel } from '../viewmodel/EditorViewModel'
 
 /**
- * 画面区恒为 16:9。
+ * 画面区恒为 3:2。
  *
  * 以前这里跟模板走 `getPreviewAspectRatio()`，五个模板的自然高度是 366/275/92/92/183px
  * （内容宽 326px 时），最大差 4 倍 —— 每切一次模板，下面的参数行和片段轨道就上下弹一次。
- * 现在画面区定死 16:9，模板组合由 EditorPreviewArea 自己按 Contain 缩放居中、
+ * 所以定成一个常量，模板组合由 EditorPreviewArea 自己按 Contain 缩放居中、
  * 四周留 stage_bg 黑边（它内部本来就有这层等比约束），切模板时下方一动不动。
+ *
+ * 比例是两轮调整的结果：16:9 → 16:10 → 3:2。宽 304vp 时高度依次是 171 / 190 / 202.7vp。
+ * 继续往高走是有上限的 —— 五个版式里 T3/T4 是 32:9 的超宽画布，框越高它们上下留的黑边越厚
+ * （304 宽时 T3/T4 只有 85.5vp 高）。所以停在 3:2，再高就该改版式画布本身了。
+ * 比例仍然是常量，所以「切模板下方不动」这条性质不变。
  */
-const STAGE_ASPECT_RATIO: number = 16 / 9
+const STAGE_ASPECT_RATIO: number = 3 / 2
 
 @Entry
 @Component
@@ -300,8 +306,22 @@ struct Editor {
     this.showControlsTemporarily()
   }
 
-  /** 点画面：把控制条唤回来（spec §5.2）。 */
+  /**
+   * 点画面：控件条开着就**立刻收起**，收起了再点才唤回来（spec §5.2）。
+   *
+   * 以前这里只有 `showControlsTemporarily()` —— 点一下只是把控件"续命" 3 秒，
+   * 想让它消失只能等定时器到点，用户反馈"没法主动消失"。
+   * 现在是个开关：可见 → 立即隐藏并清掉定时器（不清的话 3 秒后那次赋值只是重复设假，
+   * 但如果用户在这 3 秒内又点开，残留的定时器会把它再关一次）；
+   * 不可见 → 显示并重新计时。
+   */
   private handleStageTap(): void {
+    if (this.showPlayerControls) {
+      this.clearHideControlsTimer()
+      this.showPlayerControls = false
+      debugLog('剪辑诊断', '点击画面，播放控件已收起')
+      return
+    }
     this.showControlsTemporarily()
   }
 
@@ -643,40 +663,82 @@ struct Editor {
     this.showControlsTemporarily()
   }
 
+  /**
+   * 顶栏主行：哪一天的行车。`tripSnapshot.title` 就是 `firstSlice[0].date`
+   * （形如 `2026-10-01`），过现成的 `formatTripDay()` 变成「10月1日 周四」。
+   * 解析失败时 formatTripDay 原样返回，于是退化成日期原文，不会空。
+   */
+  private tripIdentityTitle(): string {
+    const day: string = formatTripDay(this.tripSnapshot.title)
+    return day.length > 0 ? day : this.state.tripTitle
+  }
+
+  /**
+   * 顶栏副行：时长 · 段数 · 视角数。
+   *
+   * 这里以前放的是 `state.timeRange`（`13:28:05 - 13:52:41`）—— 一个没有上下文、
+   * 也没人看的时钟区间。换成三个能从 state 直接取到的量：素材总时长、切了几段、
+   * 这台车这次录到了几个视角。
+   */
+  private tripIdentityMeta(): string {
+    const duration: string = formatTripDuration(this.state.totalDurationSec)
+    const segments: number = this.state.segments.length
+    const cameras: number = this.state.timeline.length
+    return `${duration} · ${segments} 段 · ${cameras} 视角`
+  }
+
   @Builder
   TopBar() {
     Row() {
       Stack({ alignContent: Alignment.Center }) {
-        AppIcon({ name: AppIconName.Back, iconSize: 20, iconColor: $r('app.color.text_secondary') })
+        AppIcon({ name: AppIconName.Back, iconSize: 22, iconColor: $r('app.color.text_secondary') })
       }
-      .width(34)
-      .height(34)
-      .borderRadius(17)
-      .backgroundColor($r('app.color.topbar_btn_bg'))
-      .border({ width: 1, color: $r('app.color.topbar_btn_border') })
+      .width(38)
+      .height(38)
+      .borderRadius(19)
+      .backgroundColor($r('app.color.ed_surface'))
+      .border({ width: 1, color: $r('app.color.ed_line') })
       .onClick(() => this.handleBack())
-      Text(this.state.timeRange.length > 0 ? this.state.timeRange : this.state.tripTitle)
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .layoutWeight(1)
-        .textAlign(TextAlign.Center)
-        .margin({ left: 12, right: 12 })
+      Column({ space: 0 }) {
+        Text(this.tripIdentityTitle())
+          .fontSize(15)
+          .lineHeight(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .textAlign(TextAlign.Center)
+        Text(this.tripIdentityMeta())
+          .fontSize(11.5)
+          .lineHeight(16)
+          .fontColor($r('app.color.text_tertiary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .textAlign(TextAlign.Center)
+          .margin({ top: 2 })
+      }
+      .layoutWeight(1)
+      .margin({ left: 12, right: 12 })
       Button('导出')
         .type(ButtonType.Normal)
-        .fontSize(13)
+        .fontSize(14)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.card_bg'))
         .backgroundColor($r('app.color.amber'))
-        .height(32)
-        .borderRadius(8)
-        .padding({ left: 14, right: 14 })
+        .height(38)
+        .borderRadius(10)
+        .padding({ left: 17, right: 17 })
         .onClick(() => this.startNativeExportTask())
     }
     .width('100%')
-    .height(52)
-    .padding({ left: 16, right: 16 })
+    // 52 → 64，并且上下留出不对称的内边距（上 12 / 下 8）。
+    //
+    // 原来高度 52、上下 0 内边距，内容虽然被 Row 垂直居中，但整条贴着屏幕顶边，
+    // 视觉重心比几何中心还高 —— 用户看到的就是"居中了但偏上"（文字和导出按钮都偏上）。
+    // 上面多给 4vp 是为了抵消两行文字"上重下轻"（标题 15px 压在 11.5px 的次级行上）
+    // 造成的光学偏差，让文字块看起来真的在中间。
+    .height(64)
+    .padding({ left: 16, right: 16, top: 12, bottom: 8 })
   }
 
   @Builder
@@ -700,25 +762,54 @@ struct Editor {
             // 不能用 height('100%')：父 Stack 的高度来自它自己的 aspectRatio，
             // 子元素再要 100% 高度就成了循环依赖，首帧会解出一个畸形的框
             // （点播放后 EditorPreviewArea 用内层 aspectRatio 撑开，布局才自洽）。
-            // 让封面图自己撑出 16:9。
+            // 让封面图自己撑出 STAGE_ASPECT_RATIO。
             .aspectRatio(STAGE_ASPECT_RATIO)
             .objectFit(ImageFit.Cover)
             .backgroundColor($r('app.color.stage_bg'))
         }
+        // 铺满整块画面的点击层，专门负责"点画面收起 / 唤回播放控件"。
+        //
+        // 它必须和控件层是**兄弟**、而不是把 onClick 挂在控件层上。挂在控件层上会有个
+        // 躲不掉的问题：播放钮是控件层的子节点，点钮时父层的 onClick 会不会跟着触发
+        // 取决于 ArkUI 的点击冒泡行为 —— 冒泡就会"点播放反而把控件收起来"。
+        // 拆成兄弟层之后，命中关系由 hitTestBehavior 明确决定，不依赖冒泡：
+        //   控件层 .hitTestBehavior(HitTestMode.None) —— 自己不吃事件，但子节点（播放钮）照常吃；
+        //   于是点在钮上 → 钮响应（它的默认 HitTestMode 挡住下面的兄弟）；
+        //       点在空白处 → 控件层不吃，落到这一层 → handleStageTap()。
+        Column()
+          .width('100%')
+          .height('100%')
+          .onClick(() => this.handleStageTap())
         Column() {
           if (this.showPlayerControls && this.hasPreviewSource()) {
+            // 触摸区 76×76，看得见的圆盘只有 54×54 —— 用户要的是"大按钮一小圈"。
+            // 钮本身铺 76 是为了手指够得着（44vp 是下限，76 更好按），
+            // 视觉全部交给里面那个圆盘，所以外层底色透明、也不描边。
             Button() {
-              AppIcon({
-                name: this.previewPlaying ? AppIconName.Pause : AppIconName.Play,
-                iconSize: 22,
-                iconColor: $r('app.color.stage_btn_fg')
-              })
+              Stack({ alignContent: Alignment.Center }) {
+                AppIcon({
+                  name: this.previewPlaying ? AppIconName.Pause : AppIconName.Play,
+                  iconSize: 24,
+                  iconColor: $r('app.color.stage_btn_fg')
+                })
+              }
+              .width(54)
+              .height(54)
+              .borderRadius(27)
+              // 圆盘是 40% 的暖黑（见 color.json 的 stage_btn_bg），描边同色。
+              //
+              // 这里走过一段弯路：上一轮把底和描边都设成全透明、只留白色图标，
+              // 压在大片亮画面（雪地、天空）上白三角直接糊掉，用户否掉了。
+              // 结论是**这个钮必须有底**，区别只在底色：现在是暖黑半透明
+              //（保住画面、亮暗画面上都读得出），另一条路是实心琥珀
+              //（品牌色更响，但会把画面盖掉一块）。
+              .backgroundColor($r('app.color.stage_btn_bg'))
+              .border({ width: 1, color: $r('app.color.stage_btn_border') })
             }
             .type(ButtonType.Circle)
-            .width(56)
-            .height(56)
-            .backgroundColor($r('app.color.stage_btn_bg'))
-            .border({ width: 1, color: $r('app.color.stage_btn_border') })
+            .width(76)
+            .height(76)
+            .backgroundColor(Color.Transparent)
             .onClick(() => this.togglePreviewPlay())
           } else if (!this.hasPreviewSource() && !this.hasImageCover()) {
             Text('预览区')
@@ -730,24 +821,24 @@ struct Editor {
         .height('100%')
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
-        .onClick(() => this.handleStageTap())
-        // 进度条与播放/暂停按钮同生共死：同一个条件、同一个自动隐藏节奏。
-        // 此前它常驻 —— 控件条都收起来了它还杵在画面上；而只有封面图、没有可播源时
-        // 它又挂在那里拖不动任何东西。两个方向的自相矛盾一起修掉。
-        if (this.showPlayerControls && this.hasPreviewSource()) {
-          PreviewOverlay({
-            playheadSec: this.state.playheadSec,
-            totalDurationSec: this.state.totalDurationSec,
-            onScrubTo: (sec: number) => this.handleScrubTo(sec)
-          })
-        }
+        // None：这一层自己不参与命中，但子节点（播放钮）照常参与 —— 见上面点击层的注释。
+        .hitTestBehavior(HitTestMode.None)
       }
       .width('100%')
       .aspectRatio(STAGE_ASPECT_RATIO)
       .backgroundColor($r('app.color.stage_bg'))
-      .borderRadius(10)
+      .borderRadius(14)
       .clip(true)
-      .border({ width: 1, color: $r('app.color.stage_divider') })
+
+      // 进度条从画面里搬出来，单独占画面下方一行。
+      // 以前它压在画面上、并且跟播放键同生共死（同一个 showPlayerControls 条件）：
+      // 控件条收起来了它还杵在画面中央，而只有封面图、没有可播源时它又挂在那里拖不动。
+      // 搬出来之后它变成卡片布局的一部分 —— 常驻、不遮画面，也不会让卡片高度跳。
+      PreviewOverlay({
+        playheadSec: this.state.playheadSec,
+        totalDurationSec: this.state.totalDurationSec,
+        onScrubTo: (sec: number) => this.handleScrubTo(sec)
+      })
 
       SegmentParamRow({
         segment: this.selectedSegment(),
@@ -777,20 +868,20 @@ struct Editor {
     }
     .width('100%')
     .padding(12)
-    .backgroundColor($r('app.color.card_bg'))
-    .borderRadius(16)
-    .border({ width: 1, color: $r('app.color.card_border') })
-    // 之前整张卡只有一层 1px 描边，落在同为浅色的 page_bg 上几乎看不出边界，
+    .backgroundColor($r('app.color.ed_surface'))
+    .borderRadius(18)
+    .border({ width: 1, color: $r('app.color.ed_line') })
+    // 之前整张卡只有一层 1px 描边，落在同为浅色的底色上几乎看不出边界，
     // 这就是「像原型图」的直接来源。加一层极轻的暖色投影把卡从底色上抬起来。
     .shadow({ radius: 10, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 2 })
-    .margin({ left: 16, right: 16, top: 8 })
+    .margin({ left: 16, right: 16, top: 12, bottom: 24 })
   }
 
   @Builder
   TemplateCard() {
     Column({ space: 0 }) {
       Row() {
-        Text('智能分屏版式')
+        Text('模版')
           .fontSize(13)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
@@ -811,11 +902,11 @@ struct Editor {
       })
     }
     .width('100%')
-    .backgroundColor($r('app.color.card_bg'))
-    .borderRadius(16)
-    .border({ width: 1, color: $r('app.color.card_border') })
+    .backgroundColor($r('app.color.ed_surface'))
+    .borderRadius(18)
+    .border({ width: 1, color: $r('app.color.ed_line') })
     .shadow({ radius: 10, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 2 })
-    .margin({ left: 16, right: 16, top: 12, bottom: 24 })
+    .margin({ left: 16, right: 16, top: 12, bottom: 0 })
   }
 
   build() {
@@ -825,8 +916,10 @@ struct Editor {
 
         Scroll() {
           Column({ space: 0 }) {
-            this.PlayerCard()
+            // 模版在播放器上方：选版式是这一页的第一个决定，先选版式再看画面。
+            // （原来播放器在前、模版在最下面，滑到版式行要先划过大半屏。）
             this.TemplateCard()
+            this.PlayerCard()
           }
           .width('100%')
           // Scroll 的内容默认垂直居中：内容比视口矮时（这一页正是如此）会在播放器
@@ -882,8 +975,8 @@ struct Editor {
           }
           .width('84%')
           .padding(24)
-          .backgroundColor($r('app.color.card_bg'))
-          .borderRadius(16)
+          .backgroundColor($r('app.color.ed_surface'))
+          .borderRadius(18)
         }
         .width('100%')
         .height('100%')
@@ -912,6 +1005,6 @@ struct Editor {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_bg'))
+    .backgroundColor($r('app.color.ed_bg'))
   }
 }

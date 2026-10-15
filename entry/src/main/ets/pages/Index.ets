@@ -213,27 +213,27 @@ struct Index {
 
       if (this.canShowMergeButton()) {
         Button('合并剪辑')
-          .height(32)
-          .padding({ left: 14, right: 14 })
-          .fontSize(13)
+          .height(38)
+          .padding({ left: 17, right: 17 })
+          .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.card_bg'))
           .backgroundColor($r('app.color.amber'))
-          .borderRadius(8)
+          .borderRadius(10)
           .onClick(() => this.openMergedEditor())
       }
 
       Button(this.selectionMode ? '取消' : '多选')
-        .height(32)
-        .padding({ left: 14, right: 14 })
-        .fontSize(13)
+        .height(38)
+        .padding({ left: 17, right: 17 })
+        .fontSize(14)
         .fontColor(this.selectionMode ? $r('app.color.card_bg') : $r('app.color.text_primary'))
-        .backgroundColor(this.selectionMode ? $r('app.color.ink') : $r('app.color.card_bg'))
+        .backgroundColor(this.selectionMode ? $r('app.color.ink') : $r('app.color.ed_surface'))
         .border({
           width: 1,
-          color: this.selectionMode ? $r('app.color.ink') : $r('app.color.page_border')
+          color: this.selectionMode ? $r('app.color.ink') : $r('app.color.ed_line')
         })
-        .borderRadius(8)
+        .borderRadius(10)
         .onClick(() => this.toggleSelectionMode())
     }
     .width('100%')
@@ -251,13 +251,13 @@ struct Index {
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_secondary'))
             .padding({ left: 8, right: 8, top: 2.5, bottom: 2.5 })
-            .backgroundColor($r('app.color.card_bg'))
+            .backgroundColor($r('app.color.ed_surface'))
             .borderRadius(6)
-            .border({ width: 1, color: $r('app.color.page_border') })
+            .border({ width: 1, color: $r('app.color.ed_line') })
             .shadow({ radius: 4, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 1 })
           Row()
             .height(1)
-            .backgroundColor($r('app.color.page_border'))
+            .backgroundColor($r('app.color.ed_line'))
             .layoutWeight(1)
         }
         .width('100%')
@@ -288,7 +288,7 @@ struct Index {
           .width(11)
           .height(11)
           .borderRadius(5.5)
-          .backgroundColor(isTripComplete(ctx.card) ? $r('app.color.amber_soft') : $r('app.color.page_bg'))
+          .backgroundColor(isTripComplete(ctx.card) ? $r('app.color.amber_soft') : $r('app.color.ed_bg'))
           .border({
             width: 1.5,
             color: isTripComplete(ctx.card) ? $r('app.color.chip_amber_border') : $r('app.color.text_disabled')
@@ -352,11 +352,11 @@ struct Index {
           }
           .width('100%')
           .padding(2.5)
-          .backgroundColor($r('app.color.card_bg'))
+          .backgroundColor($r('app.color.ed_surface'))
           .borderRadius(12)
           .border({
             width: this.isTripSelected(ctx.card.id) ? 1.5 : 1,
-            color: this.isTripSelected(ctx.card.id) ? $r('app.color.amber') : $r('app.color.card_border')
+            color: this.isTripSelected(ctx.card.id) ? $r('app.color.amber') : $r('app.color.ed_line')
           })
           .shadow(this.cardShadow(this.isTripSelected(ctx.card.id)))
           .onClick(() => this.handleCardClick(ctx.card))
@@ -365,7 +365,7 @@ struct Index {
         .padding({ left: RAIL_GAP, bottom: ROW_GAP })
         .border({
           width: { left: 1 },
-          color: ctx.last ? $r('app.color.page_bg') : $r('app.color.segment_off_border')
+          color: ctx.last ? $r('app.color.ed_bg') : $r('app.color.ed_line')
         })
       }
       .width('100%')
@@ -479,6 +479,6 @@ struct Index {
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_bg'))
+    .backgroundColor($r('app.color.ed_bg'))
   }
 }

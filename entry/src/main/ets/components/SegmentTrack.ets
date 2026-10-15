@@ -795,23 +795,25 @@ export struct PreviewOverlay {
     Stack({ alignContent: Alignment.Start }) {
       Row()
         .width('100%')
-        .height(3)
-        .borderRadius(1.5)
-        .backgroundColor($r('app.color.overlay_track'))
+        .height(4)
+        .borderRadius(2)
+        .backgroundColor($r('app.color.ed_track'))
       // 已播部分：整条按播放进度填琥珀。以前只有一根 30% 白的细轨加一个白点，
       // 压在高亮画面上几乎看不见，"进度条"读起来就只剩一个圆钮。
+      // 现在搬到画面下方，改在暖白底上画，所以用 ed_track + 琥珀实心圆钮。
       Row()
         .width(`${this.percent()}%`)
-        .height(3)
-        .borderRadius(1.5)
+        .height(4)
+        .borderRadius(2)
         .backgroundColor($r('app.color.amber'))
       Row() {
         Blank()
         Row()
-          .width(14)
-          .height(14)
-          .borderRadius(7)
-          .backgroundColor($r('app.color.card_bg'))
+          .width(12)
+          .height(12)
+          .borderRadius(6)
+          .backgroundColor($r('app.color.ed_surface'))
+          .border({ width: 2, color: $r('app.color.amber') })
           .shadow({ radius: 4, color: $r('app.color.knob_shadow'), offsetX: 0, offsetY: 1 })
       }
       .width(`${this.percent()}%`)
@@ -844,12 +846,12 @@ export struct PreviewOverlay {
   timeRow() {
     Row() {
       Text(this.formatTime(this.playheadSec))
-        .fontSize(11)
-        .fontColor($r('app.color.overlay_text'))
+        .fontSize(10)
+        .fontColor($r('app.color.text_tertiary'))
       Blank()
       Text(this.formatTime(this.totalDurationSec))
-        .fontSize(11)
-        .fontColor($r('app.color.overlay_text'))
+        .fontSize(10)
+        .fontColor($r('app.color.text_tertiary'))
     }
     .width('100%')
     .height(16)
@@ -861,12 +863,12 @@ export struct PreviewOverlay {
       this.timeRow()
     }
     .width('100%')
-    .height(54)
-    .padding({ left: 12, right: 12, bottom: 8 })
-    .justifyContent(FlexAlign.End)
-    .linearGradient({
-      angle: 180,
-      colors: [[$r('app.color.overlay_veil'), 0.0], [$r('app.color.overlay_fade'), 1.0]]
-    })
+    // 定稿是「画面下方留 8、进度块 40」。这里用 margin 而不是 padding：
+    // 两行子内容合计 36（轨道行 20 + 时间行 16），height 40 减去 padding 只剩 32，
+    // 会让 36 的内容溢出 4 —— 溢出的部分正好压在下面那排参数胶囊上。
+    // 用 margin 把 8 放到盒子外面，40 就装得下 36，渲染结果与定稿一致。
+    .height(40)
+    .margin({ top: 8 })
+    .justifyContent(FlexAlign.Center)
   }
 }

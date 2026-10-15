@@ -111,6 +111,14 @@ const GROUPS = {
       'entry/src/main/ets/media/TimelineMath.ets',
       'entry/src/main/ets/bridge/CoreBridge.ets'
     ]
+  },
+  ability: {
+    entries: [
+      'entry/src/main/ets/entryability/EntryAbility.ets'
+    ],
+    deps: [
+      'entry/src/main/ets/utils/Logger.ets'
+    ]
   }
 }
 
