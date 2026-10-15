@@ -715,7 +715,9 @@ struct Editor {
    */
   private tripIdentityMeta(): string {
     const duration: string = formatTripDuration(this.state.totalDurationSec)
-    const segments: number = this.state.segments.length
+    const segments: number = this.state.isRawFull && this.tripSnapshot.segmentCount > 1
+      ? this.tripSnapshot.segmentCount
+      : this.state.segments.length
     const cameras: number = this.state.timeline.length
     return `${duration} · ${segments} 段 · ${cameras} 视角`
   }

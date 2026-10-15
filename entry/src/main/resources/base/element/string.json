@@ -2,11 +2,11 @@
   "string": [
     {
       "name": "app_name",
-      "value": "智驾影音"
+      "value": "剪单"
     },
     {
       "name": "module_desc",
-      "value": "智驾影音 HarmonyOS6 API22 壳工程"
+      "value": "剪单 HarmonyOS6 API22 壳工程"
     },
     {
       "name": "permission_read_media_reason",

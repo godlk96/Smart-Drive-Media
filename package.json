@@ -2,7 +2,7 @@
   "name": "smart-drive-media",
   "version": "1.0.1",
   "private": true,
-  "description": "智驾影音（HarmonyOS 行车记录仪多视角剪辑）— 单元测试位于 entry/src/ohosTest，需通过 DevEco Studio / hvigor ohosTest 运行",
+  "description": "剪单（HarmonyOS 行车记录仪多视角剪辑）— 单元测试位于 entry/src/ohosTest，需通过 DevEco Studio / hvigor ohosTest 运行",
   "scripts": {
     "test": "echo \"单元测试已迁移到 entry/src/ohosTest（Hypium），请在 DevEco Studio 中运行 ohosTest，或执行: hvigorw --mode module -p module=entry@ohosTest -p product=default assembleHap\" && exit 0",
     "sync:full-log": "powershell -ExecutionPolicy Bypass -File ./tools/sync_full_log.ps1"

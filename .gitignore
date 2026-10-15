@@ -68,3 +68,5 @@ media_resource/
 
 # 导出样片（本地验证用，不入库）
 SmartDrive_Export_*.mp4
+
+*.dmp

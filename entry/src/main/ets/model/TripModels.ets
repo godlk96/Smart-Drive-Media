@@ -16,6 +16,7 @@ export class TripSnapshot {
   title: string = ''
   subtitle: string = ''
   durationSec: number = 60
+  segmentCount: number = 1
   tripTitle: string = ''
   tripRange: string = ''
   previewUri: string = ''

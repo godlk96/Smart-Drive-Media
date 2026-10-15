@@ -496,6 +496,7 @@ export class CoreBridge {
       trip.title = title
       trip.subtitle = `${startText} - ${endText} · ${cameraSet.size} 视角`
       trip.durationSec = durationSec
+      trip.segmentCount = 1
       trip.tripTitle = `${title.replace(/-/g, '/')} 夜间行车`
       trip.tripRange = `${startText} - ${endText}`
       trip.previewUri = preview.uri
@@ -525,13 +526,16 @@ export class CoreBridge {
     if (selected.length === 1) {
       return selected[0].id
     }
+    const newestTrip = selected[selected.length - 1]
     const startTs = selected[0].startTs
-    const endTs = selected[selected.length - 1].endTs
+    const endTs = newestTrip.endTs
     const startDate = new Date(startTs)
     const endDate = new Date(endTs)
-    const title = selected[0].title
+    const title = newestTrip.title
     const timeline = mergeTimeline(selected.map((item: TripSnapshot) => item.timeline))
-    const preview = selected.find((item: TripSnapshot) => item.previewUri.length > 0)
+    const preview = (newestTrip.previewUri.length > 0 ? newestTrip : selected.slice().reverse().find((item: TripSnapshot) => item.previewUri.length > 0)) ?? selected[0]
+    const previewFrameUri = (newestTrip.previewFrameUri.length > 0 ? newestTrip.previewFrameUri : selected.slice().reverse().find((item: TripSnapshot) => item.previewFrameUri.length > 0)?.previewFrameUri) ?? preview.previewFrameUri
+    const totalSegments = selected.reduce((acc: number, item: TripSnapshot) => acc + (item.segmentCount > 0 ? item.segmentCount : 1), 0)
     const mergedClips: Array<DvrMeta> = []
     selected.forEach((item: TripSnapshot) => {
       item.clips.forEach((clip: DvrMeta) => {
@@ -540,14 +544,15 @@ export class CoreBridge {
     })
     mergedClips.sort((a: DvrMeta, b: DvrMeta) => a.timestamp - b.timestamp)
     const merged = new TripSnapshot()
-    merged.id = `trip-merged-${title}-${toTimeText(startDate).replace(/:/g, '')}-${selected.length}`
+    merged.id = `trip-merged-${title}-${toTimeText(new Date(newestTrip.startTs)).replace(/:/g, '')}-${selected.length}`
     merged.title = title
     merged.subtitle = `${toTimeText(startDate)} - ${toTimeText(endDate)} · ${timeline.length} 视角`
     merged.durationSec = selected.reduce((acc: number, item: TripSnapshot) => acc + item.durationSec, 0)
+    merged.segmentCount = totalSegments
     merged.tripTitle = `${title.replace(/-/g, '/')} 合并行程`
     merged.tripRange = `${toTimeText(startDate)} - ${toTimeText(endDate)}`
     merged.previewUri = preview?.previewUri ?? ''
-    merged.previewFrameUri = preview?.previewFrameUri ?? ''
+    merged.previewFrameUri = previewFrameUri
     merged.previewCamera = preview?.previewCamera ?? ''
     merged.clips = mergedClips
     merged.timeline = timeline
@@ -1024,6 +1029,7 @@ export class CoreBridge {
     cloned.title = snapshot.title
     cloned.subtitle = snapshot.subtitle
     cloned.durationSec = snapshot.durationSec
+    cloned.segmentCount = snapshot.segmentCount
     cloned.tripTitle = snapshot.tripTitle
     cloned.tripRange = snapshot.tripRange
     cloned.previewUri = snapshot.previewUri
