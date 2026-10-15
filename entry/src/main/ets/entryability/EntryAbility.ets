@@ -33,10 +33,47 @@ export default class EntryAbility extends UIAbility {
           return
         }
         this.applyWindowBackground(windowStage)
+        this.enableFullScreen(windowStage)
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       debugLog('应用', `首页加载失败：${message}`)
+    }
+  }
+
+  /**
+   * 开启全屏沉浸式布局，让内容延伸到状态栏和导航栏下方，并将底部手势条/状态栏背景设为全透明。
+   */
+  private enableFullScreen(windowStage: window.WindowStage): void {
+    try {
+      const mainWindow = windowStage.getMainWindowSync()
+      mainWindow.setWindowLayoutFullScreen(true)
+      const sysBarProps: window.SystemBarProperties = {
+        navigationBarColor: '#00000000',
+        statusBarColor: '#00000000',
+        navigationBarContentColor: '#000000',
+        statusBarContentColor: '#000000'
+      }
+      mainWindow.setWindowSystemBarProperties(sysBarProps)
+
+      // 获取顶部状态栏避让高度（px 转 vp），存入 AppStorage 供页面精准避让
+      const avoidArea = mainWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
+      const topHeightPx = avoidArea.topRect.height
+      const topHeightVp = px2vp(topHeightPx)
+      AppStorage.setOrCreate('statusBarHeight', topHeightVp > 0 ? topHeightVp : 38)
+      debugLog('应用', `全屏沉浸模式与透明手势条已配置完成，状态栏高度=${topHeightVp}vp (${topHeightPx}px)`)
+
+      mainWindow.on('avoidAreaChange', (data) => {
+        if (data.type === window.AvoidAreaType.TYPE_SYSTEM) {
+          const newHeightVp = px2vp(data.area.topRect.height)
+          if (newHeightVp > 0) {
+            AppStorage.setOrCreate('statusBarHeight', newHeightVp)
+          }
+        }
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('应用', `设置全屏沉浸失败：${message}`)
     }
   }
 

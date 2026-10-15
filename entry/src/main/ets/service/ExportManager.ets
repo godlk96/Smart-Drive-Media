@@ -5,7 +5,7 @@ import { CameraPosition, ExportSnapshot, toLegacyCamera } from '../model/Models'
 import { DvrMeta } from '../model/TripModels'
 import { buildComposeRequestByService } from './ExportService'
 import { exportDurationSec } from '../model/SegmentModel'
-import { executeComposeByService } from './ExportNativeService'
+import { executeComposeByService, cancelNativeExportPipeline } from './ExportNativeService'
 import { debugLog } from '../utils/Logger'
 
 export type ExportJobId = string
@@ -121,10 +121,20 @@ export class ExportManager {
       return
     }
     record.cancelled = true
+    cancelNativeExportPipeline()
     // 记录终态，保证订阅者必定 settle（否则只能等 180s 超时）
-    const cancelEvent: ExportJobEvent = { jobId: record.id, status: '导出失败：导出已取消', progress: 0 }
+    const cancelEvent: ExportJobEvent = { jobId: record.id, status: '已取消导出', progress: 0 }
     this.recordTerminalEvent(record.id, cancelEvent)
-    this.notify(record, '导出失败：导出已取消', 0)
+    this.notify(record, '已取消导出', 0)
+  }
+
+  cancelAll(): void {
+    cancelNativeExportPipeline()
+    const jobIds: Array<ExportJobId> = []
+    this.jobs.forEach((_, key) => {
+      jobIds.push(key)
+    })
+    jobIds.forEach((id) => this.cancel(id))
   }
 
   async start(snapshot: ExportSnapshot, context: common.UIAbilityContext): Promise<ExportJobId> {
@@ -145,6 +155,7 @@ export class ExportManager {
 
   private async run(record: ExportJobRecord, context: common.UIAbilityContext): Promise<void> {
     const fileName = buildExportFileName()
+    let outputPath: string = ''
     try {
       const snapshot = record.snapshot
       const clips = snapshotToLegacyClips(snapshot)
@@ -152,7 +163,7 @@ export class ExportManager {
         throw new Error('缺少可导出素材')
       }
       const cacheDir = context.cacheDir ?? context.filesDir ?? '/data/storage/el2/base/files'
-      const outputPath = `${cacheDir}/${fileName}`
+      outputPath = `${cacheDir}/${fileName}`
       const request = buildComposeRequestByService(
         clips,
         fileName,
@@ -201,7 +212,31 @@ export class ExportManager {
       this.notify(record, `导出完成：${fileName}`, 100)
       this.notify(record, `相册保存成功：${albumUri}`, 100)
     } catch (error) {
+      if (record.cancelled) {
+        debugLog('导出', '任务已取消，终止 run 并清理残留文件')
+        try {
+          if (outputPath.length > 0 && fs.accessSync(outputPath)) {
+            fs.unlinkSync(outputPath)
+          }
+        } catch (_) {
+        }
+        return
+      }
       const message = error instanceof Error ? error.message : String(error)
+      if (message.indexOf('已取消') >= 0 || message.indexOf('cancel') >= 0) {
+        record.cancelled = true
+        debugLog('导出', '底层上报取消，终止 run 并清理残留文件')
+        try {
+          if (outputPath.length > 0 && fs.accessSync(outputPath)) {
+            fs.unlinkSync(outputPath)
+          }
+        } catch (_) {
+        }
+        const cancelEvent: ExportJobEvent = { jobId: record.id, status: '已取消导出', progress: 0 }
+        this.recordTerminalEvent(record.id, cancelEvent)
+        this.notify(record, '已取消导出', 0)
+        return
+      }
       const stack = error instanceof Error && error.stack !== undefined ? error.stack : ''
       debugLog('导出', `导出失败：${message}${stack.length > 0 ? `\n${stack}` : ''}`)
       const failureEvent: ExportJobEvent = { jobId: record.id, status: `导出失败：${message}`, progress: 0 }

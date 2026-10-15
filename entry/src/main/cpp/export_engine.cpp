@@ -20,6 +20,7 @@ static std::atomic<int> g_exportPercent{0};
 static std::atomic<int64_t> g_exportCurrentFrame{0};
 static std::atomic<int64_t> g_exportTotalFrames{0};
 static std::atomic<int> g_exportStage{0};
+static std::atomic<bool> g_exportCancelled{false};
 
 NativeExportProgressInfo getNativeExportProgress()
 {
@@ -39,8 +40,19 @@ void setNativeExportProgress(int percent, int64_t currentFrame, int64_t totalFra
     g_exportStage.store(stage);
 }
 
+void cancelNativeExport()
+{
+    g_exportCancelled.store(true);
+}
+
+bool isNativeExportCancelled()
+{
+    return g_exportCancelled.load();
+}
+
 void resetNativeExportProgress()
 {
+    g_exportCancelled.store(false);
     setNativeExportProgress(0, 0, 0, 0);
 }
 
@@ -913,6 +925,13 @@ bool composeTemplateToMp4(const std::string &templateId,
         logPipeline("encode", encodeBegin.str());
     }
     while (true) {
+        if (isNativeExportCancelled()) {
+            av_packet_free(&audioPkt);
+            cleanupComposeResources();
+            error = "export_cancelled";
+            setNativeExportProgress(-1, encodedFrameCount, totalExpectedFrames, -1);
+            return false;
+        }
         int sinkRet = av_buffersink_get_frame(bufferSink, frame);
         if (sinkRet == AVERROR_EOF || sinkRet == AVERROR(EAGAIN)) {
             sinkBreakRet = sinkRet;
@@ -1956,6 +1975,9 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
                               error)) {
         logPipeline("mux", "emit failed: " + error);
         setNativeExportProgress(-1, 0, 0, -1);
+        if (!outputPath.empty()) {
+            std::remove(outputPath.c_str());
+        }
         if (!frontConcatPath.empty()) {
             std::remove(frontConcatPath.c_str());
         }
@@ -1967,6 +1989,9 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
         }
         if (!side2ConcatPath.empty()) {
             std::remove(side2ConcatPath.c_str());
+        }
+        if (error == "export_cancelled" || isNativeExportCancelled()) {
+            return "__ERROR__:pipeline_export_cancelled";
         }
         return "__ERROR__:pipeline_mux_" + error;
     }

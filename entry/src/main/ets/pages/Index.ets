@@ -1,4 +1,5 @@
 import common from '@ohos.app.ability.common'
+import window from '@ohos.window'
 import { AppIcon, AppIconName } from '../components/AppIcon'
 import { LibraryStateModel, TripCardModel } from '../model/AppState'
 import { debugLog } from '../utils/Logger'
@@ -26,6 +27,7 @@ interface TripRowContext {
 @Component
 struct Index {
   private viewModel: HomeViewModel = new HomeViewModel()
+  @StorageProp('statusBarHeight') statusBarHeight: number = 38
   @State private permissionGranted: boolean = false
   @State private hasAutoRequestedPermission: boolean = false
   @State private isLoading: boolean = true
@@ -41,6 +43,20 @@ struct Index {
   }
 
   aboutToAppear(): void {
+    const context = this.getHostContextOrNull()
+    if (context !== null) {
+      try {
+        window.getLastWindow(context, (err, win) => {
+          if (!err && win) {
+            const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
+            const h = px2vp(area.topRect.height)
+            if (h > 0) {
+              this.statusBarHeight = h
+            }
+          }
+        })
+      } catch (_) { }
+    }
     this.viewModel.setOnStateChangedListener(() => {
       this.syncViewState()
     })
@@ -238,7 +254,12 @@ struct Index {
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)
-    .padding({ left: 16, right: 16, top: 16, bottom: 14 })
+    .padding({
+      left: 16,
+      right: 16,
+      top: (this.statusBarHeight > 0 ? this.statusBarHeight : 38) + 10,
+      bottom: 14
+    })
   }
 
   @Builder
@@ -362,7 +383,7 @@ struct Index {
           .onClick(() => this.handleCardClick(ctx.card))
         }
         .layoutWeight(1)
-        .padding({ left: RAIL_GAP, bottom: ROW_GAP })
+        .padding({ left: RAIL_GAP, bottom: ctx.last ? ROW_GAP + 28 : ROW_GAP })
         .border({
           width: { left: 1 },
           color: ctx.last ? $r('app.color.ed_bg') : $r('app.color.ed_line')
@@ -451,6 +472,7 @@ struct Index {
     }
     .layoutWeight(1)
     .width('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     .scrollBar(BarState.Off)
   }
 

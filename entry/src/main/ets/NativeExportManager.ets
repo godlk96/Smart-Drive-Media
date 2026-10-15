@@ -21,7 +21,7 @@ export async function startNativeExport(
       if (onEvent) {
         onEvent(event)
       }
-      if (event.status.startsWith('导出失败：')) {
+      if (event.status.startsWith('导出失败：') || event.status === '已取消导出') {
         if (!settled) {
           settled = true
           clearTimeout(timeoutTimer)
@@ -38,4 +38,12 @@ export async function startNativeExport(
       }
     })
   })
+}
+
+export function cancelNativeExport(jobId?: string): void {
+  if (jobId) {
+    sharedExportManager.cancel(jobId)
+  } else {
+    sharedExportManager.cancelAll()
+  }
 }

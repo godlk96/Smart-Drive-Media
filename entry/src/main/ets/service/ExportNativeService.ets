@@ -384,8 +384,10 @@ export async function executeComposeByService(
     const result = await runPipelineAsync(payload)
     const errorCode = Number(result?.code ?? -1)
     const resultMessage = String(result?.message ?? '')
-    onLog(`Native导出阶段 返回 code=${errorCode} message=${resultMessage}`)
     if (errorCode !== 0) {
+      if (errorCode === 1009 || resultMessage.indexOf('cancel') >= 0) {
+        throw new Error('导出已取消')
+      }
       throw new Error(`导出失败[${errorCode}]：${resultMessage.length > 0 ? resultMessage : 'UNKNOWN'}`)
     }
     outputPath = String(result?.outputPath ?? '')
@@ -402,4 +404,16 @@ export async function executeComposeByService(
   onProgress(85)
   onLog(`Native导出阶段 完成 输出=${outputPath}`)
   return outputPath
+}
+
+export function cancelNativeExportPipeline(): void {
+  try {
+    const cancelFn = (smartdriveExporter as Record<string, Object | Function> | undefined)?.cancelExport as (() => boolean) | undefined
+    if (typeof cancelFn === 'function') {
+      cancelFn()
+      debugLog('ExportNative', '已触发底层 smartdriveExporter.cancelExport()')
+    }
+  } catch (error) {
+    debugLog('ExportNative', `cancelNativeExportPipeline 异常: ${String(error)}`)
+  }
 }

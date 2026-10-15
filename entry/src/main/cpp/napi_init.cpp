@@ -83,6 +83,7 @@ static constexpr int32_t EXPORT_ERR_OUTPUT_PATH_EMPTY = 1005;
 static constexpr int32_t EXPORT_ERR_EXPECTED_DURATION_INVALID = 1006;
 static constexpr int32_t EXPORT_ERR_SEGMENTS_INVALID = 1007;
 static constexpr int32_t EXPORT_ERR_SIDE2_URIS_INVALID = 1008;
+static constexpr int32_t EXPORT_ERR_CANCELLED = 1009;
 static constexpr int32_t EXPORT_ERR_NATIVE_EMPTY = 2001;
 static constexpr int32_t EXPORT_ERR_NATIVE_FAILED = 2002;
 static constexpr int32_t EXPORT_ERR_ASYNC_WORK_FAILED = 2003;
@@ -321,6 +322,9 @@ static NativeExportPipelineResult runPipelineAndWrapResult(const NativeExportPip
         request.segments);
     if (output.empty()) {
         return makeErrorResult(EXPORT_ERR_NATIVE_EMPTY, "ERR_NATIVE_EMPTY");
+    }
+    if (output.find("export_cancelled") != std::string::npos || output.find("pipeline_cancelled") != std::string::npos) {
+        return makeErrorResult(EXPORT_ERR_CANCELLED, "export_cancelled");
     }
     if (output.rfind("__ERROR__", 0) == 0) {
         return makeErrorResult(EXPORT_ERR_NATIVE_FAILED, output);
@@ -649,6 +653,15 @@ static napi_value GetExportProgress(napi_env env, napi_callback_info info)
     return output;
 }
 
+static napi_value CancelExport(napi_env env, napi_callback_info info)
+{
+    (void)info;
+    cancelNativeExport();
+    napi_value output = nullptr;
+    napi_get_boolean(env, true, &output);
+    return output;
+}
+
 static napi_value GetCoreApiVersion(napi_env env, napi_callback_info info)
 {
     (void)info;
@@ -664,6 +677,7 @@ static napi_value Init(napi_env env, napi_value exports)
     napi_property_descriptor desc[] = {
         {"runExportPipelineAsync", nullptr, RunExportPipelineAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"getExportProgress", nullptr, GetExportProgress, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cancelExport", nullptr, CancelExport, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"parseDvrFileName", nullptr, ParseDvrFileName, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"buildTimeline", nullptr, BuildTimeline, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"mergeTimeline", nullptr, MergeTimeline, nullptr, nullptr, nullptr, napi_default, nullptr},

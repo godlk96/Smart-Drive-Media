@@ -29,6 +29,8 @@ struct NativeExportProgressInfo {
 NativeExportProgressInfo getNativeExportProgress();
 void setNativeExportProgress(int percent, int64_t currentFrame, int64_t totalFrames, int stage);
 void resetNativeExportProgress();
+void cancelNativeExport();
+bool isNativeExportCancelled();
 
 std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
                                     const std::vector<std::string> &backUris,

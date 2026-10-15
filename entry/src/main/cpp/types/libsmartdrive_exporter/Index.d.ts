@@ -26,6 +26,7 @@ export interface NativeExportProgress {
 
 export const runExportPipelineAsync: (payload: NativeExportPipelineRequest) => Promise<NativeExportPipelineResult>
 export const getExportProgress: () => NativeExportProgress
+export const cancelExport: () => boolean
 
 export interface NativeDvrMeta {
   fileName: string

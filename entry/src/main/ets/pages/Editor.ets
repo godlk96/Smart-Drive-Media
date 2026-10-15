@@ -7,10 +7,11 @@ import { sharedCoreBridge } from '../bridge/CoreBridge'
 import { EditorStateModel, PreviewSeekRequest, TemplateCardModel, TimelineTrackModel } from '../model/AppState'
 import { Segment, MAX_SEGMENTS, createFullSegment, segmentIndexAtSec, segmentOrdinal } from '../model/SegmentModel'
 import { TripSnapshot } from '../model/TripModels'
-import { startNativeExport } from '../NativeExportManager'
+import { startNativeExport, cancelNativeExport } from '../NativeExportManager'
 import { debugLog } from '../utils/Logger'
 import { formatTripDay, formatTripDuration } from '../utils/TripFormat'
 import common from '@ohos.app.ability.common'
+import window from '@ohos.window'
 import { EditorViewModel } from '../viewmodel/EditorViewModel'
 
 /**
@@ -32,6 +33,7 @@ const STAGE_ASPECT_RATIO: number = 3 / 2
 @Component
 struct Editor {
   private viewModel: EditorViewModel = new EditorViewModel()
+  @StorageProp('statusBarHeight') statusBarHeight: number = 38
   private bridge = sharedCoreBridge
   private exportSessionSeed: string = ''
   private controlsTimer: number = -1
@@ -99,6 +101,23 @@ struct Editor {
   }
 
   aboutToAppear(): void {
+    try {
+      const uiContext = this.getUIContext()
+      if (uiContext) {
+        const hostContext = uiContext.getHostContext() as common.UIAbilityContext
+        if (hostContext) {
+          window.getLastWindow(hostContext, (err, win) => {
+            if (!err && win) {
+              const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
+              const h = px2vp(area.topRect.height)
+              if (h > 0) {
+                this.statusBarHeight = h
+              }
+            }
+          })
+        }
+      }
+    } catch (_) { }
     let params: Record<string, string> = {}
     try {
       params = this.getUIContext().getRouter().getParams() as Record<string, string>
@@ -570,10 +589,24 @@ struct Editor {
       this.updateExportStatus(`导出完成：${outputPath}`)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      this.updateExportStatus(`导出失败：${message}`)
+      if (message.indexOf('已取消') >= 0 || message.indexOf('cancel') >= 0) {
+        this.updateExportStatus('已取消导出')
+        this.showToast('已取消导出')
+        debugLog('导出', '导出已被用户取消')
+      } else {
+        this.updateExportStatus(`导出失败：${message}`)
+      }
     } finally {
       this.exportLoadingVisible = false
     }
+  }
+
+  private cancelExportTask(): void {
+    cancelNativeExport()
+    this.exportLoadingVisible = false
+    this.updateExportStatus('已取消导出')
+    this.showToast('已取消导出')
+    debugLog('导出', '用户点击浮层关闭按钮，已中断后台导出')
   }
 
   /**
@@ -737,8 +770,13 @@ struct Editor {
     // 视觉重心比几何中心还高 —— 用户看到的就是"居中了但偏上"（文字和导出按钮都偏上）。
     // 上面多给 4vp 是为了抵消两行文字"上重下轻"（标题 15px 压在 11.5px 的次级行上）
     // 造成的光学偏差，让文字块看起来真的在中间。
-    .height(64)
-    .padding({ left: 16, right: 16, top: 12, bottom: 8 })
+    .height(56 + (this.statusBarHeight > 0 ? this.statusBarHeight : 38))
+    .padding({
+      left: 16,
+      right: 16,
+      top: (this.statusBarHeight > 0 ? this.statusBarHeight : 38) + 8,
+      bottom: 8
+    })
   }
 
   @Builder
@@ -874,7 +912,7 @@ struct Editor {
     // 之前整张卡只有一层 1px 描边，落在同为浅色的底色上几乎看不出边界，
     // 这就是「像原型图」的直接来源。加一层极轻的暖色投影把卡从底色上抬起来。
     .shadow({ radius: 10, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 2 })
-    .margin({ left: 16, right: 16, top: 12, bottom: 24 })
+    .margin({ top: 12, bottom: 24 })
   }
 
   @Builder
@@ -906,7 +944,7 @@ struct Editor {
     .borderRadius(18)
     .border({ width: 1, color: $r('app.color.ed_line') })
     .shadow({ radius: 10, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 2 })
-    .margin({ left: 16, right: 16, top: 12, bottom: 0 })
+    .margin({ top: 12, bottom: 0 })
   }
 
   build() {
@@ -922,13 +960,12 @@ struct Editor {
             this.PlayerCard()
           }
           .width('100%')
-          // Scroll 的内容默认垂直居中：内容比视口矮时（这一页正是如此）会在播放器
-          // 上方留一大片底色。ScrollAttribute 上没有 alignContent（编译报错验证过），
-          // 所以改成「内容容器至少撑满视口 + 顶对齐」：内容矮时贴顶，内容高时照常滚动。
+          .padding({ left: 10, right: 10 })
           .constraintSize({ minHeight: '100%' })
           .justifyContent(FlexAlign.Start)
         }
         .layoutWeight(1)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
         .scrollBar(BarState.Off)
       }
       .width('100%')
@@ -986,23 +1023,70 @@ struct Editor {
       }
 
       if (this.exportLoadingVisible) {
-        Column({ space: 14 }) {
-          Progress({ value: Math.max(1, this.exportProgress), total: 100, type: ProgressType.Ring })
-            .width(56)
-            .height(56)
-            .color($r('app.color.amber'))
-            .style({ strokeWidth: 4, enableScanEffect: true })
-          Text(this.exportLoadingText)
-            .fontSize(13)
-            .fontColor($r('app.color.export_text'))
+        Column({ space: 0 }) {
+          Stack({ alignContent: Alignment.TopEnd }) {
+            Column({ space: 14 }) {
+              Text('正在导出视频')
+                .fontSize(16)
+                .fontWeight(FontWeight.Bold)
+                .fontColor($r('app.color.text_primary'))
+                .margin({ top: 4 })
+
+              Stack({ alignContent: Alignment.Center }) {
+                Progress({ value: Math.max(1, this.exportProgress), total: 100, type: ProgressType.Ring })
+                  .width(68)
+                  .height(68)
+                  .color($r('app.color.amber'))
+                  .style({ strokeWidth: 5, enableScanEffect: true })
+                Text(`${Math.max(0, Math.floor(this.exportProgress))}%`)
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor($r('app.color.text_primary'))
+              }
+              .margin({ top: 4, bottom: 4 })
+
+              Text(this.exportLoadingText)
+                .fontSize(13)
+                .fontColor($r('app.color.text_tertiary'))
+                .textAlign(TextAlign.Center)
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Center)
+
+            // 右上角关闭 X 按钮
+            Button() {
+              Stack({ alignContent: Alignment.Center }) {
+                AppIcon({ name: AppIconName.Close, iconSize: 13, iconColor: $r('app.color.text_secondary') })
+              }
+              .width(28)
+              .height(28)
+              .borderRadius(14)
+              .backgroundColor($r('app.color.track_bg'))
+              .border({ width: 1, color: $r('app.color.ed_line') })
+            }
+            .type(ButtonType.Circle)
+            .width(36)
+            .height(36)
+            .backgroundColor(Color.Transparent)
+            .onClick(() => this.cancelExportTask())
+          }
+          .width('84%')
+          .padding({ left: 20, right: 20, top: 18, bottom: 24 })
+          .backgroundColor($r('app.color.ed_surface'))
+          .borderRadius(18)
+          .border({ width: 1, color: $r('app.color.ed_line') })
+          .shadow({ radius: 16, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 4 })
         }
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
         .width('100%')
         .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
         .backgroundColor($r('app.color.export_scrim'))
       }
     }
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.ed_bg'))
