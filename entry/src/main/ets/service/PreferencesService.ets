@@ -73,7 +73,7 @@ export class PreferencesService {
     }
   }
 
-  public async getTemplatePreference(defaultTemplate: string = 'T2'): Promise<string> {
+  public async getTemplatePreference(defaultTemplate: string = 'T5'): Promise<string> {
     const store = await this.getPreferencesStore()
     if (store) {
       try {

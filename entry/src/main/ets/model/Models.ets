@@ -98,7 +98,7 @@ export interface TemplateDefinition {
   ffmpegPolicy: TemplateFfmpegPolicy
 }
 
-export const DEFAULT_TEMPLATE_ID: TemplateId = TemplateId.T2
+export const DEFAULT_TEMPLATE_ID: TemplateId = TemplateId.T5
 
 const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
   [TemplateId.T1]: {

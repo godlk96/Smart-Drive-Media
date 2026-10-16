@@ -1,6 +1,5 @@
 import { Permissions } from '@kit.AbilityKit'
 
-export const PAGE_ROUTE_INDEX: string = 'pages/Index'
 export const PAGE_ROUTE_EDITOR: string = 'pages/Editor'
 
 export const REQUIRED_MEDIA_PERMISSIONS: Array<Permissions> = [

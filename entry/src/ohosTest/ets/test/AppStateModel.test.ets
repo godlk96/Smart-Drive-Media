@@ -50,9 +50,9 @@ export default function appStateModelTest(): void {
       expect(t5.requiredCameras[0]).assertEqual(CameraPosition.FRONT)
     })
 
-    it('共 6 套模板且默认模板为 T2', 0, () => {
+    it('共 6 套模板且默认模板为 T5', 0, () => {
       expect(listTemplateDefinitions().length).assertEqual(6)
-      expect(DEFAULT_TEMPLATE_ID).assertEqual(TemplateId.T2)
+      expect(DEFAULT_TEMPLATE_ID).assertEqual(TemplateId.T5)
     })
 
     it('T6 四机位：2×2 四格、四路必需机位、画布 3840×2160', 0, () => {

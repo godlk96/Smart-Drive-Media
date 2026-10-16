@@ -1,3 +1,10 @@
+export interface NativeExportSegment {
+  startMs: number
+  endMs: number
+  speed?: number
+  muted?: boolean
+}
+
 export interface NativeExportPipelineRequest {
   frontUris: Array<string>
   backUris: Array<string>
@@ -9,6 +16,7 @@ export interface NativeExportPipelineRequest {
   startMs: number
   endMs: number
   outputPath: string
+  segments?: Array<NativeExportSegment>
 }
 
 export interface NativeExportPipelineResult {

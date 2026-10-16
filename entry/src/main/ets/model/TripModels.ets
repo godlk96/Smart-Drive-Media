@@ -54,7 +54,7 @@ export class ExportComposeRequest {
   expectedDurationSec: number = 0
   rangeStartMs: number = 0
   rangeEndMs: number = 0
-  templateId: string = 'T2'
+  templateId: string = 'T5'
   speedLabel: string = '1.0X'
   muted: boolean = false
   watermarkEnabled: boolean = true

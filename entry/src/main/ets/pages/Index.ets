@@ -49,7 +49,7 @@ struct Index {
         window.getLastWindow(context, (err, win) => {
           if (!err && win) {
             const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
-            const h = px2vp(area.topRect.height)
+            const h = this.getUIContext().px2vp(area.topRect.height)
             if (h > 0) {
               this.statusBarHeight = h
             }

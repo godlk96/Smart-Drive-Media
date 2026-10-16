@@ -161,7 +161,7 @@ export function previewLayoutCases(): Array<TimelineCase> {
 
   cases.push(makeCase('buildSlotGeometry: 未知模板 id 回退到默认模板', (): string => {
     const fallback: Array<SlotGeometry> = buildSlotGeometry('NOT_A_TEMPLATE')
-    const defaultSlots: Array<SlotGeometry> = buildSlotGeometry('T2')
+    const defaultSlots: Array<SlotGeometry> = buildSlotGeometry('T5')
     return firstError([
       expectNumber(fallback.length, defaultSlots.length, '回退后的槽位数'),
       expectString(fallback[0].slotId, defaultSlots[0].slotId, '回退后的首个 slotId'),

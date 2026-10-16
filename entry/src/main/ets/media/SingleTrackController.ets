@@ -29,7 +29,6 @@ import {
   SegmentKind,
   SegmentSpan,
   SegmentTarget,
-  SEEK_TOLERANCE_MS,
   checkSeek,
   gapHoldIndex,
   segmentAt
@@ -836,6 +835,7 @@ export class SingleTrackController {
         try {
           const file = fs.openSync(uri, fs.OpenMode.READ_ONLY)
           const fd = file.fd
+          // @SuppressWarnings syscap
           const src = media.createMediaSourceWithFd({ fd: fd })
           if (!src) {
             fs.closeSync(fd)
@@ -885,6 +885,7 @@ export class SingleTrackController {
             const setStrategy = (dynamicPlayer as Record<string, (opt: PlaybackStrategyOptions) => void>)['setPlaybackStrategy']
             if (typeof setStrategy === 'function') {
               const strategyOpt: PlaybackStrategyOptions = { showFirstFrameOnPrepare: true }
+              // @SuppressWarnings syscap
               strategyOpt.playlistLoopMode = media.PlaylistLoopMode.PLAYLIST_LOOP_MODE_NONE
               setStrategy(strategyOpt)
               debugLog('SingleTrack', `${this.trackId} playlist: 策略已设 playlistLoopMode=NONE`)
@@ -1013,6 +1014,7 @@ export class SingleTrackController {
       // 绝不能用 SEEK_PREV_SYNC(=1)——那是"退到上一个关键帧"，DVR 的 GOP 常有 1~2 秒，
       // 于是每次 seek 都落在目标**之前**，播放头要等播放器追上来才能继续前进（进度条卡住），
       // 同时解码器被反复冲刷（声音断续）。
+      // @SuppressWarnings syscap
       player.seek(clamped, media.SeekMode.SEEK_CLOSEST)
       // 乐观更新：在播放器回报实际位置之前，命令值就是我们对当前位置的最佳估计。
       this.observedOffsetMs = clamped
@@ -1151,6 +1153,7 @@ export class SingleTrackController {
             const strategyOpt: PlaybackStrategyOptions = { showFirstFrameOnPrepare: true }
             if (USE_PLAYLIST_PROBE) {
               // 默认是 PLAYLIST_LOOP_MODE_ALL（循环整个列表），行程播放必须关掉。
+              // @SuppressWarnings syscap
               strategyOpt.playlistLoopMode = media.PlaylistLoopMode.PLAYLIST_LOOP_MODE_NONE
             }
             setStrategy(strategyOpt)

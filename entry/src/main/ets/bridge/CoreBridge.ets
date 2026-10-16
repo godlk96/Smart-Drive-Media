@@ -26,7 +26,6 @@ import { RUN_GAP_MS, SLICE_MS } from '../media/TimelineMath'
 import {
   adjustSegmentEnd,
   adjustSegmentStart,
-  canSplitAt,
   canSplitOrInsertAt,
   canToggleSegment,
   createFullSegment,
@@ -36,7 +35,6 @@ import {
   setSegmentMuted,
   setSegmentSpeed,
   splitOrInsertAt,
-  splitSegmentAt,
   toggleSegmentEnabled as toggleSegmentEnabledIn,
   Segment
 } from '../model/SegmentModel'
@@ -129,7 +127,7 @@ function resolvePreviewTrack(track: string, availableTracks: Array<string>): str
   return availableTracks[0] ?? track
 }
 
-export interface SlotUriResult {
+interface SlotUriResult {
   current: string;
   next: string;
 }

@@ -42,7 +42,7 @@ export struct AppIcon {
   /** 将逻辑描边换算为 Shape(24px) 局部坐标系内的物理描边 */
   private stroke(val?: number): number {
     const raw = val !== undefined ? val : this.strokeWidth
-    const converted = px2vp(raw)
+    const converted = this.getUIContext().px2vp(raw)
     return converted > 0 ? converted : raw
   }
 
@@ -60,7 +60,7 @@ export struct AppIcon {
    * 3. 外层包裹居中的 Stack(iconSize, iconSize)，保证在任何 DPI 屏幕上矢量图标既完全充满 iconSize，又严格居中。
    */
   private scaleFactor(): number {
-    const targetPx = vp2px(this.iconSize)
+    const targetPx = this.getUIContext().vp2px(this.iconSize)
     if (!targetPx || targetPx <= 0) {
       return 1
     }

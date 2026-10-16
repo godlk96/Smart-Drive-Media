@@ -613,7 +613,7 @@ export function timelineMathCases(): Array<TimelineCase> {
     run: (): string => {
       const def = resolveTemplateDefinition('NOPE')
       return firstError([
-        expectString(def.templateId, 'T2', '默认模板'),
+        expectString(def.templateId, 'T5', '默认模板'),
         expectNumber(def.previewSlots.length > 0 ? 1 : 0, 1, '有槽位定义')
       ])
     }

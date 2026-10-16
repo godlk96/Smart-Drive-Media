@@ -165,13 +165,6 @@ export class HomeViewModel {
     return this.state.selectionMode && this.state.selectedTripIds.length >= 2
   }
 
-  getCompletenessText(card: TripCardModel): string {
-    return card.previewUri.length > 0 ? '完整' : '不完整'
-  }
-
-  getCompletenessColor(card: TripCardModel): string {
-    return card.previewUri.length > 0 ? '#0A59F7' : '#FF7A00'
-  }
 
   openEditorRoute(card: TripCardModel): HomeRouteRequest {
     return {

@@ -7,6 +7,7 @@ import { sharedCoreBridge } from '../bridge/CoreBridge'
 import { EditorStateModel, PreviewSeekRequest, TemplateCardModel, TimelineTrackModel } from '../model/AppState'
 import { Segment, MAX_SEGMENTS, createFullSegment, segmentIndexAtSec, segmentOrdinal } from '../model/SegmentModel'
 import { TripSnapshot } from '../model/TripModels'
+import { DEFAULT_TEMPLATE_ID } from '../model/Models'
 import { startNativeExport, cancelNativeExport } from '../NativeExportManager'
 import { debugLog } from '../utils/Logger'
 import { formatTripDay, formatTripDuration } from '../utils/TripFormat'
@@ -73,7 +74,7 @@ struct Editor {
     boundaryMarkers: [],
     templateCards: [],
     previewSlots: [],
-    activeTemplateId: 'T2',
+    activeTemplateId: DEFAULT_TEMPLATE_ID,
     drawerExpanded: true,
     segments: createFullSegment(60),
     selectedSegmentId: 0,
@@ -109,7 +110,7 @@ struct Editor {
           window.getLastWindow(hostContext, (err, win) => {
             if (!err && win) {
               const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
-              const h = px2vp(area.topRect.height)
+              const h = uiContext.px2vp(area.topRect.height)
               if (h > 0) {
                 this.statusBarHeight = h
               }

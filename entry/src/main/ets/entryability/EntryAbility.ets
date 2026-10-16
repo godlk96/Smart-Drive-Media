@@ -59,13 +59,14 @@ export default class EntryAbility extends UIAbility {
       // 获取顶部状态栏避让高度（px 转 vp），存入 AppStorage 供页面精准避让
       const avoidArea = mainWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
       const topHeightPx = avoidArea.topRect.height
-      const topHeightVp = px2vp(topHeightPx)
+      const uiContext = mainWindow.getUIContext()
+      const topHeightVp = uiContext.px2vp(topHeightPx)
       AppStorage.setOrCreate('statusBarHeight', topHeightVp > 0 ? topHeightVp : 38)
       debugLog('应用', `全屏沉浸模式与透明手势条已配置完成，状态栏高度=${topHeightVp}vp (${topHeightPx}px)`)
 
       mainWindow.on('avoidAreaChange', (data) => {
         if (data.type === window.AvoidAreaType.TYPE_SYSTEM) {
-          const newHeightVp = px2vp(data.area.topRect.height)
+          const newHeightVp = uiContext.px2vp(data.area.topRect.height)
           if (newHeightVp > 0) {
             AppStorage.setOrCreate('statusBarHeight', newHeightVp)
           }
@@ -86,6 +87,7 @@ export default class EntryAbility extends UIAbility {
    */
   private applyWindowBackground(windowStage: window.WindowStage): void {
     try {
+      // @SuppressWarnings syscap
       windowStage.getMainWindowSync().setWindowBackgroundColor(WINDOW_BACKGROUND_COLOR)
       debugLog('应用', `窗口底色已设为 ${WINDOW_BACKGROUND_COLOR}`)
     } catch (error) {

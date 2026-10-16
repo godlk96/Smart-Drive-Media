@@ -44,10 +44,6 @@ export class EditorViewModel {
     return this.bridge.updatePlayhead(Math.floor(playheadSec * 1000))
   }
 
-  selectTemplate(templateId: string): EditorStateModel {
-    return this.bridge.selectTemplate(templateId)
-  }
-
   /**
    * 切换模板。这里曾经是一个 taskId 状态机（beginTemplateSwitchTask /
    * isTemplateSwitchTaskValid / finishTemplateSwitchTask + 三个私有字段），
@@ -202,23 +198,6 @@ export class EditorViewModel {
     return 1.0
   }
 
-  getTimelineTicks(totalDurationSec: number): Array<number> {
-    const result: Array<number> = []
-    const interval = totalDurationSec <= 60 ? 10 : 30
-    for (let point = 0; point <= totalDurationSec; point += interval) {
-      result.push(point)
-    }
-    if (result.length === 0 || result[result.length - 1] !== totalDurationSec) {
-      result.push(totalDurationSec)
-    }
-    return result
-  }
-
-  formatTimelineTick(seconds: number): string {
-    const min = Math.floor(seconds / 60)
-    const sec = Math.floor(seconds % 60)
-    return `${min}:${sec.toString().padStart(2, '0')}`
-  }
 
   /** 判断当前是否处于空白区间（未选中任何段且非全片原始态）。 */
   isGap(state: EditorStateModel): boolean {
