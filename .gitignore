@@ -70,3 +70,7 @@ media_resource/
 SmartDrive_Export_*.mp4
 
 *.dmp
+
+# local-only build/download artifacts (never commit)
+local-artifacts/
+.ffmpeg-tmp/

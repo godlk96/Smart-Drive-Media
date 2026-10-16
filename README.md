@@ -13,11 +13,17 @@ HarmonyOS 6（API 22）原生应用 · ArkTS / ArkUI + C++ / FFmpeg 双栈
 
 ## 演示
 
-▶️ **[观看演示视频](https://github.com/godlk96/Smart-Drive-Media/blob/main/docs/media/demo.mp4)** · 76 MB
+<p align="center">
+  <img src="docs/media/demo-poster.jpg" width="290" alt="剪单编辑器：三机位合成预览">
+</p>
 
-点开后是 GitHub 自带的播放器页面，可直接播放或下载。
+<p align="center"><b>六路行车记录仪素材 → 一条可直接发布的行程短片</b></p>
 
-> GitHub 会剥离仓库内 Markdown 的 `<video>` 标签，所以这里没法内联播放。要在 README 里嵌一个真正能播放的播放器，只能使用 GitHub 的 **user-attachments** 链接（把视频拖进任意 issue/PR 评论框上传后得到的 `https://github.com/user-attachments/assets/...` 地址）—— 该地址由 GitHub 渲染成播放器。详见下方「已知限制」。
+▶️ **[观看完整演示视频（3 分钟）](https://github.com/godlk96/Smart-Drive-Media/blob/main/docs/media/demo.mp4)** · 76 MB
+
+下面是演示节选（0:28–0:42）：在时间轴上从「全片」切出「片段 1」，并调整倍速。
+
+![剪单剪辑流程演示](docs/media/demo.gif)
 
 ---
 
