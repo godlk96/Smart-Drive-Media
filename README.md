@@ -13,9 +13,11 @@ HarmonyOS 6（API 22）原生应用 · ArkTS / ArkUI + C++ / FFmpeg 双栈
 
 ## 演示
 
-<video src="https://github.com/godlk96/Smart-Drive-Media/raw/main/docs/media/demo.mp4" controls width="100%"></video>
+▶️ **[观看演示视频](https://github.com/godlk96/Smart-Drive-Media/blob/main/docs/media/demo.mp4)** · 76 MB
 
-> 若上方播放器未加载，可直接[下载演示视频](https://github.com/godlk96/Smart-Drive-Media/raw/main/docs/media/demo.mp4)（约 76 MB）。
+点开后是 GitHub 自带的播放器页面，可直接播放或下载。
+
+> GitHub 会剥离仓库内 Markdown 的 `<video>` 标签，所以这里没法内联播放。要在 README 里嵌一个真正能播放的播放器，只能使用 GitHub 的 **user-attachments** 链接（把视频拖进任意 issue/PR 评论框上传后得到的 `https://github.com/user-attachments/assets/...` 地址）—— 该地址由 GitHub 渲染成播放器。详见下方「已知限制」。
 
 ---
 
