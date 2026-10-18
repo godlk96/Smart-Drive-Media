@@ -6,6 +6,7 @@ import previewLayoutTest from './PreviewLayout.test'
 import segmentModelTest from './SegmentModel.test'
 import tripFormatTest from './TripFormat.test'
 import editHistoryTest from './EditHistory.test'
+import editRestoreTest from './EditRestore.test'
 
 export default function testsuite(): void {
   appStateModelTest()
@@ -16,4 +17,5 @@ export default function testsuite(): void {
   segmentModelTest()
   tripFormatTest()
   editHistoryTest()
+  editRestoreTest()
 }

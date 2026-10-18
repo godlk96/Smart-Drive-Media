@@ -10,6 +10,9 @@
  * 语义：segments 是升序、互不重叠的区间列表；段之间的空档是隐式灰段，
  * 不占 MAX_SEGMENTS 名额（该上限只数 enabled === true 的段）。
  * 默认状态是 createFullSegment(total) 返回的一整段 [0, total]。
+ *
+ * 与导出快照的桥：`toExportSegments`（模型层 → 导出）与
+ * `toEditorSegments`（导出 → 模型层）互逆，是「按历史记录还原剪辑页」的基础。
  */
 
 import { ExportSegment } from './TripModels'
@@ -528,6 +531,45 @@ export function toExportSegments(segments: Array<Segment>): Array<ExportSegment>
   }
   out.sort((a: ExportSegment, b: ExportSegment) => a.startMs - b.startMs)
   return out
+}
+
+/**
+ * 导出用区间 → 模型层片段：与 `toExportSegments` **互逆**。
+ *
+ * 为什么 id 要按序号重编而不是照抄：`ExportSegment` 根本没有 id ——
+ * 导出快照只存区间本身，不存段身份。段身份是剪辑页的本地概念
+ * （selectedSegmentId 指向它），所以还原时按数组序重新发号。
+ * `enabled` 一律 true：能被存进快照的段都是当时启用的段。
+ */
+export function toEditorSegments(exportSegments: Array<ExportSegment>): Array<Segment> {
+  const out: Array<Segment> = []
+  for (let i = 0; i < exportSegments.length; i++) {
+    const item = exportSegments[i]
+    const segment = new Segment()
+    segment.id = i
+    segment.startSec = item.startMs / 1000
+    segment.endSec = item.endMs / 1000
+    segment.speedLabel = item.speedLabel
+    segment.muted = item.muted
+    segment.enabled = true
+    out.push(segment)
+  }
+  return out
+}
+
+/**
+ * 这一组段是否等于「未剪的原始态」：恰好一段、启用、且盖满整片。
+ *
+ * 用途是决定还原后 `isRawFull` 该亮哪个状态 —— 用户存过一次原始态导出，
+ * 再点「重新剪辑」进去，界面必须和当初一样显示「未剪辑」而不是「已剪 n 段」。
+ * 判 `>=` 而不是 `===`：片长在两端各自算过，容得下浮点误差。
+ */
+export function isRawFullSegments(segments: Array<Segment>, totalDurationSec: number): boolean {
+  if (segments.length !== 1) {
+    return false
+  }
+  const only = segments[0]
+  return only.enabled && only.startSec <= 0 && only.endSec >= totalDurationSec
 }
 
 /** 导出成片时长（秒）：各段毫秒长度按各自倍速换算后求和。 */

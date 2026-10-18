@@ -42,7 +42,8 @@ const SUITES = [
   { path: 'entry/src/ohosTest/ets/test/PreviewLayoutCases.ets', exportName: 'previewLayoutCases' },
   { path: 'entry/src/ohosTest/ets/test/SegmentModelCases.ets', exportName: 'segmentModelCases' },
   { path: 'entry/src/ohosTest/ets/test/TripFormatCases.ets', exportName: 'tripFormatCases' },
-  { path: 'entry/src/ohosTest/ets/test/EditHistoryCases.ets', exportName: 'editHistoryCases' }
+  { path: 'entry/src/ohosTest/ets/test/EditHistoryCases.ets', exportName: 'editHistoryCases' },
+  { path: 'entry/src/ohosTest/ets/test/EditRestoreCases.ets', exportName: 'editRestoreCases' }
 ]
 
 const TSC_CANDIDATES = [
