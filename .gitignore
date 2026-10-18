@@ -74,3 +74,4 @@ SmartDrive_Export_*.mp4
 # local-only build/download artifacts (never commit)
 local-artifacts/
 .ffmpeg-tmp/
+.device/
