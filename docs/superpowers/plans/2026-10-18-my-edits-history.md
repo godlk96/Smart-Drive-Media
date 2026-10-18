@@ -1,6 +1,6 @@
 # 剪单「我的剪辑」实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 导出成功后给用户明确回执；把每次导出落成一条「作品记录」，首页新增「我的剪辑」Tab 展示历史作品，点进去按记录里的参数在剪辑页**现场还原**，再导出时可**就地覆写**同一件作品。
 
@@ -62,7 +62,7 @@
   - `export function formatClockDuration(durationMs: number): string` → `00:32` / `1:02:03`
   - `export function formatRecordSummary(segmentCount: number, durationMs: number): string` → `2 段 · 00:32`
 
-- [ ] **Step 1: 先写失败用例**
+- [x] **Step 1: 先写失败用例**
 
 创建 `entry/src/ohosTest/ets/test/EditHistoryCases.ets`，照 `entry/src/ohosTest/ets/test/TripFormatCases.ets:1-11` 的 `makeCase` 模式（`TimelineCase` + `expectString` / `expectNumber` / `expectTrue` / `expectFalse` 来自 `./TestSupport`）：
 
@@ -136,7 +136,7 @@ export function editHistoryCases(): Array<TimelineCase> {
 | 段数为 0 也给 0 段 | `expectString(formatRecordSummary(0, 0), '0 段 · 00:00', '零段')` |
 | 生成的 id 带前缀且唯一 | 两次 `makeRecordId` 不同，且都以 `rec_` 开头 |
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```powershell
 & "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" tools/offline-test.mjs
@@ -144,7 +144,7 @@ export function editHistoryCases(): Array<TimelineCase> {
 
 预期：报 `Cannot find module .../model/EditRecord` 之类的解析错误（文件还不存在）。
 
-- [ ] **Step 3: 实现 `EditRecord.ets`**
+- [x] **Step 3: 实现 `EditRecord.ets`**
 
 要点：
 - `parseEditRecords` 用 `try { JSON.parse(raw) as Array<EditRecord> } catch { return [] }`，再 `Array.isArray` 守卫，再逐条 `normalizeRecord`（`typeof source.x === 'string' ? source.x : ''`，数字同理），无 `id` 直接丢；最后 `sortRecordsNewestFirst`。
@@ -153,14 +153,14 @@ export function editHistoryCases(): Array<TimelineCase> {
 - `formatExportTime` 用 `new Date(exportedAt)` + `getMonth() + 1` / `getDate()` / `getHours()` / `getMinutes()`；`exportedAt <= 0` 返回 `'导出时间未知'`。
 - 内部 `pad2(value: number): string`（非导出）。
 
-- [ ] **Step 4: 注册用例**
+- [x] **Step 4: 注册用例**
 
 - `tools/offline-test.mjs:39-45` 的 `SUITES` 追加：
   `{ path: 'entry/src/ohosTest/ets/test/EditHistoryCases.ets', exportName: 'editHistoryCases' },`
 - 新建 `entry/src/ohosTest/ets/test/EditHistory.test.ets`：照 `entry/src/ohosTest/ets/test/TripFormat.test.ets` 的 hypium 包装（`describe` + 遍历 `editHistoryCases()` 逐个 `it` + `expect(result).assertEqual('')`），导入路径 `'../../../main/ets/model/EditRecord'` 对应的 Cases 工厂 `editHistoryCases`。
 - `entry/src/ohosTest/ets/test/List.test.ets` 里按现有写法加 `editHistoryTest`（与其它 `*Test` 同层）。
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 ```powershell
 & "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" tools/offline-test.mjs
@@ -168,7 +168,7 @@ export function editHistoryCases(): Array<TimelineCase> {
 
 预期：`150 + 27 = 177` 条全绿（原 150 条不许回归）。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```powershell
 git add entry/src/main/ets/model/EditRecord.ets entry/src/ohosTest/ets/test/EditHistoryCases.ets entry/src/ohosTest/ets/test/EditHistory.test.ets entry/src/ohosTest/ets/test/List.test.ets tools/offline-test.mjs
@@ -198,7 +198,7 @@ git commit -m "feat(我的剪辑): 新增 EditRecord 模型与历史列表纯函
     - `export function snapshotMatchesTrip(stored: ExportSnapshot, live: TripSnapshot): boolean` —— `stored.trip.title` 非空且 `=== live.tripTitle` 且 `stored.trip.startTs === live.startTs`
     - `export function restoreEditorStateFromSnapshot(stored: ExportSnapshot, live: TripSnapshot, sessionId: string, exportStatus: string): EditorState` —— `trip` 取 `tripFromSnapshot(live)`（**素材以现场为准**），`selectedTemplateId` / `playback.playheadMs` / `playback.segments` / `brand.watermarkEnabled` 取 `stored`（**参数以记录为准**），`ui = { drawerExpanded: true, exporting: false, exportStatus }`
 
-- [ ] **Step 1: 先写失败用例**
+- [x] **Step 1: 先写失败用例**
 
 创建 `entry/src/ohosTest/ets/test/EditRestoreCases.ets`，沿用 Task 1 的 `makeCase` 模式，导出 `editRestoreCases`。构造一个最小 `TripSnapshot` 与一个 `ExportSnapshot`：
 
@@ -246,19 +246,19 @@ function makeLive(): TripSnapshot {
 | 剪过的段不算原始态 | 上面 `[30,120]` 的段 → `expectFalse(...)` |
 | 两段不算原始态 | 两段拼满全片 → `expectFalse(...)` |
 
-- [ ] **Step 2: 跑测试确认失败**（同上一条命令，预期报找不到 `toEditorSegments` / `restoreEditorStateFromSnapshot`）
+- [x] **Step 2: 跑测试确认失败**（同上一条命令，预期报找不到 `toEditorSegments` / `restoreEditorStateFromSnapshot`）
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `SegmentModel.ets`：`toEditorSegments` 与 `isRawFullSegments` 追加在 `:531` 之后，紧挨 `toExportSegments` / `exportDurationSec`，并在文件头注释里补一句「与 `toExportSegments` 互逆」。
 
 `Models.ets`：`parseExportSnapshot` / `snapshotMatchesTrip` / `restoreEditorStateFromSnapshot` 追加在 `deepCloneExportSnapshot` 之后（`:492` 起）。
 
-- [ ] **Step 4: 注册用例**（`tools/offline-test.mjs` 的 `SUITES` 加 `EditRestoreCases.ets` / `editRestoreCases`；新建 `EditRestore.test.ets`；`List.test.ets` 加 `editRestoreTest`）
+- [x] **Step 4: 注册用例**（`tools/offline-test.mjs` 的 `SUITES` 加 `EditRestoreCases.ets` / `editRestoreCases`；新建 `EditRestore.test.ets`；`List.test.ets` 加 `editRestoreTest`）
 
-- [ ] **Step 5: 跑测试确认通过**（预期全绿）
+- [x] **Step 5: 跑测试确认通过**（预期全绿）
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```powershell
 git add entry/src/main/ets/model/Models.ets entry/src/main/ets/model/SegmentModel.ets entry/src/ohosTest/ets/test/EditRestoreCases.ets entry/src/ohosTest/ets/test/EditRestore.test.ets entry/src/ohosTest/ets/test/List.test.ets tools/offline-test.mjs
@@ -294,20 +294,20 @@ git commit -m "feat(我的剪辑): 新增按记录快照还原编辑器状态的
     - `public async setContext(context: common.UIAbilityContext | null): Promise<void>`（转调 `PreferencesService.getInstance().setContext`）
   - 说明：**`EditHistoryService.ets` 不是纯模块**（导入 `PreferencesService` → `@ohos.data.preferences`），因此**不得**进 `offline-test.mjs` 的 `SUITES`；只进 `typecheck-player.mjs` 的 deps。
 
-- [ ] **Step 1: 改 `PreferencesService`**
+- [x] **Step 1: 改 `PreferencesService`**
 
 照 `saveLastTripId`（`:37-47`）/ `getLastTripId`（`:50-61`）的既有写法加两个方法。**关键**：`loadEditRecords` 在 `getPreferencesStore()` 返回 `null` 或 `store.get` 抛错时，`debugLog('偏好设置', '历史记录读取失败，本次以空列表继续')` 并返回 `[]`；`saveEditRecords` 同样 `debugLog` 后返回 `false`。**不要**让失败静默变成「看起来成功」。
 
-- [ ] **Step 2: 建 `EditHistoryService`**
+- [x] **Step 2: 建 `EditHistoryService`**
 
 薄封装：所有方法 `await` 到 `PreferencesService.getInstance()` 的读写，用 Task 1 的纯函数做列表变换（`upsert` 先 `list()` 再 `upsertRecord` 再 `saveEditRecords`）。`updateCoverPath` 只在 `coverPath` 非空且与现值不同时写盘（避免每次渲染都写）。
 
-- [ ] **Step 3: 登记 typecheck group**
+- [x] **Step 3: 登记 typecheck group**
 
 `tools/typecheck-player.mjs` 的 `GROUPS`：给 `home` 与 `export` 两个 group 的 `deps` 各加
 `'entry/src/main/ets/model/EditRecord.ets'` 与 `'entry/src/main/ets/service/EditHistoryService.ets'`（`PreferencesService.ets` 已在 deps 里）。
 
-- [ ] **Step 4: 语法类型检查**
+- [x] **Step 4: 语法类型检查**
 
 ```powershell
 & "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" tools/typecheck-player.mjs home
@@ -316,7 +316,7 @@ git commit -m "feat(我的剪辑): 新增按记录快照还原编辑器状态的
 
 预期：两条都无 diagnostics 输出、退出码 0。
 
-- [ ] **Step 5: 离线测试不许回归**
+- [x] **Step 5: 离线测试不许回归**
 
 ```powershell
 & "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" tools/offline-test.mjs
@@ -324,7 +324,7 @@ git commit -m "feat(我的剪辑): 新增按记录快照还原编辑器状态的
 
 预期：全绿（`EditHistoryService` 不在 SUITES 里，不影响）。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```powershell
 git add entry/src/main/ets/service/PreferencesService.ets entry/src/main/ets/service/EditHistoryService.ets tools/typecheck-player.mjs
@@ -377,19 +377,19 @@ git commit -m "feat(我的剪辑): 新增 pref_edit_records 持久化与 EditHis
 
 覆盖时 `id` 必须原样保留，`upsert` 才能替换而不是追加（spec 4.5 第 3 条）。
 
-- [ ] **Step 1: 扩展 `start` / `run` / `saveVideoToAlbum` 签名并透传 `overwriteTargetUri`**
+- [x] **Step 1: 扩展 `start` / `run` / `saveVideoToAlbum` 签名并透传 `overwriteTargetUri`**
 
-- [ ] **Step 2: 在 `saveVideoToAlbum` 里加覆盖分支（跳过对话框 + TRUNC）**
+- [x] **Step 2: 在 `saveVideoToAlbum` 里加覆盖分支（跳过对话框 + TRUNC）**
 
-- [ ] **Step 3: 加 `persistRecord` 并在 `run` 的相册成功分支后调用**
+- [x] **Step 3: 加 `persistRecord` 并在 `run` 的相册成功分支后调用**
 
 覆盖时**不额外加参数**：在 `persistRecord` 里若 `record.overwriteTargetUri.length > 0`，就 `await EditHistoryService.getInstance().list()` 后找出 `albumUri === record.overwriteTargetUri` 的那条，把它的 `id` 与 `coverPath` 继承过来（`id` 不变才能被 `upsertRecord` 替换而不是追加）。找不到（记录被用户删了）就退回 `makeRecordId(...)` 新建一条 —— 此时相册条目已被覆写，新记录指向同一个 `albumUri`，语义仍然正确。
 
-- [ ] **Step 4: `ExportManager.start` 里先 `PreferencesService.getInstance().setContext(context)`**
+- [x] **Step 4: `ExportManager.start` 里先 `PreferencesService.getInstance().setContext(context)`**
 
 保证 `EditHistoryService` 有 context 可写（`CoreBridge.ets:567` 也会设，但导出不一定经过它）。
 
-- [ ] **Step 5: `NativeExportManager.startNativeExport` 透传第四参**
+- [x] **Step 5: `NativeExportManager.startNativeExport` 透传第四参**
 
 ```powershell
 & "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" tools/typecheck-player.mjs export
@@ -397,7 +397,7 @@ git commit -m "feat(我的剪辑): 新增 pref_edit_records 持久化与 EditHis
 
 预期：无 diagnostics、退出码 0。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```powershell
 git add entry/src/main/ets/service/ExportManager.ets entry/src/main/ets/NativeExportManager.ets tools/typecheck-player.mjs
@@ -459,9 +459,9 @@ this.isRawFull = isRawFullSegments(this.segments, live.durationSec)
 this.exportStatusText = restored.ui.exportStatus
 ```
 
-- [ ] **Step 1: 在 `CoreBridge` 加 `restoreEditorState` + `applyRestoredState`**
+- [x] **Step 1: 在 `CoreBridge` 加 `restoreEditorState` + `applyRestoredState`**
 
-- [ ] **Step 2: 在 `EditorViewModel` 加 `hydrateFromRecord`**
+- [x] **Step 2: 在 `EditorViewModel` 加 `hydrateFromRecord`**
 
 ```typescript
 hydrateFromRecord(tripId: string, recordJson: string): EditorHydrateResult {
@@ -475,7 +475,7 @@ hydrateFromRecord(tripId: string, recordJson: string): EditorHydrateResult {
 }
 ```
 
-- [ ] **Step 3: 登记 deps 并检查**
+- [x] **Step 3: 登记 deps 并检查**
 
 ```powershell
 & "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" tools/typecheck-player.mjs bridge
@@ -483,7 +483,7 @@ hydrateFromRecord(tripId: string, recordJson: string): EditorHydrateResult {
 
 预期：无 diagnostics、退出码 0。
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```powershell
 git add entry/src/main/ets/bridge/CoreBridge.ets entry/src/main/ets/viewmodel/EditorViewModel.ets tools/typecheck-player.mjs
@@ -576,15 +576,15 @@ this.showToast('已保存到相册')
 
 覆盖与新建共用这一句（用户要的就是「保存成功」的回执，spec 4.9）。**注意**：`NativeExportManager` 会在**第一个**终结事件上 resolve，而 `ExportManager` 先发 `导出完成：${fileName}` 再发 `相册保存成功：${albumUri}` —— 所以 `.then` 里拿到的不一定是相册 URI。toast 只依赖「成功」这件事，不解析文本，因此不受影响。
 
-- [ ] **Step 1: 加 `@State` 字段**（`recordId` / `driftVisible` / `overwritePromptVisible` / `overwriteCandidate` / `restorePending`）
+- [x] **Step 1: 加 `@State` 字段**（`recordId` / `driftVisible` / `overwritePromptVisible` / `overwriteCandidate` / `restorePending`）
 
-- [ ] **Step 2: 改 `aboutToAppear` 的还原分支 + 漂移弹窗**
+- [x] **Step 2: 改 `aboutToAppear` 的还原分支 + 漂移弹窗**
 
-- [ ] **Step 3: 抽 `launchExport(overwriteTargetUri)` + 覆盖询问弹窗**
+- [x] **Step 3: 抽 `launchExport(overwriteTargetUri)` + 覆盖询问弹窗**
 
-- [ ] **Step 4: 加成功 toast**
+- [x] **Step 4: 加成功 toast**
 
-- [ ] **Step 5: 检查**
+- [x] **Step 5: 检查**
 
 ```powershell
 & "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" tools/typecheck-player.mjs player
@@ -593,7 +593,7 @@ this.showToast('已保存到相册')
 
 预期：typecheck 无 diagnostics；离线测试全绿（`checkNoLegacyColors` 会扫 `pages/Editor.ets`，**不许出现十六进制颜色**）。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```powershell
 git add entry/src/main/ets/pages/Editor.ets
@@ -651,13 +651,13 @@ git commit -m "feat(我的剪辑): 剪辑页支持按记录还原、覆盖询问
 - **卡片渲染永远不等缩略图**：先显示 `fallbackCoverUri`，取到后替换；
 - 取不到（返回 `''`）就**一直用 `fallbackCoverUri`**，不重试、不报错。
 
-- [ ] **Step 1: 写 `EditRecordCard.ets`**（纯 UI，无业务判断）
+- [x] **Step 1: 写 `EditRecordCard.ets`**（纯 UI，无业务判断）
 
-- [ ] **Step 2: 登记 `UI_FILES`**
+- [x] **Step 2: 登记 `UI_FILES`**
 
 `tools/offline-test.mjs` 里 `checkNoLegacyColors` 用的 `UI_FILES` 列表加 `'entry/src/main/ets/components/EditRecordCard.ets'`。
 
-- [ ] **Step 3: 跑离线测试**
+- [x] **Step 3: 跑离线测试**
 
 ```powershell
 & "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" tools/offline-test.mjs
@@ -665,7 +665,7 @@ git commit -m "feat(我的剪辑): 剪辑页支持按记录还原、覆盖询问
 
 预期：全绿。若报 `checkColorReferences` 失败，说明用了不存在的 `$r('app.color.X')` —— 要么改用已有 token，要么在 `color.json` 里补上并同步 `REQUIRED_COLOR_TOKENS`。
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```powershell
 git add entry/src/main/ets/components/EditRecordCard.ets entry/src/main/resources/base/element/color.json tools/offline-test.mjs
@@ -720,17 +720,17 @@ try {
 
 **不要**硬编图库的 `bundleName` / `abilityName`（非公开 API）。项目里**没有 `startAbility` 先例**，这是第一次用。
 
-- [ ] **Step 1: 加 `MyEditsViewState` 与字段**
+- [x] **Step 1: 加 `MyEditsViewState` 与字段**
 
-- [ ] **Step 2: 加 `refreshMyEdits`（列表 + 缩略图 + 孤儿检测）**
+- [x] **Step 2: 加 `refreshMyEdits`（列表 + 缩略图 + 孤儿检测）**
 
-- [ ] **Step 3: 加路由 `openEditorFromRecordRoute`**
+- [x] **Step 3: 加路由 `openEditorFromRecordRoute`**
 
-- [ ] **Step 4: 加多选删除**
+- [x] **Step 4: 加多选删除**
 
-- [ ] **Step 5: 加 `playRecord`**
+- [x] **Step 5: 加 `playRecord`**
 
-- [ ] **Step 6: 检查**
+- [x] **Step 6: 检查**
 
 ```powershell
 & "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" tools/typecheck-player.mjs home
@@ -738,7 +738,7 @@ try {
 
 预期：无 diagnostics、退出码 0。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```powershell
 git add entry/src/main/ets/viewmodel/HomeViewModel.ets
@@ -779,15 +779,15 @@ git commit -m "feat(我的剪辑): 首页视图模型支持作品列表、还原
    - `onToggleSelect` → `this.viewModel.toggleRecordSelection(record.id)`。
 8. **多选态下点卡片**只切选择，不跳转。
 
-- [ ] **Step 1: 加 `activeTab` / `myEdits` 两个 `@State` 与 Tab 栏，并在 `syncViewState()` 里同步 `myEdits`**
+- [x] **Step 1: 加 `activeTab` / `myEdits` 两个 `@State` 与 Tab 栏，并在 `syncViewState()` 里同步 `myEdits`**
 
-- [ ] **Step 2: 页头按 Tab 分支**
+- [x] **Step 2: 页头按 Tab 分支**
 
-- [ ] **Step 3: 加 `myEditsList()` 与空态 / 错误态**
+- [x] **Step 3: 加 `myEditsList()` 与空态 / 错误态**
 
-- [ ] **Step 4: 接线卡片回调与删除确认弹窗**
+- [x] **Step 4: 接线卡片回调与删除确认弹窗**
 
-- [ ] **Step 5: 检查**
+- [x] **Step 5: 检查**
 
 ```powershell
 & "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" tools/typecheck-player.mjs player
@@ -796,7 +796,7 @@ git commit -m "feat(我的剪辑): 首页视图模型支持作品列表、还原
 
 预期：typecheck 无 diagnostics；离线测试全绿（`checkNoLegacyColors` 会扫 `pages/Index.ets`，**不许出现十六进制颜色**）。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```powershell
 git add entry/src/main/ets/pages/Index.ets
@@ -809,7 +809,7 @@ git commit -m "feat(我的剪辑): 首页新增「行程库 / 我的剪辑」双
 
 **Files:** 无（只跑命令、记录结论）
 
-- [ ] **Step 1: 离线纯函数测试**
+- [x] **Step 1: 离线纯函数测试**
 
 ```powershell
 & "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" tools/offline-test.mjs
@@ -817,7 +817,7 @@ git commit -m "feat(我的剪辑): 首页新增「行程库 / 我的剪辑」双
 
 预期：全绿，无回归。
 
-- [ ] **Step 2: 四个 group 的类型检查**
+- [x] **Step 2: 四个 group 的类型检查**
 
 ```powershell
 & "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" tools/typecheck-player.mjs player
@@ -829,6 +829,10 @@ git commit -m "feat(我的剪辑): 首页新增「行程库 / 我的剪辑」双
 预期：四条都无 diagnostics、退出码 0。
 
 - [ ] **Step 3: 真机验收（`hdc list targets` 非空时）**
+
+> **2026-10-18 实测：`hdc list targets` 输出 `[Empty]`，没有连接任何设备，本节全部未执行。**
+> Task 1–9 的自动化门禁（离线纯函数测试 197/197、四组类型检查 0 诊断、`hvigorw assembleHap` BUILD SUCCESSFUL）
+> 在此日期全部通过，但下面这几条**只有真机能验**，不得据自动化结果推断为通过。
 
 按 spec 第 6 节的三条「未验证」，逐条记录结论：
 
