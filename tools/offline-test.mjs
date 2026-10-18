@@ -311,7 +311,8 @@ const UI_FILES = [
   'entry/src/main/ets/components/EditorPreviewArea.ets',
   'entry/src/main/ets/components/SegmentParamRow.ets',
   'entry/src/main/ets/components/SegmentTrack.ets',
-  'entry/src/main/ets/components/TemplateStrip.ets'
+  'entry/src/main/ets/components/TemplateStrip.ets',
+  'entry/src/main/ets/components/EditRecordCard.ets'
 ]
 
 const LEGACY_COLORS = ['#FF7A00', '#0A59F7', '#FF4444', '#F97316', '#181818', '#282828', '#333333', '#121212', '#1A1A1A']
