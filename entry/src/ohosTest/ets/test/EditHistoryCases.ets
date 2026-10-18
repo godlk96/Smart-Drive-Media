@@ -10,7 +10,7 @@ import { EditRecord, EDIT_RECORD_SCHEMA_VERSION, makeRecordId, parseEditRecords,
   serializeEditRecords, sortRecordsNewestFirst, findRecordById, recordsForTrip,
   findLatestRecordForTrip, upsertRecord, removeRecords, recordMatchesTrip,
   formatExportTime, formatClockDuration, formatRecordSummary,
-  templateSlotCount, formatRecordSlotCount,
+  templateSlotCount, formatRecordSlotCount, templateAspectRatio,
   limitRecords, fitRecordsUnderBytes } from '../../../main/ets/model/EditRecord'
 import { TimelineCase, expectString, expectNumber, expectTrue, expectFalse, firstError } from './TestSupport'
 
@@ -249,6 +249,25 @@ export function editHistoryCases(): Array<TimelineCase> {
 
   cases.push(makeCase('未知模板的机位文案为空串，好让卡片整行不画', () => {
     return expectString(formatRecordSlotCount('T99'), '', '空串')
+  }))
+
+  // ---- 画布比例（首帧按它取高度，否则 T3/T4 的 32:9 被压成 16:9）----
+
+  cases.push(makeCase('模板画布比例与成片一致', () => {
+    return firstError([
+      expectNumber(templateAspectRatio('T3'), 3840 / 1080, 'T3 左右分屏 32:9'),
+      expectNumber(templateAspectRatio('T4'), 3840 / 1080, 'T4 三分屏 32:9'),
+      expectNumber(templateAspectRatio('T5'), 1920 / 1080, 'T5 单视角 16:9'),
+      expectNumber(templateAspectRatio('T6'), 3840 / 2160, 'T6 四机位 16:9'),
+      expectNumber(templateAspectRatio('T1'), 1920 / 2160, 'T1 上下堆叠 8:9')
+    ])
+  }))
+
+  cases.push(makeCase('未知模板比例为 0，取帧退回 16:9', () => {
+    return firstError([
+      expectNumber(templateAspectRatio(''), 0, '空串'),
+      expectNumber(templateAspectRatio('T99'), 0, '不存在的模板')
+    ])
   }))
 
   cases.push(makeCase('生成的 id 带前缀且唯一', () => {

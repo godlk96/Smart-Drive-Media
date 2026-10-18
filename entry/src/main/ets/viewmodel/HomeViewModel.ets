@@ -6,9 +6,9 @@ import { BusinessError } from '@ohos.base'
 import { sharedCoreBridge } from '../bridge/CoreBridge'
 import { PAGE_ROUTE_EDITOR, REQUIRED_MEDIA_PERMISSIONS } from '../constants/AppConstants'
 import { LibraryStateModel, TripCardModel } from '../model/AppState'
-import { EditRecord } from '../model/EditRecord'
+import { EditRecord, templateAspectRatio } from '../model/EditRecord'
 import { EditHistoryService } from '../service/EditHistoryService'
-import { extractFirstFrameByService } from '../service/ExportNativeService'
+import { extractFirstFrameByService, THUMB_CACHE_TAG } from '../service/ExportNativeService'
 import { debugLog } from '../utils/Logger'
 
 export interface HomeRouteRequest {
@@ -374,6 +374,10 @@ export class HomeViewModel {
     if (path.length === 0) {
       return false
     }
+    // 取帧算法换过版本（首帧改为按源比例取），老路径指向的拉伸图不能再认。
+    if (path.indexOf(THUMB_CACHE_TAG) < 0) {
+      return false
+    }
     try {
       return fs.accessSync(path)
     } catch (error) {
@@ -403,7 +407,8 @@ export class HomeViewModel {
         try {
           // 缓存 key 带上 exportedAt：覆盖导出后相册里那条视频换了内容，
           // 只用 record.id 当 key 会命中上一版的首帧缓存，卡片一直停在旧画面。
-          framePath = await extractFirstFrameByService(record.albumUri, cacheDir, `${record.id}_${record.exportedAt}`)
+          framePath = await extractFirstFrameByService(record.albumUri, cacheDir,
+            `${record.id}_${record.exportedAt}`, templateAspectRatio(record.templateId))
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           debugLog('首页VM', `成片首帧提取异常 记录=${record.id}：${message}`)

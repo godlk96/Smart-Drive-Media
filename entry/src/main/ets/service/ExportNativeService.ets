@@ -13,7 +13,41 @@ const THUMB_JPEG_QUALITY: number = 92
 const THUMB_TIME_US: number = 0
 // 缓存版本号：取帧尺寸/质量一变就必须递增。isUsableThumbnail 只检查文件 size > 0，
 // 不校验分辨率，否则上一版 480×270 的旧文件会被当有效缓存复用，改了参数也不生效。
-const THUMB_CACHE_VERSION: string = 'v2'
+// v3：首帧改为按源画面比例取帧（v2 一律压成 16:9，T3/T4 的 32:9 成片被横向拉扁）。
+const THUMB_CACHE_VERSION: string = 'v3'
+
+/**
+ * 首帧缓存文件名里必须带的版本标记。
+ *
+ * 记录里存着 `coverPath`，光递增版本号没用 —— 老路径指向的文件还在，
+ * `isCoverUsable` 会判"能用"，拉伸的旧封面永远换不掉。调用方拿这个标记
+ * 过一遍，旧版本的路径一律当失效处理。
+ */
+export const THUMB_CACHE_TAG: string = `thumb_${THUMB_CACHE_VERSION}_`
+
+/**
+ * 按源画面比例算取帧高度，保证不被拉伸。
+ *
+ * `fetchFrameByTime` 的 `PixelMapParams` 是**非等比缩放**：给多少宽高就硬压成多少，
+ * 3840×1080（T3 左右分屏 / T4 三分屏）塞进 1920×1080 会被横向压扁三分之一。
+ * 所以高度要跟着源比例走，让卡片那边用 `ImageFit.Cover` 去裁，而不是在这里压。
+ *
+ * @param sourceAspectRatio 源宽/源高；<=0 或不合法时退回 16:9
+ */
+function resolveFrameHeight(sourceAspectRatio: number): number {
+  if (!(sourceAspectRatio > 0) || !isFinite(sourceAspectRatio)) {
+    return THUMB_HEIGHT
+  }
+  const natural: number = Math.round(THUMB_WIDTH / sourceAspectRatio)
+  if (natural < 1) {
+    return 1
+  }
+  // 极端竖片（T1 是 8:9，正常）兜个上限，避免算出天量像素把解码器打爆。
+  if (natural > THUMB_WIDTH * 2) {
+    return THUMB_WIDTH * 2
+  }
+  return natural
+}
 
 interface NativeExportPipelineRequest {
   frontUris: Array<string>
@@ -101,7 +135,8 @@ async function writeArrayBufferToFile(targetPath: string, buffer: ArrayBuffer): 
 export async function extractFirstFrameByService(
   sourceUri: string,
   cacheDir: string,
-  cacheKey: string
+  cacheKey: string,
+  sourceAspectRatio: number = 0
 ): Promise<string> {
   if (!sourceUri || sourceUri.length === 0 || cacheDir.length === 0) {
     return ''
@@ -137,7 +172,7 @@ export async function extractFirstFrameByService(
     const descriptor: media.AVFileDescriptor = { fd: sourceFd }
     generator.fdSrc = descriptor
 
-    const params: media.PixelMapParams = { width: THUMB_WIDTH, height: THUMB_HEIGHT }
+    const params: media.PixelMapParams = { width: THUMB_WIDTH, height: resolveFrameHeight(sourceAspectRatio) }
     pixelMap = await generator.fetchFrameByTime(
       THUMB_TIME_US,
       2 as media.AVImageQueryOptions,

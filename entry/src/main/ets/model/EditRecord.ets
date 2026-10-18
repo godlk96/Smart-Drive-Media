@@ -282,6 +282,35 @@ export function formatRecordSlotCount(templateId: string): string {
 }
 
 /**
+ * 模板画布的宽高比（宽/高），= 成片的真实画面比例。
+ *
+ * 与 Models.ets 各模板的 `canvasWidth / canvasHeight` 一致。取首帧时要拿它算
+ * 目标高度，否则 `fetchFrameByTime` 会把 32:9 的 T3/T4 硬压成 16:9，卡片上看着
+ * 就是横向拉扁了。未知模板返回 0，调用方退回 16:9。
+ */
+export function templateAspectRatio(templateId: string): number {
+  if (templateId === 'T1') {
+    return 1920 / 2160
+  }
+  if (templateId === 'T2') {
+    return 1920 / 1620
+  }
+  if (templateId === 'T3') {
+    return 3840 / 1080
+  }
+  if (templateId === 'T4') {
+    return 3840 / 1080
+  }
+  if (templateId === 'T5') {
+    return 1920 / 1080
+  }
+  if (templateId === 'T6') {
+    return 3840 / 2160
+  }
+  return 0
+}
+
+/**
  * 记录总数上限。
  *
  * 全部记录塞在 preferences 的**一个** value 里，而单条记录的 snapshot 带着
