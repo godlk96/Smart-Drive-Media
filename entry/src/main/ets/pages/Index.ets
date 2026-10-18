@@ -1,10 +1,12 @@
 import common from '@ohos.app.ability.common'
 import window from '@ohos.window'
 import { AppIcon, AppIconName } from '../components/AppIcon'
+import { EditRecordCard } from '../components/EditRecordCard'
 import { LibraryStateModel, TripCardModel } from '../model/AppState'
+import { EditRecord } from '../model/EditRecord'
 import { debugLog } from '../utils/Logger'
 import { formatTripDay, formatTripDuration, getTripStartTime, isTripComplete } from '../utils/TripFormat'
-import { HomeViewModel } from '../viewmodel/HomeViewModel'
+import { HomeViewModel, MyEditsViewState } from '../viewmodel/HomeViewModel'
 
 /** 时间轴轨宽度：时间右对齐、状态点压在最右侧，与封面之间留 10vp */
 // 46 装不下 "13:28"：右侧还要留 13vp 给状态点，可用只有 33vp，
@@ -41,6 +43,24 @@ struct Index {
     emptyText: '',
     permissionTip: ''
   }
+  /** 0 = 行程库，1 = 我的剪辑 */
+  @State private activeTab: number = 0
+  @State private myEdits: MyEditsViewState = {
+    records: [],
+    isLoading: true,
+    errorText: '',
+    coverPaths: {},
+    orphanIds: [],
+    unknownIds: [],
+    selectionMode: false,
+    selectedRecordIds: []
+  }
+  private myEditsLoaded: boolean = false
+  @State private deleteConfirmVisible: boolean = false
+  @State private deleteCount: number = 0
+  @State private toastText: string = ''
+  @State private toastVisible: boolean = false
+  private toastTimer: number = -1
 
   aboutToAppear(): void {
     const context = this.getHostContextOrNull()
@@ -73,6 +93,16 @@ struct Index {
     this.viewModel.setOnStateChangedListener(undefined)
   }
 
+  /**
+   * 从剪辑页返回时刷新「我的剪辑」—— 那边可能刚导出一条新记录，
+   * 也可能覆盖了旧记录，列表不及时更新用户会以为没生效。
+   */
+  onPageShow(): void {
+    if (this.activeTab === 1) {
+      void this.refreshMyEdits()
+    }
+  }
+
   private getHostContextOrNull(): common.UIAbilityContext | null {
     try {
       const host = this.getUIContext().getHostContext()
@@ -96,6 +126,9 @@ struct Index {
     this.state = state.libraryState
     // 列表只反转一次并缓存：ForEach 里要按相邻两项比较日期，不能每次重算
     this.displayCards = [...state.libraryState.cards].reverse()
+    // 「我的剪辑」同样必须走 @State：ForEach 只认 @State/@Prop 的变化，
+    // 直接在 build() 里读 viewModel 拿到的数组不会随数据刷新。
+    this.myEdits = this.viewModel.getMyEditsState()
   }
 
   private async refreshState(): Promise<void> {
@@ -214,43 +247,203 @@ struct Index {
     this.syncViewState()
   }
 
+  // ---------------- 我的剪辑 ----------------
+
+  private showToast(message: string): void {
+    this.toastText = message
+    this.toastVisible = true
+    if (this.toastTimer >= 0) {
+      clearTimeout(this.toastTimer)
+    }
+    this.toastTimer = setTimeout(() => {
+      this.toastVisible = false
+      this.toastTimer = -1
+    }, 2000)
+  }
+
+  private switchTab(index: number): void {
+    if (this.activeTab === index) {
+      return
+    }
+    this.activeTab = index
+    if (index === 1 && !this.myEditsLoaded) {
+      void this.refreshMyEdits()
+    }
+  }
+
+  private async refreshMyEdits(): Promise<void> {
+    const context = this.getHostContextOrNull()
+    if (context === null) {
+      return
+    }
+    try {
+      await this.viewModel.refreshMyEdits(context)
+      this.myEditsLoaded = true
+      this.syncViewState()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('首页', `刷新我的剪辑失败：${message}`)
+    }
+  }
+
+  private isRecordSelected(recordId: string): boolean {
+    return this.myEdits.selectedRecordIds.some((id: string) => id === recordId)
+  }
+
+  private coverPathOf(record: EditRecord): string {
+    const path = this.myEdits.coverPaths[record.id]
+    return path === undefined ? '' : path
+  }
+
+  /** 成片首帧取不到时回落到该行程在行程库里的封面，保证卡片永远有东西可画。 */
+  private fallbackCoverOf(record: EditRecord): string {
+    for (let i = 0; i < this.displayCards.length; i++) {
+      const card = this.displayCards[i]
+      if (card.id === record.tripId) {
+        return card.previewFrameUri
+      }
+    }
+    return ''
+  }
+
+  /**
+   * ForEach 的 key 必须把「选中态 / 多选态 / 孤儿态」也编进去：
+   * 这些变化不会改变记录本身，key 不变 ForEach 就不会重建子组件，
+   * 卡片上的勾选和对 ▶ 的置灰就永远不更新。
+   */
+  private recordCardKey(record: EditRecord): string {
+    const selected = this.isRecordSelected(record.id) ? '1' : '0'
+    const mode = this.myEdits.selectionMode ? '1' : '0'
+    const orphan = this.viewModel.isRecordOrphan(record.id) ? '1' : '0'
+    const unknown = this.viewModel.isRecordOrphanUnknown(record.id) ? '1' : '0'
+    return `${record.id}_${this.coverPathOf(record)}_${selected}${mode}${orphan}${unknown}`
+  }
+
+  private handleRecordClick(record: EditRecord): void {
+    if (this.myEdits.selectionMode) {
+      this.viewModel.toggleRecordSelection(record.id)
+      this.syncViewState()
+      return
+    }
+    this.openRecordEditor(record)
+  }
+
+  private openRecordEditor(record: EditRecord): void {
+    debugLog('首页', `从我的剪辑重新剪辑，记录=${record.id}`)
+    const route = this.viewModel.openEditorFromRecordRoute(record)
+    try {
+      this.getUIContext().getRouter().pushUrl(route)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('首页', `从记录进入剪辑失败：${message}`)
+    }
+  }
+
+  private async handleRecordPlay(record: EditRecord): Promise<void> {
+    const context = this.getHostContextOrNull()
+    if (context === null) {
+      return
+    }
+    const message = await this.viewModel.playRecord(record, context)
+    if (message.length > 0) {
+      this.showToast(message)
+    }
+  }
+
+  private handleRecordToggle(record: EditRecord): void {
+    this.viewModel.toggleRecordSelection(record.id)
+    this.syncViewState()
+  }
+
+  private toggleRecordSelectionMode(): void {
+    this.viewModel.toggleRecordSelectionMode()
+    this.syncViewState()
+  }
+
+  private askDeleteSelected(): void {
+    const count = this.myEdits.selectedRecordIds.length
+    if (count === 0) {
+      return
+    }
+    this.deleteCount = count
+    this.deleteConfirmVisible = true
+  }
+
+  private async confirmDeleteSelected(): Promise<void> {
+    this.deleteConfirmVisible = false
+    const ok = await this.viewModel.deleteSelectedRecords()
+    this.syncViewState()
+    if (!ok) {
+      this.showToast('移除失败，请重试')
+    }
+  }
+
   @Builder
   pageHeader() {
     Row({ space: 10 }) {
-      Text(this.state.title)
+      Text(this.activeTab === 0 ? this.state.title : '我的剪辑')
         .fontSize(20)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
         .layoutWeight(1)
 
-      Text(this.getSummaryText())
-        .fontSize(12)
-        .fontColor($r('app.color.text_tertiary'))
+      if (this.activeTab === 0) {
+        Text(this.getSummaryText())
+          .fontSize(12)
+          .fontColor($r('app.color.text_tertiary'))
+      }
 
-      if (this.canShowMergeButton()) {
-        Button('合并剪辑')
+      if (this.activeTab === 0) {
+        if (this.canShowMergeButton()) {
+          Button('合并剪辑')
+            .height(38)
+            .padding({ left: 17, right: 17 })
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.card_bg'))
+            .backgroundColor($r('app.color.amber'))
+            .borderRadius(10)
+            .onClick(() => this.openMergedEditor())
+        }
+
+        Button(this.selectionMode ? '取消' : '多选')
           .height(38)
           .padding({ left: 17, right: 17 })
           .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.card_bg'))
-          .backgroundColor($r('app.color.amber'))
+          .fontColor(this.selectionMode ? $r('app.color.card_bg') : $r('app.color.text_primary'))
+          .backgroundColor(this.selectionMode ? $r('app.color.ink') : $r('app.color.ed_surface'))
+          .border({
+            width: 1,
+            color: this.selectionMode ? $r('app.color.ink') : $r('app.color.ed_line')
+          })
           .borderRadius(10)
-          .onClick(() => this.openMergedEditor())
+          .onClick(() => this.toggleSelectionMode())
+      } else {
+        if (this.myEdits.selectionMode && this.myEdits.selectedRecordIds.length >= 1) {
+          Button(`移除 ${this.myEdits.selectedRecordIds.length}`)
+            .height(38)
+            .padding({ left: 17, right: 17 })
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.card_bg'))
+            .backgroundColor($r('app.color.amber'))
+            .borderRadius(10)
+            .onClick(() => this.askDeleteSelected())
+        } else {
+          Button(this.myEdits.selectionMode ? '取消' : '选择')
+            .height(38)
+            .padding({ left: 17, right: 17 })
+            .fontSize(14)
+            .fontColor(this.myEdits.selectionMode ? $r('app.color.card_bg') : $r('app.color.text_primary'))
+            .backgroundColor(this.myEdits.selectionMode ? $r('app.color.ink') : $r('app.color.ed_surface'))
+            .border({
+              width: 1,
+              color: this.myEdits.selectionMode ? $r('app.color.ink') : $r('app.color.ed_line')
+            })
+            .borderRadius(10)
+            .onClick(() => this.toggleRecordSelectionMode())
+        }
       }
-
-      Button(this.selectionMode ? '取消' : '多选')
-        .height(38)
-        .padding({ left: 17, right: 17 })
-        .fontSize(14)
-        .fontColor(this.selectionMode ? $r('app.color.card_bg') : $r('app.color.text_primary'))
-        .backgroundColor(this.selectionMode ? $r('app.color.ink') : $r('app.color.ed_surface'))
-        .border({
-          width: 1,
-          color: this.selectionMode ? $r('app.color.ink') : $r('app.color.ed_line')
-        })
-        .borderRadius(10)
-        .onClick(() => this.toggleSelectionMode())
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)
@@ -258,8 +451,37 @@ struct Index {
       left: 16,
       right: 16,
       top: (this.statusBarHeight > 0 ? this.statusBarHeight : 38) + 10,
-      bottom: 14
+      bottom: 10
     })
+  }
+
+  @Builder
+  tabItem(index: number, label: string) {
+    Column({ space: 0 }) {
+      Text(label)
+        .fontSize(15)
+        .fontWeight(this.activeTab === index ? FontWeight.Bold : FontWeight.Normal)
+        .fontColor(this.activeTab === index ? $r('app.color.text_primary') : $r('app.color.text_tertiary'))
+      Row()
+        .width(18)
+        .height(2)
+        .borderRadius(1)
+        .backgroundColor(this.activeTab === index ? $r('app.color.amber') : Color.Transparent)
+        .margin({ top: 6 })
+    }
+    .padding({ right: 22, top: 2 })
+    .alignItems(HorizontalAlign.Start)
+    .onClick(() => this.switchTab(index))
+  }
+
+  @Builder
+  tabBar() {
+    Row({ space: 0 }) {
+      this.tabItem(0, '行程库')
+      this.tabItem(1, '我的剪辑')
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, bottom: 10 })
   }
 
   @Builder
@@ -476,26 +698,250 @@ struct Index {
     .scrollBar(BarState.Off)
   }
 
-  build() {
+  // ---------------- 我的剪辑：列表 / 空态 / 错误态 ----------------
+
+  @Builder
+  myEditsList() {
+    List({ space: 12 }) {
+      ForEach(this.myEdits.records, (item: EditRecord) => {
+        ListItem() {
+          EditRecordCard({
+            record: item,
+            selected: this.isRecordSelected(item.id),
+            selectionMode: this.myEdits.selectionMode,
+            orphan: this.viewModel.isRecordOrphan(item.id),
+            coverPath: this.coverPathOf(item),
+            fallbackCoverUri: this.fallbackCoverOf(item),
+            onOpen: () => {
+              this.handleRecordClick(item)
+            },
+            onPlay: () => {
+              void this.handleRecordPlay(item)
+            },
+            onToggleSelect: () => {
+              this.handleRecordToggle(item)
+            }
+          })
+        }
+      }, (item: EditRecord) => this.recordCardKey(item))
+    }
+    .layoutWeight(1)
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 4 })
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+    .scrollBar(BarState.Off)
+  }
+
+  @Builder
+  myEditsEmptyBlock() {
+    Column({ space: 12 }) {
+      Text('还没有剪辑过的视频')
+        .fontSize(16)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+      Text('在「行程库」里挑一趟行程剪辑并导出，这里就会留下记录。')
+        .fontSize(13)
+        .fontColor($r('app.color.text_tertiary'))
+        .textAlign(TextAlign.Center)
+      Button('去行程库')
+        .height(40)
+        .padding({ left: 20, right: 20 })
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.card_bg'))
+        .backgroundColor($r('app.color.ink'))
+        .borderRadius(8)
+        .onClick(() => {
+          this.activeTab = 0
+        })
+        .margin({ top: 4 })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .padding({ left: 24, right: 24 })
+  }
+
+  @Builder
+  myEditsErrorBlock() {
+    Column({ space: 12 }) {
+      Text(this.myEdits.errorText)
+        .fontSize(14)
+        .fontColor($r('app.color.text_secondary'))
+        .textAlign(TextAlign.Center)
+      Button('重试')
+        .height(38)
+        .padding({ left: 18, right: 18 })
+        .fontSize(14)
+        .fontColor($r('app.color.text_primary'))
+        .backgroundColor($r('app.color.ed_surface'))
+        .border({ width: 1, color: $r('app.color.ed_line') })
+        .borderRadius(8)
+        .onClick(() => {
+          this.myEditsLoaded = false
+          void this.refreshMyEdits()
+        })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .padding({ left: 24, right: 24 })
+  }
+
+  @Builder
+  myEditsLoadingBlock() {
+    Column({ space: 14 }) {
+      LoadingProgress()
+        .width(32)
+        .height(32)
+        .color($r('app.color.amber'))
+      Text('正在读取剪辑记录...')
+        .fontSize(13)
+        .fontColor($r('app.color.text_secondary'))
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  myEditsBlock() {
+    if (this.myEdits.isLoading) {
+      this.myEditsLoadingBlock()
+    } else if (this.myEdits.errorText.length > 0) {
+      this.myEditsErrorBlock()
+    } else if (this.myEdits.records.length === 0) {
+      this.myEditsEmptyBlock()
+    } else {
+      this.myEditsList()
+    }
+  }
+
+  /**
+   * 删除确认。文案必须说清「相册里的视频不会被删」——
+   * 我们只删记录，删文件需要受控权限，做不到也不该让用户误以为做到了。
+   */
+  @Builder
+  deleteConfirmModal() {
+    Stack({ alignContent: Alignment.Center }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.overlay_veil'))
+        .onClick(() => {
+          this.deleteConfirmVisible = false
+        })
+
+      Column({ space: 10 }) {
+        Text(`移除 ${this.deleteCount} 条记录？`)
+          .fontSize(17)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary'))
+        Text('只会从「我的剪辑」列表移除，相册里的视频不会被删掉。')
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+          .textAlign(TextAlign.Center)
+          .margin({ bottom: 4 })
+        Row({ space: 10 }) {
+          Button('取消')
+            .layoutWeight(1)
+            .height(40)
+            .fontSize(14)
+            .fontColor($r('app.color.text_primary'))
+            .backgroundColor($r('app.color.ed_surface'))
+            .border({ width: 1, color: $r('app.color.ed_line') })
+            .borderRadius(10)
+            .onClick(() => {
+              this.deleteConfirmVisible = false
+            })
+          Button('移除')
+            .layoutWeight(1)
+            .height(40)
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.card_bg'))
+            .backgroundColor($r('app.color.ink'))
+            .borderRadius(10)
+            .onClick(() => {
+              void this.confirmDeleteSelected()
+            })
+        }
+        .width('100%')
+      }
+      .width('82%')
+      .padding(18)
+      .backgroundColor($r('app.color.card_bg'))
+      .borderRadius(16)
+      .border({ width: 1, color: $r('app.color.ed_line') })
+      .shadow({ radius: 16, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 6 })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  toastBubble() {
+    Column() {
+      Text(this.toastText)
+        .fontSize(13)
+        .fontColor($r('app.color.overlay_text'))
+        .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+        .backgroundColor($r('app.color.overlay_veil'))
+        .borderRadius(10)
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.End)
+    .alignItems(HorizontalAlign.Center)
+    .padding({ bottom: 90 })
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
+  pageContent() {
     Column({ space: 0 }) {
       this.pageHeader()
+      this.tabBar()
 
-      if (this.state.permissionTip.length > 0) {
-        Text(this.state.permissionTip)
-          .fontSize(12)
-          .fontColor($r('app.color.amber_deep'))
-          .width('100%')
-          .padding({ left: 16, right: 16, bottom: 8 })
+      if (this.activeTab === 0) {
+        if (this.state.permissionTip.length > 0) {
+          Text(this.state.permissionTip)
+            .fontSize(12)
+            .fontColor($r('app.color.amber_deep'))
+            .width('100%')
+            .padding({ left: 16, right: 16, bottom: 8 })
+        }
+
+        if (this.isLoading) {
+          this.loadingBlock()
+        } else if (!this.permissionGranted && this.state.empty) {
+          this.permissionBlock()
+        } else if (this.state.empty) {
+          this.emptyBlock()
+        } else {
+          this.tripList()
+        }
+      } else {
+        this.myEditsBlock()
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      this.pageContent()
+
+      if (this.deleteConfirmVisible) {
+        this.deleteConfirmModal()
       }
 
-      if (this.isLoading) {
-        this.loadingBlock()
-      } else if (!this.permissionGranted && this.state.empty) {
-        this.permissionBlock()
-      } else if (this.state.empty) {
-        this.emptyBlock()
-      } else {
-        this.tripList()
+      if (this.toastVisible) {
+        this.toastBubble()
       }
     }
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
