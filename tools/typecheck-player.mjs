@@ -71,6 +71,7 @@ const GROUPS = {
       'entry/src/main/ets/service/PreferencesService.ets',
       'entry/src/main/ets/service/TimelineService.ets',
       'entry/src/main/ets/utils/Logger.ets',
+      'entry/src/main/ets/model/EditRecord.ets',
       'entry/src/main/ets/media/TimelineMath.ets'
     ]
   },

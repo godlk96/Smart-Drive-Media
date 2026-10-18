@@ -34,6 +34,22 @@ export class EditorViewModel {
     }
   }
 
+  /**
+   * 从「我的剪辑」的一条历史记录进入剪辑页。
+   *
+   * 与 hydrate 的区别只有一处：编辑器状态不是新建的白纸，而是按记录还原的。
+   * 素材仍然取现场快照 —— 记录里存的是参数，不是源文件。
+   */
+  hydrateFromRecord(tripId: string, recordJson: string): EditorHydrateResult {
+    const state = this.bridge.restoreEditorState(tripId, recordJson)
+    const tripSnapshot = this.bridge.getTripSnapshotClone(state.tripId) ?? new TripSnapshot()
+    return {
+      state,
+      tripSnapshot,
+      exportSessionSeed: `${state.tripId}_${Date.now()}`
+    }
+  }
+
   seekGlobalPlayhead(second: number): EditorStateModel {
     // 不在这里取整：片段边界是拖手柄拖出来的小数秒，取整会让播放头落到边界之外，
     // 参数行、画面与剪刀各说各话。精度由 CoreBridge.seekGlobalPlayhead 按毫秒兜底。

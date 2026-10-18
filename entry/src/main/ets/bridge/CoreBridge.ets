@@ -10,12 +10,17 @@ import {
 } from '../model/AppState'
 import {
   DEFAULT_TEMPLATE_ID,
+  EditorState,
   listTemplateDefinitions,
   listEditorTemplateDefinitions,
   normalizeTemplateIdValue,
+  parseExportSnapshot,
   resolveTemplateDefinition,
+  restoreEditorStateFromSnapshot,
+  snapshotMatchesTrip,
   toLegacyCamera
 } from '../model/Models'
+import { EditRecord, parseEditRecords } from '../model/EditRecord'
 import { DvrMeta, TripSnapshot } from '../model/TripModels'
 import { parseDvrFileName, pickPreviewSource } from '../service/DvrScannerService'
 import { buildTimeline, mergeTimeline } from '../service/TimelineService'
@@ -30,11 +35,13 @@ import {
   canToggleSegment,
   createFullSegment,
   cycleSpeedLabel,
+  isRawFullSegments,
   removeSegment,
   segmentIndexAtSec,
   setSegmentMuted,
   setSegmentSpeed,
   splitOrInsertAt,
+  toEditorSegments,
   toggleSegmentEnabled as toggleSegmentEnabledIn,
   Segment
 } from '../model/SegmentModel'
@@ -808,6 +815,66 @@ export class CoreBridge {
       this.tripRange = parts[0].trim()
     }
     return this.buildEditorState(undefined, 'Front', 0)
+  }
+
+  /**
+   * 按一条历史记录还原剪辑页状态。
+   *
+   * 本方法**不判断**能不能还原 —— 调用方先用 snapshotMatchesTrip 给出明确的
+   * 「行程已变更」出口。这里只做最后一道防线：任何一环缺失就退回白纸状态，
+   * 绝不拿半个快照拼出一个参数错乱的剪辑页。
+   */
+  restoreEditorState(tripId: string, recordJson: string): EditorStateModel {
+    const live = this.trips.get(tripId)
+    if (!live) {
+      debugLog('剪辑', `还原失败：现场行程不存在，tripId=${tripId}，降级为默认状态`)
+      return this.createEditorState(tripId, '', '')
+    }
+    const records: Array<EditRecord> = parseEditRecords(recordJson)
+    if (records.length === 0) {
+      debugLog('剪辑', '还原失败：记录解析不出条目，降级为默认状态')
+      return this.createEditorState(tripId, '', '')
+    }
+    const stored = parseExportSnapshot(records[0].snapshot)
+    if (!stored) {
+      debugLog('剪辑', '还原失败：记录里的快照不可用，降级为默认状态')
+      return this.createEditorState(tripId, '', '')
+    }
+    if (!snapshotMatchesTrip(stored, live)) {
+      debugLog('剪辑', '还原失败：记录与现场行程身份不符（源素材可能已变动），降级为默认状态')
+      return this.createEditorState(tripId, '', '')
+    }
+    const restored = restoreEditorStateFromSnapshot(
+      stored, live, `${tripId}_restore_${Date.now()}`, '已还原历史剪辑')
+    debugLog('剪辑', `按记录还原，模板=${restored.selectedTemplateId} 段数=${restored.playback.segments.length} 播放头=${restored.playback.playheadMs}ms`)
+    return this.applyRestoredState(restored, live)
+  }
+
+  /**
+   * 把纯模型的还原结果写回 CoreBridge 的实例字段。
+   *
+   * `segmentSourceDurationSec` 必须写成**当前片长**而不是 -1：
+   * buildEditorState 里有一条 `segmentSourceDurationSec !== tripDurationSec
+   * → 整段重置` 的兜底逻辑，写成 -1 会把刚还原好的分段整个冲掉。
+   */
+  private applyRestoredState(restored: EditorState, live: TripSnapshot): EditorStateModel {
+    this.tripId = live.id
+    this.tripTitle = live.tripTitle
+    this.tripRange = live.tripRange
+    this.tripDurationSec = live.durationSec
+    this.previewCamera = live.previewCamera
+    this.currentClipIndex = 0
+    this.currentClipTotal = live.clips.length
+    this.activeTemplateId = restored.selectedTemplateId
+    this.watermarkEnabled = restored.brand.watermarkEnabled
+    this.drawerExpanded = true
+    this.segments = toEditorSegments(restored.playback.segments)
+    this.selectedSegmentId = this.segments.length > 0 ? this.segments[0].id : -1
+    this.playheadMs = restored.playback.playheadMs
+    this.isRawFull = isRawFullSegments(this.segments, live.durationSec)
+    this.exportStatusText = restored.ui.exportStatus
+    this.segmentSourceDurationSec = live.durationSec
+    return this.buildEditorState(live, live.previewCamera, 0)
   }
 
   updatePlayhead(positionMs: number): string {
