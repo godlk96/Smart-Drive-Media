@@ -41,7 +41,8 @@ const SUITES = [
   { path: 'entry/src/ohosTest/ets/test/TimelineClockCases.ets', exportName: 'timelineClockCases' },
   { path: 'entry/src/ohosTest/ets/test/PreviewLayoutCases.ets', exportName: 'previewLayoutCases' },
   { path: 'entry/src/ohosTest/ets/test/SegmentModelCases.ets', exportName: 'segmentModelCases' },
-  { path: 'entry/src/ohosTest/ets/test/TripFormatCases.ets', exportName: 'tripFormatCases' }
+  { path: 'entry/src/ohosTest/ets/test/TripFormatCases.ets', exportName: 'tripFormatCases' },
+  { path: 'entry/src/ohosTest/ets/test/EditHistoryCases.ets', exportName: 'editHistoryCases' }
 ]
 
 const TSC_CANDIDATES = [
