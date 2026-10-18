@@ -8,9 +8,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
-#include <dlfcn.h>
-#include <future>
+#include <mutex>
 #include <sstream>
+#include <sys/stat.h>
 #include <string>
 #include <thread>
 #include <utility>
@@ -21,23 +21,33 @@ static std::atomic<int64_t> g_exportCurrentFrame{0};
 static std::atomic<int64_t> g_exportTotalFrames{0};
 static std::atomic<int> g_exportStage{0};
 static std::atomic<bool> g_exportCancelled{false};
+static std::mutex g_exportProgressMutex;
+static int64_t g_exportCompletedUnits = 0;
+static int64_t g_exportTotalUnits = 0;
 
 NativeExportProgressInfo getNativeExportProgress()
 {
+    const std::lock_guard<std::mutex> lock(g_exportProgressMutex);
     NativeExportProgressInfo info;
     info.percent = g_exportPercent.load();
     info.currentFrame = g_exportCurrentFrame.load();
     info.totalFrames = g_exportTotalFrames.load();
     info.stage = g_exportStage.load();
+    info.completedUnits = g_exportCompletedUnits;
+    info.totalUnits = g_exportTotalUnits;
     return info;
 }
 
-void setNativeExportProgress(int percent, int64_t currentFrame, int64_t totalFrames, int stage)
+void setNativeExportProgress(int percent, int64_t currentFrame, int64_t totalFrames, int stage,
+                             int64_t completedUnits, int64_t totalUnits)
 {
+    const std::lock_guard<std::mutex> lock(g_exportProgressMutex);
     g_exportPercent.store(percent);
     g_exportCurrentFrame.store(currentFrame);
     g_exportTotalFrames.store(totalFrames);
     g_exportStage.store(stage);
+    g_exportCompletedUnits = completedUnits;
+    g_exportTotalUnits = totalUnits;
 }
 
 void cancelNativeExport()
@@ -77,23 +87,22 @@ struct ProbeResult {
     int64_t bitRate = 0;
 };
 
-struct FilterPipeline {
-    AVFilterGraph *graph = nullptr;
-    AVFilterContext *bufferSrc = nullptr;
-    AVFilterContext *bufferSink = nullptr;
-};
-
-struct OhosPipeBridge {
-    void *vencLib = nullptr;
-    void *muxerLib = nullptr;
-    bool ready = false;
-    std::string error;
-};
-
 struct PacketTimestampState {
     int64_t nextPts = 0;
     int64_t nextDts = 0;
     bool initialized = false;
+};
+
+struct TemporaryTrackFiles {
+    std::vector<std::string> paths;
+    ~TemporaryTrackFiles()
+    {
+        for (const auto &path : paths) {
+            if (!path.empty()) {
+                std::remove(path.c_str());
+            }
+        }
+    }
 };
 
 std::string normalizeUri(const std::string &uri);
@@ -218,6 +227,11 @@ std::string buildMovieSourceFilter(const std::string &path,
 {
     std::ostringstream oss;
     oss << "movie='" << escapeFilterPath(path) << "'";
+    // seek 回退到关键帧；保留后面的精确 trim 和原始时间戳，不能以 seek 代替裁剪。
+    if (startSec > 1.0) {
+        oss << ":seek_point=" << (startSec - 1.0);
+    }
+    oss << ":dec_threads=" << resolveThreadCount();
     if (endSec > startSec && startSec >= 0.0) {
         oss << ",trim=start=" << startSec << ":end=" << endSec;
     } else if (startSec > 0.0) {
@@ -373,8 +387,10 @@ std::string buildSegmentsAudioDesc(const std::string &audioPath,
         if (!(speed >= 0.5 && speed <= 2.0)) {
             speed = 1.0;
         }
-        oss << "amovie='" << escapeFilterPath(audioPath) << "'"
-            << ",atrim=start=" << (segments[i].startMs / 1000.0) << ":end=" << (segments[i].endMs / 1000.0)
+        oss << "amovie='" << escapeFilterPath(audioPath) << "'";
+        const double startSec = segments[i].startMs / 1000.0;
+        // AAC 的感知噪声替代依赖先前解码状态；音频保持从头解码，保证样本一致。
+        oss << ":dec_threads=1,atrim=start=" << startSec << ":end=" << (segments[i].endMs / 1000.0)
             << ",asetpts=PTS-STARTPTS";
         if (std::fabs(speed - 1.0) > 1e-6) {
             oss << ",atempo=" << speed;
@@ -641,6 +657,9 @@ bool composeTemplateToMp4(const std::string &templateId,
         outAudioStream->time_base = audioEncoderCtx->time_base;
         const std::string audioDesc = buildSegmentsAudioDesc(frontAudioPath, segments);
         audioGraph = avfilter_graph_alloc();
+        if (audioGraph != nullptr) {
+            audioGraph->nb_threads = 1;
+        }
         const AVFilter *aBuffersinkFilter = avfilter_get_by_name("abuffersink");
         if (audioGraph == nullptr || aBuffersinkFilter == nullptr ||
             avfilter_graph_create_filter(&audioSinkCtx, aBuffersinkFilter, "asink", nullptr, nullptr, audioGraph) < 0) {
@@ -706,6 +725,9 @@ bool composeTemplateToMp4(const std::string &templateId,
         return false;
     }
     AVFilterGraph *graph = avfilter_graph_alloc();
+    if (graph != nullptr) {
+        graph->nb_threads = threadCount;
+    }
     AVFilterContext *bufferSink = nullptr;
     if (graph == nullptr) {
         if (!(outputFmt->oformat->flags & AVFMT_NOFILE) && outputFmt->pb != nullptr) {
@@ -1021,6 +1043,7 @@ bool composeTemplateToMp4(const std::string &templateId,
                       << " bytesWritten=" << (outputFmt->pb != nullptr ? avio_tell(outputFmt->pb) : -1);
         logPipeline("encode", encodeLoopEnd.str());
     }
+    setNativeExportProgress(85, encodedFrameCount, totalExpectedFrames, 3);
     avcodec_send_frame(encoderCtx, nullptr);
     while (avcodec_receive_packet(encoderCtx, packet) == 0) {
         packet->stream_index = outVideoStream->index;
@@ -1075,7 +1098,12 @@ bool composeTemplateToMp4(const std::string &templateId,
                       << " bytesWritten=" << (outputFmt->pb != nullptr ? avio_tell(outputFmt->pb) : -1);
         logPipeline("encode", composeFinish.str());
     }
-    av_write_trailer(outputFmt);
+    const int trailerRet = av_write_trailer(outputFmt);
+    if (trailerRet < 0) {
+        error = "compose_write_trailer_failed:" + avErrorText(trailerRet);
+        cleanupComposeResources();
+        return false;
+    }
     setNativeExportProgress(85, encodedFrameCount, totalExpectedFrames, 3);
     cleanupComposeResources();
     return true;
@@ -1084,7 +1112,9 @@ bool composeTemplateToMp4(const std::string &templateId,
 bool concatTrackToMp4(const std::vector<std::string> &inputs,
                       bool includeAudio,
                       const std::string &outputPath,
-                      std::string &error)
+                      std::string &error,
+                      int64_t &completedBytes,
+                      int64_t totalBytes)
 {
     if (inputs.empty()) {
         error = "concat_inputs_empty";
@@ -1102,6 +1132,9 @@ bool concatTrackToMp4(const std::vector<std::string> &inputs,
     bool outputReady = false;
     for (const std::string &rawInput : inputs) {
         const std::string inputPath = normalizeUri(rawInput);
+        struct stat inputStat {};
+        const int64_t inputBytes = stat(inputPath.c_str(), &inputStat) == 0 ? inputStat.st_size : 0;
+        int64_t processedInputBytes = 0;
         AVFormatContext *inputFmt = nullptr;
         if (avformat_open_input(&inputFmt, inputPath.c_str(), nullptr, nullptr) < 0) {
             if (outputFmt != nullptr) {
@@ -1202,6 +1235,20 @@ bool concatTrackToMp4(const std::vector<std::string> &inputs,
         int64_t firstVideoDts = AV_NOPTS_VALUE;
         int64_t firstAudioDts = AV_NOPTS_VALUE;
         while (av_read_frame(inputFmt, packet) >= 0) {
+            if (isNativeExportCancelled()) {
+                av_packet_free(&packet);
+                avformat_close_input(&inputFmt);
+                if (outputFmt->pb != nullptr) {
+                    avio_closep(&outputFmt->pb);
+                }
+                avformat_free_context(outputFmt);
+                error = "export_cancelled";
+                return false;
+            }
+            if (inputBytes > 0 && packet->pos >= 0) {
+                processedInputBytes = std::min(inputBytes, std::max(processedInputBytes, packet->pos + packet->size));
+                setNativeExportProgress(22, 0, 0, 4, completedBytes + processedInputBytes, totalBytes);
+            }
             if (packet->stream_index == videoIndex) {
                 AVStream *inStream = inputFmt->streams[videoIndex];
                 packet->stream_index = outVideo->index;
@@ -1273,6 +1320,8 @@ bool concatTrackToMp4(const std::vector<std::string> &inputs,
             audioPtsOffset = audioTsState.nextDts > maxAudioPts ? audioTsState.nextDts : maxAudioPts;
         }
         avformat_close_input(&inputFmt);
+        completedBytes += inputBytes;
+        setNativeExportProgress(22, 0, 0, 4, completedBytes, totalBytes);
     }
     if (!outputReady) {
         error = "concat_output_not_ready";
@@ -1375,9 +1424,15 @@ bool isNominalThirtyFps(const ProbeResult &probe)
 
 bool validateTrackSpecs(const std::vector<std::string> &uris,
                         const std::string &trackName,
-                        std::string &error)
+                        std::string &error,
+                        int64_t &checkedInputs,
+                        int64_t totalInputs)
 {
     for (size_t index = 0; index < uris.size(); ++index) {
+        if (isNativeExportCancelled()) {
+            error = "export_cancelled";
+            return false;
+        }
         ProbeResult trackProbe;
         const std::string normalizedUri = normalizeUri(uris[index]);
         std::string probeError;
@@ -1400,6 +1455,7 @@ bool validateTrackSpecs(const std::vector<std::string> &uris,
                     << " normalize_to_30fps_in_filter=1";
             logPipeline("validate", fpsInfo.str());
         }
+        setNativeExportProgress(20, 0, 0, 1, ++checkedInputs, totalInputs);
     }
     return true;
 }
@@ -1432,274 +1488,6 @@ bool detectFrontAacAudio(const std::string &uri,
     return true;
 }
 
-bool buildFilterPipeline(const ProbeResult &probe, FilterPipeline &pipeline, std::string &error)
-{
-    pipeline.graph = avfilter_graph_alloc();
-    if (pipeline.graph == nullptr) {
-        error = "avfilter_graph_alloc_failed";
-        return false;
-    }
-    const AVFilter *bufferSrc = avfilter_get_by_name("buffer");
-    const AVFilter *bufferSink = avfilter_get_by_name("buffersink");
-    if (bufferSrc == nullptr || bufferSink == nullptr) {
-        error = "avfilter_core_filter_not_found";
-        return false;
-    }
-    char args[512] = {0};
-    std::snprintf(args,
-                  sizeof(args),
-                  "video_size=%dx%d:pix_fmt=%d:time_base=1/%d:pixel_aspect=1/1",
-                  probe.width > 0 ? probe.width : 1920,
-                  probe.height > 0 ? probe.height : 1080,
-                  probe.pixFmt >= 0 ? probe.pixFmt : AV_PIX_FMT_YUV420P,
-                  probe.frameRate.num > 0 ? probe.frameRate.num : 30);
-    if (avfilter_graph_create_filter(&pipeline.bufferSrc,
-                                     bufferSrc,
-                                     "smartdrive_buffer_src",
-                                     args,
-                                     nullptr,
-                                     pipeline.graph) < 0) {
-        error = "avfilter_create_buffer_src_failed";
-        return false;
-    }
-    if (avfilter_graph_create_filter(&pipeline.bufferSink,
-                                     bufferSink,
-                                     "smartdrive_buffer_sink",
-                                     nullptr,
-                                     nullptr,
-                                     pipeline.graph) < 0) {
-        error = "avfilter_create_buffer_sink_failed";
-        return false;
-    }
-    AVFilterInOut *outputs = avfilter_inout_alloc();
-    AVFilterInOut *inputs = avfilter_inout_alloc();
-    if (outputs == nullptr || inputs == nullptr) {
-        if (outputs != nullptr) {
-            avfilter_inout_free(&outputs);
-        }
-        if (inputs != nullptr) {
-            avfilter_inout_free(&inputs);
-        }
-        error = "avfilter_inout_alloc_failed";
-        return false;
-    }
-    outputs->name = av_strdup("in");
-    outputs->filter_ctx = pipeline.bufferSrc;
-    outputs->pad_idx = 0;
-    outputs->next = nullptr;
-    inputs->name = av_strdup("out");
-    inputs->filter_ctx = pipeline.bufferSink;
-    inputs->pad_idx = 0;
-    inputs->next = nullptr;
-    const std::string filterDesc = "fps=fps=30,format=pix_fmts=yuv420p";
-    if (avfilter_graph_parse_ptr(pipeline.graph, filterDesc.c_str(), &inputs, &outputs, nullptr) < 0) {
-        avfilter_inout_free(&outputs);
-        avfilter_inout_free(&inputs);
-        error = "avfilter_graph_parse_failed";
-        return false;
-    }
-    avfilter_inout_free(&outputs);
-    avfilter_inout_free(&inputs);
-    if (avfilter_graph_config(pipeline.graph, nullptr) < 0) {
-        error = "avfilter_graph_config_failed";
-        return false;
-    }
-    return true;
-}
-
-void releaseFilterPipeline(FilterPipeline &pipeline)
-{
-    if (pipeline.graph != nullptr) {
-        avfilter_graph_free(&pipeline.graph);
-        pipeline.graph = nullptr;
-        pipeline.bufferSrc = nullptr;
-        pipeline.bufferSink = nullptr;
-    }
-}
-
-bool warmupDemuxDecodeFilter(const std::string &uri, FilterPipeline &pipeline, std::string &error)
-{
-    AVFormatContext *fmt = nullptr;
-    if (avformat_open_input(&fmt, uri.c_str(), nullptr, nullptr) < 0) {
-        error = "warmup_open_input_failed";
-        return false;
-    }
-    if (avformat_find_stream_info(fmt, nullptr) < 0) {
-        avformat_close_input(&fmt);
-        error = "warmup_find_stream_info_failed";
-        return false;
-    }
-    int streamIndex = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
-    if (streamIndex < 0) {
-        avformat_close_input(&fmt);
-        error = "warmup_video_stream_not_found";
-        return false;
-    }
-    AVStream *stream = fmt->streams[streamIndex];
-    const AVCodec *decoder = avcodec_find_decoder(stream->codecpar->codec_id);
-    if (decoder == nullptr) {
-        avformat_close_input(&fmt);
-        error = "warmup_decoder_not_found";
-        return false;
-    }
-    AVCodecContext *decoderCtx = avcodec_alloc_context3(decoder);
-    if (decoderCtx == nullptr) {
-        avformat_close_input(&fmt);
-        error = "warmup_alloc_decoder_ctx_failed";
-        return false;
-    }
-    if (avcodec_parameters_to_context(decoderCtx, stream->codecpar) < 0) {
-        avcodec_free_context(&decoderCtx);
-        avformat_close_input(&fmt);
-        error = "warmup_copy_codecpar_failed";
-        return false;
-    }
-    const int decoderThreadCount = resolveThreadCount();
-    decoderCtx->thread_count = decoderThreadCount;
-    decoderCtx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
-    if (avcodec_open2(decoderCtx, decoder, nullptr) < 0) {
-        avcodec_free_context(&decoderCtx);
-        avformat_close_input(&fmt);
-        error = "warmup_open_decoder_failed";
-        return false;
-    }
-    AVPacket *packet = av_packet_alloc();
-    AVFrame *decoded = av_frame_alloc();
-    AVFrame *filtered = av_frame_alloc();
-    if (packet == nullptr || decoded == nullptr || filtered == nullptr) {
-        if (packet != nullptr) {
-            av_packet_free(&packet);
-        }
-        if (decoded != nullptr) {
-            av_frame_free(&decoded);
-        }
-        if (filtered != nullptr) {
-            av_frame_free(&filtered);
-        }
-        avcodec_free_context(&decoderCtx);
-        avformat_close_input(&fmt);
-        error = "warmup_alloc_packet_or_frame_failed";
-        return false;
-    }
-    int filteredCount = 0;
-    while (filteredCount < 8 && av_read_frame(fmt, packet) >= 0) {
-        if (packet->stream_index != streamIndex) {
-            av_packet_unref(packet);
-            continue;
-        }
-        if (avcodec_send_packet(decoderCtx, packet) < 0) {
-            av_packet_unref(packet);
-            continue;
-        }
-        av_packet_unref(packet);
-        while (avcodec_receive_frame(decoderCtx, decoded) == 0) {
-            if (av_buffersrc_add_frame_flags(pipeline.bufferSrc, decoded, AV_BUFFERSRC_FLAG_KEEP_REF) < 0) {
-                av_frame_unref(decoded);
-                continue;
-            }
-            av_frame_unref(decoded);
-            while (av_buffersink_get_frame(pipeline.bufferSink, filtered) == 0) {
-                filteredCount += 1;
-                av_frame_unref(filtered);
-                if (filteredCount >= 8) {
-                    break;
-                }
-            }
-        }
-    }
-    avcodec_send_packet(decoderCtx, nullptr);
-    while (avcodec_receive_frame(decoderCtx, decoded) == 0) {
-        if (av_buffersrc_add_frame_flags(pipeline.bufferSrc, decoded, AV_BUFFERSRC_FLAG_KEEP_REF) >= 0) {
-            while (av_buffersink_get_frame(pipeline.bufferSink, filtered) == 0) {
-                av_frame_unref(filtered);
-            }
-        }
-        av_frame_unref(decoded);
-    }
-    av_packet_free(&packet);
-    av_frame_free(&decoded);
-    av_frame_free(&filtered);
-    avcodec_free_context(&decoderCtx);
-    avformat_close_input(&fmt);
-    if (filteredCount == 0) {
-        error = "warmup_filter_no_frame";
-        return false;
-    }
-    return true;
-}
-
-OhosPipeBridge initOhosPipeBridge()
-{
-    OhosPipeBridge bridge;
-    bridge.vencLib = dlopen("libnative_media_venc.so", RTLD_NOW);
-    bridge.muxerLib = dlopen("libnative_media_avmuxer.so", RTLD_NOW);
-    if (bridge.vencLib == nullptr || bridge.muxerLib == nullptr) {
-        bridge.error = "oh_pipe_dlopen_failed";
-        return bridge;
-    }
-    const std::vector<const char *> vencSymbols = {
-        "OH_VideoEncoder_CreateByMime",
-        "OH_VideoEncoder_Destroy",
-    };
-    const std::vector<const char *> muxerSymbols = {
-        "OH_AVMuxer_Create",
-        "OH_AVMuxer_Destroy",
-    };
-    for (const char *symbol : vencSymbols) {
-        if (dlsym(bridge.vencLib, symbol) == nullptr) {
-            bridge.error = std::string("oh_venc_symbol_missing_") + symbol;
-            return bridge;
-        }
-    }
-    for (const char *symbol : muxerSymbols) {
-        if (dlsym(bridge.muxerLib, symbol) == nullptr) {
-            bridge.error = std::string("oh_muxer_symbol_missing_") + symbol;
-            return bridge;
-        }
-    }
-    bridge.ready = true;
-    return bridge;
-}
-
-void releaseOhosPipeBridge(OhosPipeBridge &bridge)
-{
-    if (bridge.vencLib != nullptr) {
-        dlclose(bridge.vencLib);
-        bridge.vencLib = nullptr;
-    }
-    if (bridge.muxerLib != nullptr) {
-        dlclose(bridge.muxerLib);
-        bridge.muxerLib = nullptr;
-    }
-    bridge.ready = false;
-}
-
-bool tryWarmupOhosBridge(const std::string &frontUri, const ProbeResult &probe, std::string &error)
-{
-    OhosPipeBridge bridge = initOhosPipeBridge();
-    if (!bridge.ready) {
-        error = bridge.error;
-        releaseOhosPipeBridge(bridge);
-        return false;
-    }
-    FilterPipeline pipeline;
-    std::string bridgeError;
-    if (!buildFilterPipeline(probe, pipeline, bridgeError)) {
-        releaseFilterPipeline(pipeline);
-        releaseOhosPipeBridge(bridge);
-        error = "bridge_filter_" + bridgeError;
-        return false;
-    }
-    if (!warmupDemuxDecodeFilter(frontUri, pipeline, bridgeError)) {
-        releaseFilterPipeline(pipeline);
-        releaseOhosPipeBridge(bridge);
-        error = "bridge_warmup_" + bridgeError;
-        return false;
-    }
-    releaseFilterPipeline(pipeline);
-    releaseOhosPipeBridge(bridge);
-    return true;
-}
 
 } // namespace
 
@@ -1753,7 +1541,9 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
             logPipeline("request.segment", one.str());
         }
     }
-    resetNativeExportProgress();
+    if (isNativeExportCancelled()) {
+        return "__ERROR__:pipeline_cancelled";
+    }
     setNativeExportProgress(20, 0, 0, 1);
     if (frontUris.empty() || backUris.empty()) {
         logPipeline("validate", "invalid input: front/back uris empty");
@@ -1781,7 +1571,7 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
         setNativeExportProgress(-1, 0, 0, -1);
         return "__ERROR__:pipeline_probe_front_" + error;
     }
-    setNativeExportProgress(22, 0, 0, 1);
+    setNativeExportProgress(20, 0, 0, 1);
     std::ostringstream probeInfo;
     probeInfo << "probe success width=" << probe.width << " height=" << probe.height
               << " pixFmt=" << probe.pixFmt << " fps=" << probe.frameRate.num << "/" << probe.frameRate.den;
@@ -1789,6 +1579,7 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
 
     const NativeTemplateContract &templateContract = resolveTemplateContract(templateId);
     const std::string normalizedTemplate = templateContract.templateId;
+    const bool needBackTrack = normalizedTemplate != "T5";
     const std::pair<int, int> targetResolution = resolveTemplateTargetResolution(templateContract);
     logPipeline("template", "apply " + normalizedTemplate + " target=" + std::to_string(targetResolution.first) +
         "x" + std::to_string(targetResolution.second));
@@ -1798,15 +1589,18 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
     // 第 4 路刻意**不做回退**：T6 右下格是「右后」，拿别的机位顶替只会静默产出一段机位错误的画面，
     // 宁可让导出明确失败，也不要"看起来成功但内容是错的"。
     const std::vector<std::string> side2Source = side2Uris;
-    if (!validateTrackSpecs(frontUris, "front", error)) {
+    int64_t checkedInputs = 0;
+    const int64_t totalInputs = static_cast<int64_t>(frontUris.size() + (needBackTrack ? backUris.size() : 0) +
+        (needSideTrack ? sideSource.size() : 0) + (needSide2Track ? side2Source.size() : 0));
+    if (!validateTrackSpecs(frontUris, "front", error, checkedInputs, totalInputs)) {
         logPipeline("validate", "front track spec invalid: " + error);
         return "__ERROR__:pipeline_spec_" + error;
     }
-    if (!validateTrackSpecs(backUris, "back", error)) {
+    if (needBackTrack && !validateTrackSpecs(backUris, "back", error, checkedInputs, totalInputs)) {
         logPipeline("validate", "back track spec invalid: " + error);
         return "__ERROR__:pipeline_spec_" + error;
     }
-    if (needSideTrack && !validateTrackSpecs(sideSource, "side", error)) {
+    if (needSideTrack && !validateTrackSpecs(sideSource, "side", error, checkedInputs, totalInputs)) {
         logPipeline("validate", "side track spec invalid: " + error);
         return "__ERROR__:pipeline_spec_" + error;
     }
@@ -1815,17 +1609,12 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
             logPipeline("validate", "side2 track required but side2Uris empty");
             return "__ERROR__:pipeline_spec_side2_empty";
         }
-        if (!validateTrackSpecs(side2Source, "side2", error)) {
+        if (!validateTrackSpecs(side2Source, "side2", error, checkedInputs, totalInputs)) {
             logPipeline("validate", "side2 track spec invalid: " + error);
             return "__ERROR__:pipeline_spec_" + error;
         }
     }
-    std::string bridgeWarmupError;
-    if (!tryWarmupOhosBridge(frontPrimary, probe, bridgeWarmupError)) {
-        logPipeline("bridge", "oh_bridge_unavailable_fallback_ffmpeg_only reason=" + bridgeWarmupError);
-    } else {
-        logPipeline("bridge", "oh_bridge_ready");
-    }
+    setNativeExportProgress(22, 0, 0, 1, totalInputs, totalInputs);
 
     std::string frontTrackPath;
     std::string backTrackPath;
@@ -1843,7 +1632,9 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
         frontTrackPath = frontConcatPath;
     }
 
-    if (backUris.size() == 1) {
+    if (!needBackTrack) {
+        backTrackPath = frontTrackPath;
+    } else if (backUris.size() == 1) {
         backTrackPath = normalizeUri(backUris[0]);
     } else {
         backConcatPath = outputPath + ".back.concat.mp4";
@@ -1874,10 +1665,28 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
 
     const int threadCount = resolveThreadCount();
     logPipeline("perf", "ffmpeg thread_count=" + std::to_string(threadCount));
+    const TemporaryTrackFiles temporaryTracks{{frontConcatPath, backConcatPath, sideConcatPath, side2ConcatPath}};
+    int64_t completedConcatBytes = 0;
+    int64_t totalConcatBytes = 0;
+    const auto countConcatBytes = [&](const std::vector<std::string> &uris, const std::string &concatPath) {
+        if (!concatPath.empty()) {
+            for (const auto &uri : uris) {
+                struct stat inputStat {};
+                if (stat(normalizeUri(uri).c_str(), &inputStat) == 0) {
+                    totalConcatBytes += inputStat.st_size;
+                }
+            }
+        }
+    };
+    countConcatBytes(frontUris, frontConcatPath);
+    countConcatBytes(backUris, backConcatPath);
+    countConcatBytes(sideSource, sideConcatPath);
+    countConcatBytes(side2Source, side2ConcatPath);
+    setNativeExportProgress(22, 0, 0, 4, 0, totalConcatBytes);
 
     if (!frontConcatPath.empty()) {
         std::string localError;
-        if (!concatTrackToMp4(frontUris, true, frontConcatPath, localError)) {
+        if (!concatTrackToMp4(frontUris, true, frontConcatPath, localError, completedConcatBytes, totalConcatBytes)) {
             logPipeline("track", "concat front failed: " + localError);
             return "__ERROR__:pipeline_track_front_" + localError;
         }
@@ -1885,7 +1694,7 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
 
     if (!backConcatPath.empty()) {
         std::string localError;
-        if (!concatTrackToMp4(backUris, false, backConcatPath, localError)) {
+        if (!concatTrackToMp4(backUris, false, backConcatPath, localError, completedConcatBytes, totalConcatBytes)) {
             logPipeline("track", "concat back failed: " + localError);
             if (!frontConcatPath.empty()) {
                 std::remove(frontConcatPath.c_str());
@@ -1896,7 +1705,7 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
 
     if (!sideConcatPath.empty()) {
         std::string localError;
-        if (!concatTrackToMp4(sideSource, false, sideConcatPath, localError)) {
+        if (!concatTrackToMp4(sideSource, false, sideConcatPath, localError, completedConcatBytes, totalConcatBytes)) {
             logPipeline("track", "concat side failed: " + localError);
             if (!frontConcatPath.empty()) {
                 std::remove(frontConcatPath.c_str());
@@ -1910,7 +1719,7 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
 
     if (!side2ConcatPath.empty()) {
         std::string localError;
-        if (!concatTrackToMp4(side2Source, false, side2ConcatPath, localError)) {
+        if (!concatTrackToMp4(side2Source, false, side2ConcatPath, localError, completedConcatBytes, totalConcatBytes)) {
             logPipeline("track", "concat side2 failed: " + localError);
             if (!frontConcatPath.empty()) {
                 std::remove(frontConcatPath.c_str());

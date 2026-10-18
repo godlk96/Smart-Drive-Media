@@ -10,6 +10,8 @@ import { EditRecord, makeRecordId } from '../model/EditRecord'
 import { EditHistoryService } from './EditHistoryService'
 import { PreferencesService } from './PreferencesService'
 import { debugLog } from '../utils/Logger'
+import { copyExportFileData } from './ExportFileCopy'
+import { ExportProgressUpdate, exportPercent, exportStageText } from '../model/ExportProgress'
 
 export type ExportJobId = string
 
@@ -30,6 +32,9 @@ interface ExportJobRecord {
   listeners: Array<ExportListener>
   cancelled: boolean
   progress: number
+  status: string
+  lastNotificationAt: number
+  lastNotifiedStage: string
   /** 空串 = 新建相册条目；非空 = 就地覆写这个已有条目的 URI（spec 4.5） */
   overwriteTargetUri: string
 }
@@ -97,8 +102,16 @@ export class ExportManager {
   }
 
   private notify(record: ExportJobRecord, status: string, progress: number): void {
-    const normalizedProgress = Math.max(0, Math.min(100, Math.floor(progress)))
+    const normalizedProgress = Math.max(record.progress, exportPercent(progress))
     record.progress = normalizedProgress
+    record.status = status
+    const stage = status.split(' · ')[0]
+    const terminal = normalizedProgress === 100 || status.startsWith('导出失败：') || status === '已取消导出'
+    if (!terminal && stage === record.lastNotifiedStage && Date.now() - record.lastNotificationAt < 120) {
+      return
+    }
+    record.lastNotificationAt = Date.now()
+    record.lastNotifiedStage = stage
     const event: ExportJobEvent = { jobId: record.id, status: status, progress: normalizedProgress }
     record.listeners.forEach((listener: ExportListener) => {
       listener(event)
@@ -118,6 +131,7 @@ export class ExportManager {
       return
     }
     record.listeners = [...record.listeners, listener]
+    listener({ jobId: record.id, status: record.status, progress: record.progress })
   }
 
   cancel(jobId: ExportJobId): void {
@@ -147,6 +161,10 @@ export class ExportManager {
     context: common.UIAbilityContext,
     overwriteTargetUri?: string
   ): Promise<ExportJobId> {
+    // 原生只有一份进度/取消状态；旧任务完全退出前不能复用这份全局状态。
+    if (this.jobs.size > 0) {
+      throw new Error('上一次导出仍在结束处理中，请稍后重试')
+    }
     // 记录落盘要用 context 打开偏好设置。导出不一定经过 CoreBridge，
     // 那条路径上的 setContext 可能还没跑过，这里补一次（重复设置无副作用）。
     PreferencesService.getInstance().setContext(context)
@@ -158,6 +176,9 @@ export class ExportManager {
       listeners: [],
       cancelled: false,
       progress: 0,
+      status: '准备导出',
+      lastNotificationAt: 0,
+      lastNotifiedStage: '',
       overwriteTargetUri: overwriteTargetUri ?? ''
     }
     this.jobs.set(jobId, record)
@@ -204,20 +225,21 @@ export class ExportManager {
         (message: string) => {
           debugLog('导出', message)
         },
-        (progress: number) => {
+        (update: ExportProgressUpdate) => {
           if (!record.cancelled) {
-            this.notify(record, `导出处理中 ${progress}%`, progress)
+            this.notify(record, `${exportStageText(update.stage)} · ${update.percent.toFixed(1)}% · ${update.detail}`, update.percent)
           }
-        }
+        },
+        (): boolean => record.cancelled
       )
       if (record.cancelled) {
         return
       }
       const saveStartProgress = Math.max(85, Math.min(99, record.progress))
-      this.notify(record, `保存相册中 ${saveStartProgress}%`, saveStartProgress)
-      const albumUri = await this.saveVideoToAlbum(fileName, sourceUri, context, saveStartProgress, (progress: number) => {
+      this.notify(record, record.overwriteTargetUri.length > 0 ? '保存相册 · 正在打开成片' : '请选择相册保存位置', saveStartProgress)
+      const albumUri = await this.saveVideoToAlbum(fileName, sourceUri, context, saveStartProgress, (progress: number, detail: string) => {
         if (!record.cancelled) {
-          this.notify(record, `导出处理中 ${progress}%`, progress)
+          this.notify(record, `保存相册 · ${progress.toFixed(1)}% · ${detail}`, progress)
         }
       }, record.overwriteTargetUri, (): boolean => record.cancelled)
       // 取消可能发生在拷贝途中：拷完才发的取消也不能再落记录，
@@ -274,7 +296,7 @@ export class ExportManager {
     sourceUri: string,
     context: common.UIAbilityContext,
     startProgress: number,
-    onProgress: (percent: number) => void,
+    onProgress: (percent: number, detail: string) => void,
     overwriteTargetUri: string,
     isCancelled: () => boolean
   ): Promise<string> {
@@ -302,18 +324,18 @@ export class ExportManager {
         debugLog('导出', `相册写入开始 source=${sourceUri} target=${albumUri} 覆盖=${isOverwrite ? 'YES' : 'NO'}`)
         let srcFd: number = -1
         let dstFd: number = -1
-        const chunkSize: number = 1024 * 1024
         let totalSize: number = 0
         let copiedSize: number = 0
         const baseProgress: number = Math.max(85, Math.min(99, startProgress))
-        let reportedProgress: number = baseProgress
-        let copyError: string = ''
         try {
           try {
             const stat = await fs.stat(sourceUri)
             totalSize = Number(stat.size ?? 0)
           } catch (_) {
             totalSize = 0
+          }
+          if (isCancelled()) {
+            throw new Error('已取消导出')
           }
           const src = await fs.open(sourceUri, fs.OpenMode.READ_ONLY)
           srcFd = src.fd
@@ -324,49 +346,23 @@ export class ExportManager {
             : fs.OpenMode.READ_WRITE
           const dst = await fs.open(albumUri, dstMode)
           dstFd = dst.fd
-          while (true) {
-            // 每一块之前都查一次取消：拷贝是整块跑的，不查的话用户点取消后
-            // 相册里照样会写进完整的一份，同时界面又显示「已取消导出」。
+          try {
+            await copyExportFileData(srcFd, dstFd, totalSize, (copied: number, total: number) => {
+              copiedSize = copied
+              const percent = total > 0 ? exportPercent(baseProgress + Math.min(1, copied / total) * (99 - baseProgress)) : baseProgress
+              const detail = total > 0 ? `${(copied / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB` :
+                `已写入 ${(copied / 1048576).toFixed(1)} MB`
+              onProgress(percent, detail)
+            }, isCancelled)
+            if (copiedSize <= 0) {
+              throw new Error('导出文件为空，未写入相册')
+            }
+            await fs.fsync(dstFd)
+          } catch (error) {
             if (isCancelled()) {
               throw new Error('已取消导出')
             }
-            const buffer = new ArrayBuffer(chunkSize)
-            let readLen = 0
-            try {
-              readLen = await fs.read(srcFd, buffer)
-            } catch (e) {
-              copyError = `读取失败: ${e instanceof Error ? e.message : String(e)}`
-              break
-            }
-            if (readLen <= 0) {
-              break
-            }
-            try {
-              await fs.write(dstFd, buffer.slice(0, readLen))
-            } catch (e) {
-              copyError = `写入失败: ${e instanceof Error ? e.message : String(e)}`
-              break
-            }
-            copiedSize += readLen
-            if (totalSize > 0) {
-              const progressSpan = Math.max(0, 99 - baseProgress)
-              const targetProgress = baseProgress + Math.min(progressSpan, Math.floor((copiedSize * progressSpan) / totalSize))
-              while (reportedProgress < targetProgress) {
-                reportedProgress += 1
-                onProgress(reportedProgress)
-              }
-            } else if (reportedProgress < 99) {
-              reportedProgress += 1
-              onProgress(reportedProgress)
-            }
-          }
-          while (reportedProgress < 99) {
-            reportedProgress += 1
-            onProgress(reportedProgress)
-          }
-          if (copyError.length > 0) {
-            // 覆盖场景下 TRUNC 已经把上一版截断了，写到一半失败意味着
-            // 那条相册视频现在既不完整也不是原来那一版 —— 必须让用户知道。
+            const copyError = error instanceof Error ? error.message : String(error)
             throw new Error(isOverwrite
               ? `相册写入中断（已写入 ${copiedSize}/${totalSize} 字节）：${copyError}；上一次导出的成片可能已被截断，建议重新导出`
               : `相册写入中断（已写入 ${copiedSize}/${totalSize} 字节）：${copyError}`)
@@ -381,7 +377,8 @@ export class ExportManager {
           if (dstFd >= 0) {
             try {
               await fs.close(dstFd)
-            } catch (_) {
+            } catch (error) {
+              throw new Error(`相册文件关闭失败：${error instanceof Error ? error.message : String(error)}`)
             }
           }
         }

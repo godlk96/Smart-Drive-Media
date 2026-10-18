@@ -68,6 +68,8 @@ const GROUPS = {
       'entry/src/main/ets/service/CoreApiContract.ets',
       'entry/src/main/ets/service/DvrScannerService.ets',
       'entry/src/main/ets/service/ExportNativeService.ets',
+      'entry/src/main/ets/service/ExportFileCopy.ets',
+      'entry/src/main/ets/model/ExportProgress.ets',
       'entry/src/main/ets/service/PreferencesService.ets',
       'entry/src/main/ets/service/TimelineService.ets',
       'entry/src/main/ets/utils/Logger.ets',
@@ -82,6 +84,8 @@ const GROUPS = {
       'entry/src/main/ets/service/ExportNativeService.ets'
     ],
     deps: [
+      'entry/src/main/ets/service/ExportFileCopy.ets',
+      'entry/src/main/ets/model/ExportProgress.ets',
       'entry/src/main/ets/constants/AppConstants.ets',
       'entry/src/main/ets/model/AppState.ets',
       'entry/src/main/ets/model/Models.ets',
@@ -109,6 +113,8 @@ const GROUPS = {
       'entry/src/main/ets/service/CoreApiContract.ets',
       'entry/src/main/ets/service/DvrScannerService.ets',
       'entry/src/main/ets/service/ExportNativeService.ets',
+      'entry/src/main/ets/service/ExportFileCopy.ets',
+      'entry/src/main/ets/model/ExportProgress.ets',
       'entry/src/main/ets/service/PreferencesService.ets',
       'entry/src/main/ets/service/TimelineService.ets',
       'entry/src/main/ets/utils/Logger.ets',

@@ -402,6 +402,8 @@ static napi_value RunExportPipelineAsync(napi_env env, napi_callback_info info)
     ctx->env = env;
     ctx->deferred = deferred;
     ctx->request = request;
+    // 入队前重置，避免轮询读到上一任务的完成状态，也保留排队期间收到的取消。
+    resetNativeExportProgress();
     napi_value resourceName = nullptr;
     napi_create_string_utf8(env, "RunExportPipelineAsync", NAPI_AUTO_LENGTH, &resourceName);
     if (napi_create_async_work(env,
@@ -648,6 +650,8 @@ static napi_value GetExportProgress(napi_env env, napi_callback_info info)
     napi_create_object(env, &output);
     setNamedInt(env, output, "percent", static_cast<int64_t>(p.percent));
     setNamedInt(env, output, "currentFrame", p.currentFrame);
+    setNamedInt(env, output, "completedUnits", p.completedUnits);
+    setNamedInt(env, output, "totalUnits", p.totalUnits);
     setNamedInt(env, output, "totalFrames", p.totalFrames);
     setNamedInt(env, output, "stage", static_cast<int64_t>(p.stage));
     return output;

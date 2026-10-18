@@ -28,6 +28,8 @@ export interface NativeExportPipelineResult {
 export interface NativeExportProgress {
   percent: number
   currentFrame: number
+  completedUnits: number
+  totalUnits: number
   totalFrames: number
   stage: number
 }

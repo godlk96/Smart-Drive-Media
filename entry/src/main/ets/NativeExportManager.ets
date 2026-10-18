@@ -14,7 +14,8 @@ export async function startNativeExport(
     const timeoutTimer = setTimeout(() => {
       if (!settled) {
         settled = true
-        reject(new Error('导出超时，请重试'))
+        sharedExportManager.cancel(jobId)
+        reject(new Error('导出超时，已取消当前任务，请稍后重试'))
       }
     }, 180000)
 

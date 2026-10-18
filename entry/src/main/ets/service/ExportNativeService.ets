@@ -4,6 +4,8 @@ import image from '@ohos.multimedia.image'
 import media from '@ohos.multimedia.media'
 import smartdriveExporter from 'libsmartdrive_exporter.so'
 import { debugLog } from '../utils/Logger'
+import { copyExportFileData } from './ExportFileCopy'
+import { ExportProgressUpdate, NativeExportWork, exportPercent, nativeExportProgress } from '../model/ExportProgress'
 
 // 封面要铺满 356vp 宽的卡片（3x 屏 ≈ 1068px），480×270 被放大 2.2 倍，卡面文字全糊。
 // 直接按行车记录仪的原生档位取帧。
@@ -65,20 +67,12 @@ interface NativeExportPipelineRequest {
 
 interface MaterializedUriSet {
   inputUris: Array<string>
-  tempUris: Array<string>
 }
 
 class NativeExportPipelineResult {
   code: number = 0
   message: string = ''
   outputPath: string = ''
-}
-
-interface NativeExportProgressResponse {
-  percent: number
-  currentFrame: number
-  totalFrames: number
-  stage: number
 }
 
 function deepCloneJson<T>(value: T): T {
@@ -235,23 +229,24 @@ function resolveParentDir(path: string): string {
   return path.slice(0, index)
 }
 
-async function copyUriToLocal(sourceUri: string, targetPath: string): Promise<void> {
+async function copyUriToLocal(
+  sourceUri: string,
+  targetPath: string,
+  totalBytes: number,
+  onProgress: (copied: number, total: number) => void,
+  isCancelled: () => boolean
+): Promise<void> {
   let srcFd: number = -1
   let dstFd: number = -1
-  const chunkSize: number = 1024 * 1024
   try {
+    if (isCancelled()) {
+      throw new Error('已取消导出')
+    }
     const src = await fs.open(sourceUri, fs.OpenMode.READ_ONLY)
     srcFd = src.fd
-    const dst = await fs.open(targetPath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE)
+    const dst = await fs.open(targetPath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC)
     dstFd = dst.fd
-    while (true) {
-      const buffer = new ArrayBuffer(chunkSize)
-      const readLen = await fs.read(srcFd, buffer)
-      if (readLen <= 0) {
-        break
-      }
-      await fs.write(dstFd, buffer.slice(0, readLen))
-    }
+    await copyExportFileData(srcFd, dstFd, totalBytes, onProgress, isCancelled)
   } catch (error) {
     const reason = String(error ?? 'unknown')
     throw new Error(`素材落地失败：${reason}`)
@@ -273,33 +268,13 @@ async function copyUriToLocal(sourceUri: string, targetPath: string): Promise<vo
 
 async function materializeInputUris(
   uris: Array<string>,
-  outputPath: string,
-  prefix: string,
-  onLog: (message: string) => void,
-  onFileCopied?: () => void
+  materialize: (uri: string) => Promise<string>
 ): Promise<MaterializedUriSet> {
-  const outputDir = resolveParentDir(outputPath)
   const inputUris: Array<string> = []
-  const tempUris: Array<string> = []
   for (let index = 0; index < uris.length; index++) {
-    const uri = uris[index]
-    if (uri.startsWith('/data/storage/')) {
-      inputUris.push(uri)
-      if (onFileCopied) {
-        onFileCopied()
-      }
-      continue
-    }
-    const targetPath = `${outputDir}/${prefix}_${Date.now()}_${index}.mp4`
-    await copyUriToLocal(uri, targetPath)
-    onLog(`Native导出阶段 素材落地 ${prefix}[${index}] -> ${targetPath}`)
-    inputUris.push(targetPath)
-    tempUris.push(targetPath)
-    if (onFileCopied) {
-      onFileCopied()
-    }
+    inputUris.push(await materialize(uris[index]))
   }
-  return { inputUris, tempUris }
+  return { inputUris }
 }
 
 function buildNativeExportPayload(
@@ -337,7 +312,8 @@ async function removeMaterializedTempUris(uris: Array<string>, onLog: (message: 
 export async function executeComposeByService(
   request: ExportComposeRequest,
   onLog: (message: string) => void,
-  onProgress: (percent: number) => void
+  onProgress: (update: ExportProgressUpdate) => void,
+  isCancelled: () => boolean = (): boolean => false
 ): Promise<string> {
   const isolatedRequest = cloneRequestForExportIsolation(request)
   const runPipelineAsync = (smartdriveExporter as Record<string, Object | Function> | undefined)?.runExportPipelineAsync as ((payload: NativeExportPipelineRequest) => Promise<NativeExportPipelineResult>) | undefined
@@ -345,77 +321,170 @@ export async function executeComposeByService(
   if (isolatedRequest.frontUris.length === 0 || isolatedRequest.backUris.length === 0) {
     throw new Error('导出失败：前后路素材不足')
   }
-
-  // 阶段 1: 素材准备与切片物化 (5% ~ 20%)
-  onProgress(5)
-  const materializeStart = Date.now()
-  const totalClips = Math.max(1, isolatedRequest.frontUris.length + isolatedRequest.backUris.length +
-    isolatedRequest.sideUris.length + isolatedRequest.side2Uris.length)
-  let copiedClipsCount = 0
-  const onFileCopied = () => {
-    copiedClipsCount++
-    const p = Math.min(20, Math.floor(5 + (copiedClipsCount / totalClips) * 15))
-    onProgress(p)
-  }
-  const materialized = await Promise.all([
-    materializeInputUris(isolatedRequest.frontUris, isolatedRequest.outputPath, 'front', onLog, onFileCopied),
-    materializeInputUris(isolatedRequest.backUris, isolatedRequest.outputPath, 'back', onLog, onFileCopied),
-    materializeInputUris(isolatedRequest.sideUris, isolatedRequest.outputPath, 'side', onLog, onFileCopied),
-    materializeInputUris(isolatedRequest.side2Uris, isolatedRequest.outputPath, 'side2', onLog, onFileCopied)
-  ])
-  const frontInputUris = materialized[0]?.inputUris ?? []
-  const backInputUris = materialized[1]?.inputUris ?? []
-  const sideInputUris = materialized[2]?.inputUris ?? []
-  const side2InputUris = materialized[3]?.inputUris ?? []
-  const tempUris = [
-    ...(materialized[0]?.tempUris ?? []),
-    ...(materialized[1]?.tempUris ?? []),
-    ...(materialized[2]?.tempUris ?? []),
-    ...(materialized[3]?.tempUris ?? [])
-  ]
-  onLog(`Native导出阶段 素材落地耗时=${Date.now() - materializeStart}ms`)
-  // T6 需要 4 路素材；缺第 4 路时提前给出中文原因，而不是让原生返回一个裸错误码。
-  if (isolatedRequest.templateId === 'T6' && side2InputUris.length === 0) {
+  if (isolatedRequest.templateId === 'T6' && isolatedRequest.side2Uris.length === 0) {
     throw new Error('导出失败：四机位模板需要右后（Right）素材')
   }
-  const payload = buildNativeExportPayload(isolatedRequest, frontInputUris, backInputUris, sideInputUris, side2InputUris)
-  onLog(`【Native入参-落地文件】Front=[${frontInputUris.join(', ')}]`)
-  onLog(`【Native入参-落地文件】Back=[${backInputUris.join(', ')}]`)
-  onLog(`【Native入参-落地文件】Side=[${sideInputUris.join(', ')}]`)
-  onLog(`【Native入参-落地文件】Side2=[${side2InputUris.join(', ')}]`)
-  onLog(`【Native入参-输出路径】outputPath=${payload.outputPath}`)
-  let segmentText = ''
-  for (let index = 0; index < payload.segments.length; index++) {
-    const item = payload.segments[index]
-    segmentText += `[#${index} ${item.startMs}ms~${item.endMs}ms (${item.startMs/1000}s~${item.endMs/1000}s) @${item.speedLabel} ${item.muted ? 'MUTED' : 'UNMUTED'}] `
-  }
-  onLog(`【Native入参-模板与片段】template=${payload.templateId} expectedDurationSec=${payload.expectedDurationSec} segments(${payload.segments.length})=${segmentText}`)
   if (typeof runPipelineAsync !== 'function') {
     throw new Error('smartdrive_exporter.runExportPipelineAsync 未实现')
   }
 
-  // 阶段 2: 启动 Native 渲染合成 (20% ~ 85%)，启动高频定时轮询 Native 进度，保证 UI 细腻跳动不卡顿
-  onProgress(20)
-  onLog('Native导出阶段 启动 export_engine 渲染合成管线')
-  const nativeStart = Date.now()
-  let outputPath: string = ''
-  let lastReportedProgress = 20
-  const progressTimer = setInterval(() => {
+  onProgress({ percent: 5, stage: 'preparing', detail: '正在准备视频素材' })
+  const materializeStart = Date.now()
+  const allUris: Array<string> = [...isolatedRequest.frontUris, ...isolatedRequest.backUris,
+    ...isolatedRequest.sideUris, ...isolatedRequest.side2Uris]
+  const sizes: Map<string, number> = new Map()
+  allUris.forEach((uri: string) => sizes.set(uri, 0))
+  const uniqueUris: Array<string> = []
+  sizes.forEach((_, uri: string) => uniqueUris.push(uri))
+  let totalBytes = 0
+  let allSizesKnown = true
+  await Promise.all(uniqueUris.map(async (uri: string) => {
     try {
-      const getProgressFn = (smartdriveExporter as Record<string, Object | Function> | undefined)?.getExportProgress as (() => NativeExportProgressResponse) | undefined
-      if (typeof getProgressFn === 'function') {
-        const prog = getProgressFn()
-        const pct = Number(prog?.percent ?? 0)
-        if (pct > lastReportedProgress && pct <= 85) {
-          lastReportedProgress = pct
-          onProgress(pct)
-        }
+      const stat = await fs.stat(uri)
+      const size = Math.max(0, Number(stat.size))
+      sizes.set(uri, size)
+      totalBytes += size
+      if (size <= 0) {
+        allSizesKnown = false
       }
     } catch (_) {
+      allSizesKnown = false
     }
-  }, 120)
-
+  }))
+  const copiedByUri: Map<string, number> = new Map()
+  const completedUris: Set<string> = new Set()
+  const pending: Map<string, Promise<string>> = new Map()
+  const tempUris: Array<string> = []
+  let lastCopyReportAt = 0
+  let materializationFailed = false
+  let materializationError = ''
+  const stopped = (): boolean => isCancelled() || materializationFailed
+  const reportCopy = (force: boolean): void => {
+    if (!force && Date.now() - lastCopyReportAt < 120) {
+      return
+    }
+    let copied = 0
+    let completedFraction = 0
+    copiedByUri.forEach((bytes: number, uri: string) => {
+      copied += bytes
+      const size = sizes.get(uri) ?? 0
+      completedFraction += size > 0 ? Math.min(1, bytes / size) : (completedUris.has(uri) ? 1 : 0)
+    })
+    const fraction = allSizesKnown && totalBytes > 0 ? copied / totalBytes : completedFraction / Math.max(1, uniqueUris.length)
+    lastCopyReportAt = Date.now()
+    onProgress({ percent: exportPercent(5 + Math.min(1, fraction) * 15), stage: 'preparing',
+      detail: allSizesKnown ? `${completedUris.size} / ${uniqueUris.length} 个素材 · ${(copied / 1048576).toFixed(1)} / ${(totalBytes / 1048576).toFixed(1)} MB` :
+        `已准备 ${completedUris.size} / ${uniqueUris.length} 个素材` })
+  }
+  const materialize = (uri: string): Promise<string> => {
+    const existing = pending.get(uri)
+    if (existing) {
+      return existing
+    }
+    const promise = (async (): Promise<string> => {
+      if (stopped()) {
+        throw new Error('已取消导出')
+      }
+      let inputPath = uri
+      if (!uri.startsWith('/data/storage/')) {
+        inputPath = `${resolveParentDir(isolatedRequest.outputPath)}/input_${Date.now()}_${tempUris.length}.mp4`
+        tempUris.push(inputPath)
+        await copyUriToLocal(uri, inputPath, sizes.get(uri) ?? 0, (bytes: number) => {
+          copiedByUri.set(uri, bytes)
+          if (bytes > 0) {
+            reportCopy(false)
+          }
+        }, stopped)
+        onLog(`Native导出阶段 素材落地 ${uri} -> ${inputPath}`)
+      }
+      completedUris.add(uri)
+      copiedByUri.set(uri, sizes.get(uri) ?? 0)
+      reportCopy(true)
+      return inputPath
+    })()
+    pending.set(uri, promise)
+    return promise
+  }
+  let progressTimer = -1
   try {
+    const prepareTrack = async (uris: Array<string>): Promise<MaterializedUriSet> => {
+      try {
+        return await materializeInputUris(uris, materialize)
+      } catch (error) {
+        if (!materializationFailed) {
+          materializationError = error instanceof Error ? error.message : String(error)
+        }
+        materializationFailed = true
+        throw new Error(error instanceof Error ? error.message : String(error))
+      }
+    }
+    // 等待各路都退出后再清理，避免 Promise.all 提前失败后仍有复制写入临时文件。
+    const results = await Promise.allSettled([
+      prepareTrack(isolatedRequest.frontUris), prepareTrack(isolatedRequest.backUris),
+      prepareTrack(isolatedRequest.sideUris), prepareTrack(isolatedRequest.side2Uris)
+    ])
+    const materialized: Array<MaterializedUriSet> = []
+    let prepareError: Error | undefined = undefined
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        materialized.push(result.value)
+      } else if (!prepareError) {
+        const reason = result.reason as Object
+        prepareError = new Error(reason instanceof Error ? reason.message : String(reason))
+      }
+    }
+    if (prepareError) {
+      throw new Error(materializationError.length > 0 ? materializationError : prepareError.message)
+    }
+    if (isCancelled()) {
+      throw new Error('已取消导出')
+    }
+    const frontInputUris = materialized[0].inputUris
+    const backInputUris = materialized[1].inputUris
+    const sideInputUris = materialized[2].inputUris
+    const side2InputUris = materialized[3].inputUris
+    onLog(`Native导出阶段 素材落地耗时=${Date.now() - materializeStart}ms`)
+    const payload = buildNativeExportPayload(isolatedRequest, frontInputUris, backInputUris, sideInputUris, side2InputUris)
+    onLog(`【Native入参-落地文件】Front=[${frontInputUris.join(', ')}]`)
+    onLog(`【Native入参-落地文件】Back=[${backInputUris.join(', ')}]`)
+    onLog(`【Native入参-落地文件】Side=[${sideInputUris.join(', ')}]`)
+    onLog(`【Native入参-落地文件】Side2=[${side2InputUris.join(', ')}]`)
+    onLog(`【Native入参-输出路径】outputPath=${payload.outputPath}`)
+    let segmentText = ''
+    for (let index = 0; index < payload.segments.length; index++) {
+      const item = payload.segments[index]
+      segmentText += `[#${index} ${item.startMs}ms~${item.endMs}ms (${item.startMs/1000}s~${item.endMs/1000}s) @${item.speedLabel} ${item.muted ? 'MUTED' : 'UNMUTED'}] `
+    }
+    onLog(`【Native入参-模板与片段】template=${payload.templateId} expectedDurationSec=${payload.expectedDurationSec} segments(${payload.segments.length})=${segmentText}`)
+    onProgress({ percent: 20, stage: 'checking', detail: '正在检查视频素材' })
+    onLog('Native导出阶段 启动 export_engine 渲染合成管线')
+    const nativeStart = Date.now()
+    let outputPath: string = ''
+    let lastReportedProgress = 20
+    let lastStage = ''
+    progressTimer = setInterval(() => {
+      try {
+        if (isCancelled()) {
+          cancelNativeExportPipeline()
+          return
+        }
+        const getProgressFn = (smartdriveExporter as Record<string, Object | Function> | undefined)?.getExportProgress as (() => NativeExportWork) | undefined
+        if (typeof getProgressFn === 'function') {
+          const prog = getProgressFn()
+          if (prog.stage <= 0 || prog.percent < 0) {
+            return
+          }
+          const update = nativeExportProgress(prog)
+          if (update.percent >= lastReportedProgress && (update.percent > lastReportedProgress || update.stage !== lastStage)) {
+            lastReportedProgress = update.percent
+            lastStage = update.stage
+            onProgress(update)
+          }
+        }
+      } catch (_) {
+      }
+    }, 120)
+
     const result = await runPipelineAsync(payload)
     const errorCode = Number(result?.code ?? -1)
     const resultMessage = String(result?.message ?? '')
@@ -426,19 +495,21 @@ export async function executeComposeByService(
       throw new Error(`导出失败[${errorCode}]：${resultMessage.length > 0 ? resultMessage : 'UNKNOWN'}`)
     }
     outputPath = String(result?.outputPath ?? '')
+    if (outputPath.length === 0) {
+      throw new Error('导出失败：native 导出返回为空')
+    }
+    onLog(`Native导出阶段 Native处理耗时=${Date.now() - nativeStart}ms`)
+
+    // 阶段 3: Native 合成完成，进入相册写入 (85% ~ 100%)
+    onProgress({ percent: 85, stage: 'finalizing', detail: '视频已生成，正在准备保存' })
+    onLog(`Native导出阶段 完成 输出=${outputPath}`)
+    return outputPath
   } finally {
-    clearInterval(progressTimer)
+    if (progressTimer >= 0) {
+      clearInterval(progressTimer)
+    }
     await removeMaterializedTempUris(tempUris, onLog)
   }
-  if (outputPath.length === 0) {
-    throw new Error('导出失败：native 导出返回为空')
-  }
-  onLog(`Native导出阶段 Native处理耗时=${Date.now() - nativeStart}ms`)
-
-  // 阶段 3: Native 合成完成，进入相册写入 (85% ~ 100%)
-  onProgress(85)
-  onLog(`Native导出阶段 完成 输出=${outputPath}`)
-  return outputPath
 }
 
 export function cancelNativeExportPipeline(): void {

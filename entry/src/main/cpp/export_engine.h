@@ -24,10 +24,14 @@ struct NativeExportProgressInfo {
     int64_t currentFrame = 0;
     int64_t totalFrames = 0;
     int stage = 0;
+    int64_t completedUnits = 0;
+    int64_t totalUnits = 0;
 };
 
 NativeExportProgressInfo getNativeExportProgress();
-void setNativeExportProgress(int percent, int64_t currentFrame, int64_t totalFrames, int stage);
+void setNativeExportProgress(int percent, int64_t currentFrame, int64_t totalFrames, int stage,
+                             int64_t completedUnits = 0, int64_t totalUnits = 0);
+// 在任务入队前调用一次；工作线程不能清掉排队期间收到的取消。
 void resetNativeExportProgress();
 void cancelNativeExport();
 bool isNativeExportCancelled();
