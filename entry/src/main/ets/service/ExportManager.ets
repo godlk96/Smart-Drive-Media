@@ -6,6 +6,9 @@ import { DvrMeta } from '../model/TripModels'
 import { buildComposeRequestByService } from './ExportService'
 import { exportDurationSec } from '../model/SegmentModel'
 import { executeComposeByService, cancelNativeExportPipeline } from './ExportNativeService'
+import { EditRecord, makeRecordId } from '../model/EditRecord'
+import { EditHistoryService } from './EditHistoryService'
+import { PreferencesService } from './PreferencesService'
 import { debugLog } from '../utils/Logger'
 
 export type ExportJobId = string
@@ -27,6 +30,8 @@ interface ExportJobRecord {
   listeners: Array<ExportListener>
   cancelled: boolean
   progress: number
+  /** 空串 = 新建相册条目；非空 = 就地覆写这个已有条目的 URI（spec 4.5） */
+  overwriteTargetUri: string
 }
 
 function snapshotToLegacyClips(snapshot: ExportSnapshot): Array<DvrMeta> {
@@ -137,7 +142,14 @@ export class ExportManager {
     jobIds.forEach((id) => this.cancel(id))
   }
 
-  async start(snapshot: ExportSnapshot, context: common.UIAbilityContext): Promise<ExportJobId> {
+  async start(
+    snapshot: ExportSnapshot,
+    context: common.UIAbilityContext,
+    overwriteTargetUri?: string
+  ): Promise<ExportJobId> {
+    // 记录落盘要用 context 打开偏好设置。导出不一定经过 CoreBridge，
+    // 那条路径上的 setContext 可能还没跑过，这里补一次（重复设置无副作用）。
+    PreferencesService.getInstance().setContext(context)
     const isolatedSnapshot = cloneExportSnapshot(snapshot)
     const jobId = `${isolatedSnapshot.sessionId}_${Date.now()}`
     const record: ExportJobRecord = {
@@ -145,7 +157,8 @@ export class ExportManager {
       snapshot: isolatedSnapshot,
       listeners: [],
       cancelled: false,
-      progress: 0
+      progress: 0,
+      overwriteTargetUri: overwriteTargetUri ?? ''
     }
     this.jobs.set(jobId, record)
     this.notify(record, '导出处理中 0%', 0)
@@ -206,7 +219,10 @@ export class ExportManager {
         if (!record.cancelled) {
           this.notify(record, `导出处理中 ${progress}%`, progress)
         }
-      })
+      }, record.overwriteTargetUri)
+      // 先落记录再发成功事件：列表里能立刻看到这条作品。
+      // persistRecord 内部吞掉一切异常 —— 落盘失败不能把成功的导出判成失败。
+      await this.persistRecord(record, albumUri, fileName)
       const successEvent: ExportJobEvent = { jobId: record.id, status: `相册保存成功：${albumUri}`, progress: 100 }
       this.recordTerminalEvent(record.id, successEvent)
       this.notify(record, `导出完成：${fileName}`, 100)
@@ -252,25 +268,31 @@ export class ExportManager {
     sourceUri: string,
     context: common.UIAbilityContext,
     startProgress: number,
-    onProgress: (percent: number) => void
+    onProgress: (percent: number) => void,
+    overwriteTargetUri: string
   ): Promise<string> {
-    const helper = photoAccessHelper.getPhotoAccessHelper(context)
-    const srcFileUris: Array<string> = [sourceUri]
-    const dotIndex = fileName.lastIndexOf('.')
-    const title = dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName
-    const photoCreationConfigs: Array<photoAccessHelper.PhotoCreationConfig> = [{
-      title: title,
-      fileNameExtension: 'mp4',
-      photoType: photoAccessHelper.PhotoType.VIDEO,
-      subtype: photoAccessHelper.PhotoSubtype.DEFAULT
-    }]
+    const isOverwrite = overwriteTargetUri.length > 0
+    let albumUri = overwriteTargetUri
     try {
-        const desFileUris = await helper.showAssetsCreationDialog(srcFileUris, photoCreationConfigs)
-        const albumUri = desFileUris[0]
-        if (!albumUri || albumUri.length === 0) {
-          throw new Error('未选择相册保存位置')
+        if (!isOverwrite) {
+          const helper = photoAccessHelper.getPhotoAccessHelper(context)
+          const srcFileUris: Array<string> = [sourceUri]
+          const dotIndex = fileName.lastIndexOf('.')
+          const title = dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName
+          const photoCreationConfigs: Array<photoAccessHelper.PhotoCreationConfig> = [{
+            title: title,
+            fileNameExtension: 'mp4',
+            photoType: photoAccessHelper.PhotoType.VIDEO,
+            subtype: photoAccessHelper.PhotoSubtype.DEFAULT
+          }]
+          const desFileUris = await helper.showAssetsCreationDialog(srcFileUris, photoCreationConfigs)
+          const created = desFileUris[0]
+          if (!created || created.length === 0) {
+            throw new Error('未选择相册保存位置')
+          }
+          albumUri = created
         }
-        debugLog('导出', `相册写入开始 source=${sourceUri} target=${albumUri}`)
+        debugLog('导出', `相册写入开始 source=${sourceUri} target=${albumUri} 覆盖=${isOverwrite ? 'YES' : 'NO'}`)
         let srcFd: number = -1
         let dstFd: number = -1
         const chunkSize: number = 1024 * 1024
@@ -288,7 +310,12 @@ export class ExportManager {
           }
           const src = await fs.open(sourceUri, fs.OpenMode.READ_ONLY)
           srcFd = src.fd
-          const dst = await fs.open(albumUri, fs.OpenMode.READ_WRITE)
+          // 覆盖必须带 TRUNC：新成片比旧的短时，不截断会在文件尾部残留旧字节，
+          // 产物直接损坏（spec 4.6）。新建条目本来就是空的，不需要。
+          const dstMode = isOverwrite
+            ? fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC
+            : fs.OpenMode.READ_WRITE
+          const dst = await fs.open(albumUri, dstMode)
           dstFd = dst.fd
           while (true) {
             const buffer = new ArrayBuffer(chunkSize)
@@ -346,6 +373,62 @@ export class ExportManager {
       } catch (error) {
         throw new Error(`保存到相册失败: ${error instanceof Error ? error.message : String(error)}`)
       }
+  }
+
+  /**
+   * 把这次导出写进「我的剪辑」历史。
+   *
+   * **吞掉一切异常**：记录没落盘，成片也已经在相册里了，此时把导出报成失败是撒谎。
+   * 覆盖场景沿用被覆盖那条记录的 id —— id 不变，upsertRecord 才会替换而不是追加。
+   * 若那条记录已被用户删掉，就退回新建一条：相册条目此时已被覆写，
+   * 新记录指向同一个 albumUri，语义仍然正确。
+   */
+  private async persistRecord(
+    record: ExportJobRecord,
+    albumUri: string,
+    fileName: string
+  ): Promise<void> {
+    try {
+      const snapshot = record.snapshot
+      const service = EditHistoryService.getInstance()
+      let recordId = ''
+      let coverPath = ''
+      if (record.overwriteTargetUri.length > 0) {
+        const existing = await service.list()
+        for (let i = 0; i < existing.length; i++) {
+          if (existing[i].albumUri === record.overwriteTargetUri) {
+            recordId = existing[i].id
+            coverPath = existing[i].coverPath
+            break
+          }
+        }
+      }
+      if (recordId.length === 0) {
+        recordId = makeRecordId(Date.now(), Math.random())
+      }
+      const item = new EditRecord()
+      item.id = recordId
+      item.tripId = snapshot.trip.tripId
+      item.tripTitle = snapshot.trip.title
+      item.tripStartTs = snapshot.trip.startTs
+      item.tripEndTs = snapshot.trip.endTs
+      item.albumUri = albumUri
+      item.fileName = fileName
+      item.exportedAt = Date.now()
+      item.durationMs = Math.round(exportDurationSec(snapshot.playback.segments) * 1000)
+      item.segmentCount = snapshot.playback.segments.length
+      item.templateId = snapshot.selectedTemplateId
+      item.snapshot = JSON.stringify(snapshot)
+      item.coverPath = coverPath
+      const saved = await service.upsert(item)
+      if (saved) {
+        debugLog('我的剪辑', `作品记录已保存 id=${recordId} 覆盖=${record.overwriteTargetUri.length > 0 ? 'YES' : 'NO'}`)
+      } else {
+        debugLog('我的剪辑', `作品记录仅留在内存（落盘失败） id=${recordId}`)
+      }
+    } catch (error) {
+      debugLog('我的剪辑', `作品记录保存失败：${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 }
 
