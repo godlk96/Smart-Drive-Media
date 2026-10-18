@@ -55,7 +55,6 @@ struct Index {
     selectionMode: false,
     selectedRecordIds: []
   }
-  private myEditsLoaded: boolean = false
   @State private deleteConfirmVisible: boolean = false
   @State private deleteCount: number = 0
   @State private toastText: string = ''
@@ -261,12 +260,19 @@ struct Index {
     }, 2000)
   }
 
+  /**
+   * 切 Tab。
+   *
+   * 「我的剪辑」每次切进来都**无条件重读**，不能只读一次：用户可能刚在
+   * 「行程库」里导出一条新作品，`myEditsLoaded` 还是 true，缓存下来的列表
+   * 会一直缺最新那条，直到重启 App。重读只是一次偏好读取，代价可忽略。
+   */
   private switchTab(index: number): void {
     if (this.activeTab === index) {
       return
     }
     this.activeTab = index
-    if (index === 1 && !this.myEditsLoaded) {
+    if (index === 1) {
       void this.refreshMyEdits()
     }
   }
@@ -278,7 +284,6 @@ struct Index {
     }
     try {
       await this.viewModel.refreshMyEdits(context)
-      this.myEditsLoaded = true
       this.syncViewState()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -779,7 +784,6 @@ struct Index {
         .border({ width: 1, color: $r('app.color.ed_line') })
         .borderRadius(8)
         .onClick(() => {
-          this.myEditsLoaded = false
           void this.refreshMyEdits()
         })
     }

@@ -219,7 +219,13 @@ export class ExportManager {
         if (!record.cancelled) {
           this.notify(record, `导出处理中 ${progress}%`, progress)
         }
-      }, record.overwriteTargetUri)
+      }, record.overwriteTargetUri, (): boolean => record.cancelled)
+      // 取消可能发生在拷贝途中：拷完才发的取消也不能再落记录，
+      // 否则用户看到「已取消导出」，相册却多了一条、历史里也多了一条。
+      if (record.cancelled) {
+        debugLog('导出', '相册写入完成后发现已取消，放弃落记录')
+        return
+      }
       // 先落记录再发成功事件：列表里能立刻看到这条作品。
       // persistRecord 内部吞掉一切异常 —— 落盘失败不能把成功的导出判成失败。
       await this.persistRecord(record, albumUri, fileName)
@@ -269,7 +275,8 @@ export class ExportManager {
     context: common.UIAbilityContext,
     startProgress: number,
     onProgress: (percent: number) => void,
-    overwriteTargetUri: string
+    overwriteTargetUri: string,
+    isCancelled: () => boolean
   ): Promise<string> {
     const isOverwrite = overwriteTargetUri.length > 0
     let albumUri = overwriteTargetUri
@@ -318,6 +325,11 @@ export class ExportManager {
           const dst = await fs.open(albumUri, dstMode)
           dstFd = dst.fd
           while (true) {
+            // 每一块之前都查一次取消：拷贝是整块跑的，不查的话用户点取消后
+            // 相册里照样会写进完整的一份，同时界面又显示「已取消导出」。
+            if (isCancelled()) {
+              throw new Error('已取消导出')
+            }
             const buffer = new ArrayBuffer(chunkSize)
             let readLen = 0
             try {
@@ -353,7 +365,11 @@ export class ExportManager {
             onProgress(reportedProgress)
           }
           if (copyError.length > 0) {
-            throw new Error(`相册写入中断（已写入 ${copiedSize}/${totalSize} 字节）：${copyError}`)
+            // 覆盖场景下 TRUNC 已经把上一版截断了，写到一半失败意味着
+            // 那条相册视频现在既不完整也不是原来那一版 —— 必须让用户知道。
+            throw new Error(isOverwrite
+              ? `相册写入中断（已写入 ${copiedSize}/${totalSize} 字节）：${copyError}；上一次导出的成片可能已被截断，建议重新导出`
+              : `相册写入中断（已写入 ${copiedSize}/${totalSize} 字节）：${copyError}`)
           }
         } finally {
           if (srcFd >= 0) {
@@ -398,7 +414,8 @@ export class ExportManager {
         for (let i = 0; i < existing.length; i++) {
           if (existing[i].albumUri === record.overwriteTargetUri) {
             recordId = existing[i].id
-            coverPath = existing[i].coverPath
+            // 刻意**不**继承旧记录的 coverPath：相册里那条视频已经被换了内容，
+            // 旧的首帧缓存还停在上一版画面上。留空让列表重新取一次。
             break
           }
         }

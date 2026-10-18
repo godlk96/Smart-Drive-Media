@@ -17,12 +17,30 @@ import { debugLog } from '../utils/Logger'
 
 export class EditHistoryService {
   private static instance: EditHistoryService | null = null
+  /**
+   * 读改写串行化的队尾。
+   *
+   * `upsert` / `remove` / `updateCoverPath` 都是「读整表 → 改 → 写整表」，
+   * 不做串行化的话，后台补封面（HomeViewModel.resolveMyEditsCovers 会在列表
+   * 渲染后继续跑）和用户点删除会交错：补封面拿着删除**之前**读到的列表回写，
+   * 被删掉的作品原地复活。这正是 spec 2.3 反目标里点名的「残留记录」。
+   */
+  private queue: Promise<void> = Promise.resolve()
 
   public static getInstance(): EditHistoryService {
     if (!EditHistoryService.instance) {
       EditHistoryService.instance = new EditHistoryService()
     }
     return EditHistoryService.instance
+  }
+
+  /** 把一次读改写排到队尾；上一个失败也不能卡住后面的。 */
+  private serialize<T>(op: () => Promise<T>): Promise<T> {
+    const run: Promise<T> = this.queue.then(op, op)
+    this.queue = run.then((): void => {
+    }, (): void => {
+    })
+    return run
   }
 
   /** 转调 PreferencesService。App 启动时注入一次 context 即可。 */
@@ -32,6 +50,11 @@ export class EditHistoryService {
 
   public async list(): Promise<Array<EditRecord>> {
     return PreferencesService.getInstance().loadEditRecords()
+  }
+
+  /** 上一次写入是否真的落盘。导出成功的提示用它决定要不要加一句告警。 */
+  public isRecordsDurable(): boolean {
+    return PreferencesService.getInstance().isEditRecordsDurable()
   }
 
   public async findById(id: string): Promise<EditRecord | undefined> {
@@ -50,22 +73,26 @@ export class EditHistoryService {
    * 返回是否落盘成功；失败时记录仍在内存里，本次会话可见。
    */
   public async upsert(record: EditRecord): Promise<boolean> {
-    const records = await this.list()
-    const next = upsertRecord(records, record)
-    const saved = await PreferencesService.getInstance().saveEditRecords(next)
-    if (!saved) {
-      debugLog('我的剪辑', `记录落盘失败，仅留在内存: ${record.id}`)
-    }
-    return saved
+    return this.serialize(async (): Promise<boolean> => {
+      const records = await this.list()
+      const next = upsertRecord(records, record)
+      const saved = await PreferencesService.getInstance().saveEditRecords(next)
+      if (!saved) {
+        debugLog('我的剪辑', `记录落盘失败，仅留在内存: ${record.id}`)
+      }
+      return saved
+    })
   }
 
   public async remove(ids: Array<string>): Promise<boolean> {
     if (ids.length === 0) {
       return true
     }
-    const records = await this.list()
-    const next = removeRecords(records, ids)
-    return PreferencesService.getInstance().saveEditRecords(next)
+    return this.serialize(async (): Promise<boolean> => {
+      const records = await this.list()
+      const next = removeRecords(records, ids)
+      return PreferencesService.getInstance().saveEditRecords(next)
+    })
   }
 
   /**
@@ -78,12 +105,14 @@ export class EditHistoryService {
     if (coverPath.length === 0) {
       return true
     }
-    const records = await this.list()
-    const target = findRecordById(records, id)
-    if (!target || target.coverPath === coverPath) {
-      return true
-    }
-    target.coverPath = coverPath
-    return PreferencesService.getInstance().saveEditRecords(records)
+    return this.serialize(async (): Promise<boolean> => {
+      const records = await this.list()
+      const target = findRecordById(records, id)
+      if (!target || target.coverPath === coverPath) {
+        return true
+      }
+      target.coverPath = coverPath
+      return PreferencesService.getInstance().saveEditRecords(records)
+    })
   }
 }

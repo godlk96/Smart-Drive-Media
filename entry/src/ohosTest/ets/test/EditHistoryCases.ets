@@ -9,7 +9,8 @@
 import { EditRecord, EDIT_RECORD_SCHEMA_VERSION, makeRecordId, parseEditRecords,
   serializeEditRecords, sortRecordsNewestFirst, findRecordById, recordsForTrip,
   findLatestRecordForTrip, upsertRecord, removeRecords, recordMatchesTrip,
-  formatExportTime, formatClockDuration, formatRecordSummary } from '../../../main/ets/model/EditRecord'
+  formatExportTime, formatClockDuration, formatRecordSummary,
+  limitRecords, fitRecordsUnderBytes } from '../../../main/ets/model/EditRecord'
 import { TimelineCase, expectString, expectNumber, expectTrue, expectFalse, firstError } from './TestSupport'
 
 function makeCase(name: string, run: () => string): TimelineCase {
@@ -226,6 +227,72 @@ export function editHistoryCases(): Array<TimelineCase> {
       expectTrue(first !== second, '唯一'),
       expectString(makeRecordId(1234567890, 0.5), 'rec_1234567890_500', '确定格式')
     ])
+  }))
+
+  // ---- 条数上限与体积裁剪（spec：「记录列表必须自我约束」）----
+  // 全部记录存在 preferences 的**一个** value 里，而 preferences 有单值上限。
+  // 不裁剪的话，导出次数一多，写入会开始失败，历史记录整批停更。
+
+  cases.push(makeCase('未超上限时原样返回', () => {
+    const records: Array<EditRecord> = [makeRecord('rec_a', 'trip-1', 300),
+      makeRecord('rec_b', 'trip-1', 200)]
+    const out = limitRecords(records, 50)
+    return firstError([
+      expectNumber(out.length, 2, '条数'),
+      expectString(out[0].id, 'rec_a', '首条不变')
+    ])
+  }))
+
+  cases.push(makeCase('超上限时淘汰最旧的，保留最新在前的顺序', () => {
+    const records: Array<EditRecord> = [makeRecord('rec_new', 'trip-1', 300),
+      makeRecord('rec_mid', 'trip-1', 200),
+      makeRecord('rec_old', 'trip-1', 100)]
+    const out = limitRecords(records, 2)
+    return firstError([
+      expectNumber(out.length, 2, '条数'),
+      expectString(out[0].id, 'rec_new', '最新还在'),
+      expectString(out[1].id, 'rec_mid', '次新还在'),
+      expectTrue(records.length === 3, '不修改入参')
+    ])
+  }))
+
+  cases.push(makeCase('max 非正数时不裁剪', () => {
+    const records: Array<EditRecord> = [makeRecord('rec_a', 'trip-1', 300),
+      makeRecord('rec_b', 'trip-1', 200)]
+    return expectNumber(limitRecords(records, 0).length, 2, 'max=0')
+  }))
+
+  cases.push(makeCase('体积超预算时从最旧的开始丢', () => {
+    const records: Array<EditRecord> = []
+    for (let i = 0; i < 5; i++) {
+      // 每条约 1KB 的 snapshot，5 条远大于 2KB 预算
+      const item = makeRecord(`rec_${i}`, 'trip-1', 500 - i)
+      item.snapshot = `{"pad":"${'x'.repeat(1000)}"}`
+      records.push(item)
+    }
+    const budget = 2200
+    const out = fitRecordsUnderBytes(records, budget)
+    return firstError([
+      expectTrue(out.length < 5, '确实丢了'),
+      expectTrue(out.length >= 1, '至少留一条'),
+      expectString(out[0].id, 'rec_0', '丢的是尾部最旧的'),
+      expectTrue(serializeEditRecords(out).length <= budget, '裁剪后不超预算')
+    ])
+  }))
+
+  cases.push(makeCase('体积裁剪至少留一条，哪怕一条就超预算', () => {
+    const item = makeRecord('rec_huge', 'trip-1', 100)
+    item.snapshot = `{"pad":"${'x'.repeat(5000)}"}`
+    const out = fitRecordsUnderBytes([item], 10)
+    return firstError([
+      expectNumber(out.length, 1, '保住最后一条'),
+      expectString(out[0].id, 'rec_huge', '就是它')
+    ])
+  }))
+
+  cases.push(makeCase('体积预算非正数时原样返回', () => {
+    const records: Array<EditRecord> = [makeRecord('rec_a', 'trip-1', 300)]
+    return expectNumber(fitRecordsUnderBytes(records, 0).length, 1, 'budget=0')
   }))
 
   return cases

@@ -679,7 +679,13 @@ struct Editor {
       // 拿到的可能是文件名而不是相册 URI，但成功与否是确定的。
       debugLog('导出', `导出返回：${outputPath}`)
       this.updateExportStatus('已保存到相册')
-      this.showToast('已保存到相册')
+      // 成片进了相册，但记录可能只落在内存里（偏好写入失败 / 无 context）。
+      // 那种情况下重启就看不到这条作品，必须如实说出来，不能假装一切正常。
+      if (EditHistoryService.getInstance().isRecordsDurable()) {
+        this.showToast('已保存到相册')
+      } else {
+        this.showToast('已保存到相册，但历史记录暂时不可用')
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (message.indexOf('已取消') >= 0 || message.indexOf('cancel') >= 0) {
@@ -872,7 +878,11 @@ struct Editor {
         .height(38)
         .borderRadius(10)
         .padding({ left: 17, right: 17 })
-        .onClick(() => this.startNativeExportTask())
+        .onClick(() => {
+          // 丢掉返回的 Promise 会让内部异常变成未处理的 rejection；
+          // 这里显式 void，异常由 startNativeExportTask 自己的 try/catch 兜住。
+          void this.startNativeExportTask()
+        })
     }
     .width('100%')
     // 52 → 64，并且上下留出不对称的内边距（上 12 / 下 8）。

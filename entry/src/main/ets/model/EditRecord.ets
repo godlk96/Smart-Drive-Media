@@ -241,3 +241,52 @@ export function formatRecordSummary(segmentCount: number, durationMs: number): s
   const safeCount = segmentCount > 0 ? Math.floor(segmentCount) : 0
   return `${safeCount} 段 · ${formatClockDuration(durationMs)}`
 }
+
+/**
+ * 记录总数上限。
+ *
+ * 全部记录塞在 preferences 的**一个** value 里，而单条记录的 snapshot 带着
+ * 六路的全部分片信息（几十 KB 量级）。不设上限的话，导出几百次就会顶到
+ * preferences 的单值上限，此后写入开始失败，历史记录整批停更。
+ * 超出时**淘汰最旧的** —— 最不可能回头改的就是很久以前那批。
+ */
+export const MAX_EDIT_RECORDS: number = 50
+
+/**
+ * 序列化后的长度预算，单位是 JS 字符串长度（≈ UTF-16 码元）。
+ *
+ * 取 4MB 而不是官方的 16MB，是给 UTF-8 编码留 4 倍余量：中文在 UTF-8 里最多
+ * 占 3 字节而只算 1 个码元，4 倍余量足以保证真实的字节数仍然低于 16MB。
+ */
+export const MAX_EDIT_RECORDS_BYTES: number = 4 * 1024 * 1024
+
+/** 只留最新的 max 条。records 约定为「最新在前」。 */
+export function limitRecords(
+  records: Array<EditRecord>,
+  max: number
+): Array<EditRecord> {
+  if (max <= 0 || records.length <= max) {
+    return records
+  }
+  return records.slice(0, max)
+}
+
+/**
+ * 从最旧的开始丢，直到序列化后不超预算，或只剩一条。
+ *
+ * 至少保留一条：一条都留不住的话，用户刚导出的作品当场就没了 ——
+ * 宁可让最后一次写入成功，也不要为了「整体不超限」把当次成果也丢掉。
+ */
+export function fitRecordsUnderBytes(
+  records: Array<EditRecord>,
+  maxBytes: number
+): Array<EditRecord> {
+  if (maxBytes <= 0) {
+    return records
+  }
+  let out: Array<EditRecord> = records
+  while (out.length > 1 && serializeEditRecords(out).length > maxBytes) {
+    out = out.slice(0, out.length - 1)
+  }
+  return out
+}

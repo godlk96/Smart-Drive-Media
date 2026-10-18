@@ -342,6 +342,17 @@ export class HomeViewModel {
       this.myEdits.records = loaded
       this.myEdits.selectedRecordIds = this.myEdits.selectedRecordIds
         .filter((id: string) => loaded.some((record: EditRecord) => record.id === id))
+      // 把已落盘的首帧路径回填进渲染用的映射表。不回填的话，重启之后
+      // coverPathOf() 查不到任何键，每张卡片都会退到行程封面 —— 明明已经
+      // 取过首帧，却再也显示不出来。
+      const seededCovers: Record<string, string> = {}
+      for (let i = 0; i < loaded.length; i++) {
+        const record = loaded[i]
+        if (this.isCoverUsable(record.coverPath)) {
+          seededCovers[record.id] = record.coverPath
+        }
+      }
+      this.myEdits.coverPaths = seededCovers
       this.myEdits.errorText = ''
       this.notifyStateChanged()
       void this.resolveMyEditsCovers(loaded, context.cacheDir, token)
@@ -354,12 +365,29 @@ export class HomeViewModel {
   }
 
   /**
+   * 首帧缓存是否还能用。
+   *
+   * cacheDir 会被系统清理，记录里存下来的路径可能指向一个已经不存在的文件。
+   * 只看「路径非空」就跳过重取，会让卡片永远画不出封面 —— 必须真的探一下。
+   */
+  private isCoverUsable(path: string): boolean {
+    if (path.length === 0) {
+      return false
+    }
+    try {
+      return fs.accessSync(path)
+    } catch (error) {
+      return false
+    }
+  }
+
+  /**
    * 并发度受限地补成片首帧。
    * 复用剪辑页已有的取帧能力；取不到就安静留空，卡片回落到行程封面 —— 封面不该阻断列表。
    */
   private async resolveMyEditsCovers(records: Array<EditRecord>, cacheDir: string, token: number): Promise<void> {
     const queue: Array<EditRecord> = records.filter((record: EditRecord) =>
-      record.coverPath.length === 0 && record.albumUri.length > 0)
+      !this.isCoverUsable(record.coverPath) && record.albumUri.length > 0)
     if (queue.length === 0) {
       return
     }
@@ -373,7 +401,9 @@ export class HomeViewModel {
         cursor = cursor + 1
         let framePath: string = ''
         try {
-          framePath = await extractFirstFrameByService(record.albumUri, cacheDir, record.id)
+          // 缓存 key 带上 exportedAt：覆盖导出后相册里那条视频换了内容，
+          // 只用 record.id 当 key 会命中上一版的首帧缓存，卡片一直停在旧画面。
+          framePath = await extractFirstFrameByService(record.albumUri, cacheDir, `${record.id}_${record.exportedAt}`)
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           debugLog('首页VM', `成片首帧提取异常 记录=${record.id}：${message}`)
