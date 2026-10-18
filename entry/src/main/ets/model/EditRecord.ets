@@ -243,6 +243,45 @@ export function formatRecordSummary(segmentCount: number, durationMs: number): s
 }
 
 /**
+ * 模板画出几个画面格子 = 用了几个机位。
+ *
+ * 与 Models.ets 的 `slotBindings` 一一对应（T1 上下双录 2、T2 倒品字 3、
+ * T3 左右分屏 2、T4 三分屏 3、T5 单视角 1、T6 四宫格 4）。这里写成纯查表
+ * 而不是 import `TEMPLATE_DEFINITION_MAP`，是因为本文件要能被
+ * tools/offline-test.mjs 直接跑，不能拖进 Models 的依赖。
+ */
+export function templateSlotCount(templateId: string): number {
+  if (templateId === 'T1') {
+    return 2
+  }
+  if (templateId === 'T2') {
+    return 3
+  }
+  if (templateId === 'T3') {
+    return 2
+  }
+  if (templateId === 'T4') {
+    return 3
+  }
+  if (templateId === 'T5') {
+    return 1
+  }
+  if (templateId === 'T6') {
+    return 4
+  }
+  return 0
+}
+
+/** 「4 机位」。模板未知时给空串，调用方据此整行不画。 */
+export function formatRecordSlotCount(templateId: string): string {
+  const count = templateSlotCount(templateId)
+  if (count <= 0) {
+    return ''
+  }
+  return `${count} 机位`
+}
+
+/**
  * 记录总数上限。
  *
  * 全部记录塞在 preferences 的**一个** value 里，而单条记录的 snapshot 带着

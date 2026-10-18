@@ -1,14 +1,13 @@
-import { EditRecord, formatExportTime, formatRecordSummary } from '../model/EditRecord'
-import { getTemplateUiNameById } from '../constants/AppConstants'
+import { EditRecord, formatExportTime, formatRecordSlotCount } from '../model/EditRecord'
 import { AppIcon, AppIconName } from './AppIcon'
 
 /**
- * 「我的剪辑」里的一张作品卡：大封面 + 三行元信息 + 重新剪辑胶囊。
+ * 「我的剪辑」里的一张作品卡：大封面 + 两行元信息（导出时间 / 机位数）。
  *
  * 纯展示组件，不做任何业务判断 —— 记录能不能打开、成片还在不在都由父组件算好
  * 后通过 `orphan` / `coverPath` 传进来。这样列表可以整页替换数据而不影响这里。
  *
- * 卡片上的分工（spec 4.12）：**点卡片主体 = 重新剪辑，点右下角 ▶ = 看成片**。
+ * 卡片上的分工（spec 4.12）：**点卡片任意位置 = 重新剪辑，点右下角 ▶ = 看成片**。
  * ▶ 是「跳系统相册播放」，所以成片被删（`orphan`）时就置灰并吞掉点击 ——
  * 让用户点一个注定失败的东西比不给他点更糟。
  */
@@ -44,16 +43,9 @@ export struct EditRecordCard {
     return ''
   }
 
-  /** 「10月1日 周三 · 单视角」；模板名取不到时只显示日期，不留悬空的「·」。 */
-  private titleText(): string {
-    const templateName = getTemplateUiNameById(this.record.templateId)
-    if (templateName.length === 0) {
-      return this.record.tripTitle
-    }
-    if (this.record.tripTitle.length === 0) {
-      return templateName
-    }
-    return `${this.record.tripTitle} · ${templateName}`
+  /** 「4 机位」；模板取不到时返回空串，由 build() 决定整行不画。 */
+  private slotText(): string {
+    return formatRecordSlotCount(this.record.templateId)
   }
 
   private shadowOptions(): ShadowOptions {
@@ -147,26 +139,6 @@ export struct EditRecordCard {
     })
   }
 
-  @Builder
-  reEditChip() {
-    Text('重新剪辑')
-      .fontSize(12)
-      .fontWeight(FontWeight.Medium)
-      .fontColor($r('app.color.amber'))
-      .textAlign(TextAlign.Center)
-      .height(29)
-      .padding({ left: 14, right: 14 })
-      .borderRadius(15)
-      .borderWidth(1)
-      .borderColor($r('app.color.chip_amber_border'))
-      .backgroundColor($r('app.color.amber_soft'))
-      .onClick(() => {
-        if (this.onOpen) {
-          this.onOpen()
-        }
-      })
-  }
-
   build() {
     Column({ space: 0 }) {
       Stack({ alignContent: Alignment.TopStart }) {
@@ -178,32 +150,23 @@ export struct EditRecordCard {
       .width('100%')
 
       Column({ space: 3 }) {
-        Text(this.titleText())
+        Text(formatExportTime(this.record.exportedAt))
           .fontSize(14)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
-        Text(formatRecordSummary(this.record.segmentCount, this.record.durationMs))
-          .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
-          .width('100%')
-        Text(formatExportTime(this.record.exportedAt))
-          .fontSize(12)
-          .fontColor($r('app.color.text_tertiary'))
-          .width('100%')
+        if (this.slotText().length > 0) {
+          Text(this.slotText())
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+            .width('100%')
+        }
       }
       .width('100%')
       .alignItems(HorizontalAlign.Start)
-      .padding({ left: 10, right: 10, top: 10 })
-
-      Row({ space: 0 }) {
-        this.reEditChip()
-        Blank()
-      }
-      .width('100%')
-      .padding({ left: 10, right: 10, top: 8, bottom: 12 })
+      .padding({ left: 10, right: 10, top: 10, bottom: 12 })
     }
     .width('100%')
     .padding(2.5)

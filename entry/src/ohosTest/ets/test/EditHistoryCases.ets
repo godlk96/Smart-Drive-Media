@@ -10,6 +10,7 @@ import { EditRecord, EDIT_RECORD_SCHEMA_VERSION, makeRecordId, parseEditRecords,
   serializeEditRecords, sortRecordsNewestFirst, findRecordById, recordsForTrip,
   findLatestRecordForTrip, upsertRecord, removeRecords, recordMatchesTrip,
   formatExportTime, formatClockDuration, formatRecordSummary,
+  templateSlotCount, formatRecordSlotCount,
   limitRecords, fitRecordsUnderBytes } from '../../../main/ets/model/EditRecord'
 import { TimelineCase, expectString, expectNumber, expectTrue, expectFalse, firstError } from './TestSupport'
 
@@ -217,6 +218,37 @@ export function editHistoryCases(): Array<TimelineCase> {
 
   cases.push(makeCase('段数为 0 也给 0 段', () => {
     return expectString(formatRecordSummary(0, 0), '0 段 · 00:00', '零段')
+  }))
+
+  // ---- 机位数文案（卡片上只剩「导出时间 / N 机位」两行）----
+
+  cases.push(makeCase('机位数与模板槽位一致', () => {
+    return firstError([
+      expectNumber(templateSlotCount('T1'), 2, 'T1 上下双录'),
+      expectNumber(templateSlotCount('T2'), 3, 'T2 倒品字'),
+      expectNumber(templateSlotCount('T3'), 2, 'T3 左右分屏'),
+      expectNumber(templateSlotCount('T4'), 3, 'T4 三分屏'),
+      expectNumber(templateSlotCount('T5'), 1, 'T5 单视角'),
+      expectNumber(templateSlotCount('T6'), 4, 'T6 四机位')
+    ])
+  }))
+
+  cases.push(makeCase('未知模板机位数为 0', () => {
+    return firstError([
+      expectNumber(templateSlotCount(''), 0, '空串'),
+      expectNumber(templateSlotCount('T99'), 0, '不存在的模板')
+    ])
+  }))
+
+  cases.push(makeCase('机位文案', () => {
+    return firstError([
+      expectString(formatRecordSlotCount('T6'), '4 机位', '四机位'),
+      expectString(formatRecordSlotCount('T5'), '1 机位', '单机位')
+    ])
+  }))
+
+  cases.push(makeCase('未知模板的机位文案为空串，好让卡片整行不画', () => {
+    return expectString(formatRecordSlotCount('T99'), '', '空串')
   }))
 
   cases.push(makeCase('生成的 id 带前缀且唯一', () => {
