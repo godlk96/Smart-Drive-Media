@@ -87,8 +87,11 @@ const GROUPS = {
       'entry/src/main/ets/model/TripModels.ets',
       'entry/src/main/ets/model/SegmentModel.ets',
       'entry/src/main/ets/service/CoreApiContract.ets',
+      'entry/src/main/ets/service/PreferencesService.ets',
       'entry/src/main/ets/utils/Logger.ets',
-      'entry/src/main/ets/media/TimelineMath.ets'
+      'entry/src/main/ets/media/TimelineMath.ets',
+      'entry/src/main/ets/model/EditRecord.ets',
+      'entry/src/main/ets/service/EditHistoryService.ets'
     ]
   },
   home: {
@@ -109,7 +112,9 @@ const GROUPS = {
       'entry/src/main/ets/service/TimelineService.ets',
       'entry/src/main/ets/utils/Logger.ets',
       'entry/src/main/ets/media/TimelineMath.ets',
-      'entry/src/main/ets/bridge/CoreBridge.ets'
+      'entry/src/main/ets/bridge/CoreBridge.ets',
+      'entry/src/main/ets/model/EditRecord.ets',
+      'entry/src/main/ets/service/EditHistoryService.ets'
     ]
   },
   ability: {
