@@ -7,13 +7,15 @@ import { sharedCoreBridge } from '../bridge/CoreBridge'
 import { EditorStateModel, PreviewSeekRequest, TemplateCardModel, TimelineTrackModel } from '../model/AppState'
 import { Segment, MAX_SEGMENTS, createFullSegment, segmentIndexAtSec, segmentOrdinal } from '../model/SegmentModel'
 import { TripSnapshot } from '../model/TripModels'
-import { DEFAULT_TEMPLATE_ID } from '../model/Models'
+import { DEFAULT_TEMPLATE_ID, parseExportSnapshot, snapshotMatchesTrip } from '../model/Models'
+import { EditRecord, findRecordById, recordsForTrip } from '../model/EditRecord'
+import { EditHistoryService } from '../service/EditHistoryService'
 import { startNativeExport, cancelNativeExport } from '../NativeExportManager'
 import { debugLog } from '../utils/Logger'
 import { formatTripDay, formatTripDuration } from '../utils/TripFormat'
 import common from '@ohos.app.ability.common'
 import window from '@ohos.window'
-import { EditorViewModel } from '../viewmodel/EditorViewModel'
+import { EditorViewModel, EditorHydrateResult } from '../viewmodel/EditorViewModel'
 
 /**
  * 画面区恒为 3:2。
@@ -56,6 +58,16 @@ struct Editor {
   @State private toastText: string = ''
   @State private toastVisible: boolean = false
   private toastTimer: number = -1
+  /** 从「我的剪辑」进来的那条记录的 id；空串 = 从行程库进来的，没有历史上下文 */
+  @State private recordId: string = ''
+  /** 记录还原是异步的，首帧到还原完成之间不允许导出 */
+  @State private restorePending: boolean = false
+  /** 记录与现场行程对不上时的明确出口（反目标 3：绝不静默用错素材） */
+  @State private driftVisible: boolean = false
+  @State private overwritePromptVisible: boolean = false
+  /** 这趟行程已有几条作品，覆盖询问文案要用 */
+  @State private overwriteCount: number = 0
+  private overwriteCandidate: EditRecord | undefined = undefined
   @State private state: EditorStateModel = {
     tripId: '',
     tripTitle: '剪辑工作台',
@@ -129,8 +141,51 @@ struct Editor {
     const tripId = params.tripId ?? 'trip-demo-1'
     const title = params.title ?? ''
     const subtitle = params.subtitle ?? ''
-    debugLog('剪辑页', `进入页面，行程ID=${tripId}，标题提示=${title}，副标题提示=${subtitle}`)
-    const hydrateResult = this.viewModel.hydrate(tripId)
+    const recordId = params.recordId ?? ''
+    debugLog('剪辑页', `进入页面，行程ID=${tripId}，标题提示=${title}，副标题提示=${subtitle}，记录ID=${recordId}`)
+    if (recordId.length > 0) {
+      // 从「我的剪辑」进来：要先把记录读出来才能判断能不能还原，是异步的。
+      // 生命周期保持同步（ArkUI 不保证 async 生命周期），这里 fire-and-forget。
+      this.restorePending = true
+      void this.resolveRestore(recordId, tripId)
+      return
+    }
+    this.applyHydrateResult(this.viewModel.hydrate(tripId))
+  }
+
+  /**
+   * 从一条历史记录还原剪辑页。
+   *
+   * 「能不能还原」的判断放在这里而不是 CoreBridge：只有页面知道还原失败时该给用户
+   * 说什么（弹窗 + 两条出口）；桥接层只负责「能还原时怎么装配」。
+   * 参数以记录为准、素材以现场为准，两边对不上就明确报错，绝不静默换素材。
+   */
+  private async resolveRestore(recordId: string, tripId: string): Promise<void> {
+    try {
+      const record: EditRecord | undefined = await EditHistoryService.getInstance().findById(recordId)
+      const stored = record ? parseExportSnapshot(record.snapshot) : undefined
+      const live = this.viewModel.getTripSnapshot(tripId)
+      if (record && stored && snapshotMatchesTrip(stored, live)) {
+        this.recordId = recordId
+        this.applyHydrateResult(this.viewModel.hydrateFromRecord(tripId, JSON.stringify([record])))
+        debugLog('剪辑页', `按记录还原成功 recordId=${recordId}`)
+      } else {
+        debugLog('剪辑页', `还原不可用：记录存在=${record !== undefined}，快照可用=${stored !== undefined}，判定为素材已漂移`)
+        // 先把页面铺成白纸再弹窗：关掉弹窗后用户看到的是可编辑的正常页面，而不是空壳。
+        this.applyHydrateResult(this.viewModel.hydrate(tripId))
+        this.driftVisible = true
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('剪辑页', `还原过程异常：${message}`)
+      this.applyHydrateResult(this.viewModel.hydrate(tripId))
+      this.driftVisible = true
+    } finally {
+      this.restorePending = false
+    }
+  }
+
+  private applyHydrateResult(hydrateResult: EditorHydrateResult): void {
     this.exportSessionSeed = hydrateResult.exportSessionSeed
     this.applyState(hydrateResult.state)
     this.tripSnapshot = hydrateResult.tripSnapshot
@@ -553,11 +608,43 @@ struct Editor {
     return this.viewModel.buildExportSnapshot(this.state, this.exportSessionSeed)
   }
 
+  /**
+   * 导出入口：**先问要不要覆盖，再真正开跑**。
+   *
+   * 覆盖是在保存阶段跳过相册对话框、直接就地覆写旧条目（spec 4.5），
+   * 所以这个问题必须在合成开始之前问 —— 问晚了相册里就已经多出一条新成片，
+   * 而删掉它需要我们没有的受控权限，就变成永远收不回来的重复文件。
+   */
   private async startNativeExportTask(): Promise<void> {
-    if (this.exportLoadingVisible) {
+    if (this.exportLoadingVisible || this.restorePending || this.overwritePromptVisible) {
       return
     }
     this.pauseAllPreview()
+    let existing: Array<EditRecord> = []
+    try {
+      existing = recordsForTrip(await EditHistoryService.getInstance().list(), this.state.tripId)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('导出', `读取历史记录失败，按无历史处理：${message}`)
+    }
+    // 从「我的剪辑」进来时目标是那条记录本身；从行程库进来时目标是最近一条（spec 5.1）。
+    const target: EditRecord | undefined = this.recordId.length > 0
+      ? findRecordById(existing, this.recordId)
+      : (existing.length > 0 ? existing[0] : undefined)
+    if (target) {
+      this.overwriteCandidate = target
+      this.overwriteCount = existing.length
+      this.overwritePromptVisible = true
+      return
+    }
+    await this.launchExport('')
+  }
+
+  /** 真正的导出。overwriteTargetUri 为空 = 新建相册条目；非空 = 就地覆写那一条。 */
+  private async launchExport(overwriteTargetUri: string): Promise<void> {
+    if (this.exportLoadingVisible) {
+      return
+    }
     const exportSnapshot = this.buildExportSnapshot()
     if (!exportSnapshot) {
       this.updateExportStatus('导出失败：缺少行程数据')
@@ -574,7 +661,7 @@ struct Editor {
     this.exportProgress = 0
     this.updateExportStatus('准备导出...')
     debugLog('导出', `====================【导出开始】====================`)
-    debugLog('导出', `【导出参数-前端状态】tripId=${this.state.tripId} activeTemplateId=${this.state.activeTemplateId} totalDurationSec=${this.state.totalDurationSec} selectedSegmentId=${this.state.selectedSegmentId} watermarkEnabled=${this.state.watermarkEnabled}`)
+    debugLog('导出', `【导出参数-前端状态】tripId=${this.state.tripId} activeTemplateId=${this.state.activeTemplateId} totalDurationSec=${this.state.totalDurationSec} selectedSegmentId=${this.state.selectedSegmentId} watermarkEnabled=${this.state.watermarkEnabled} 覆盖=${overwriteTargetUri.length > 0 ? 'YES' : 'NO'}`)
     debugLog('导出', `【导出参数-前端片段总数】count=${this.state.segments.length}`)
     for (let i = 0; i < this.state.segments.length; i++) {
       const s = this.state.segments[i]
@@ -586,8 +673,13 @@ struct Editor {
         this.exportLoadingText = event.status
         this.exportProgress = event.progress
         debugLog('导出', `导出事件 job=${event.jobId} status=${event.status} progress=${event.progress}`)
-      })
-      this.updateExportStatus(`导出完成：${outputPath}`)
+      }, overwriteTargetUri)
+      // 覆盖与新建共用这一句：用户要的就是「保存成功」的回执（spec 4.9）。
+      // 注意这里不解析 outputPath —— NativeExportManager 在第一个终结事件上就 resolve，
+      // 拿到的可能是文件名而不是相册 URI，但成功与否是确定的。
+      debugLog('导出', `导出返回：${outputPath}`)
+      this.updateExportStatus('已保存到相册')
+      this.showToast('已保存到相册')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (message.indexOf('已取消') >= 0 || message.indexOf('cancel') >= 0) {
@@ -600,6 +692,22 @@ struct Editor {
     } finally {
       this.exportLoadingVisible = false
     }
+  }
+
+  /** 覆盖询问的两个出口。candidate 可能在弹窗打开期间被清空，故此处再取一次。 */
+  private chooseOverwrite(overwrite: boolean): void {
+    const candidate: EditRecord | undefined = this.overwriteCandidate
+    this.overwritePromptVisible = false
+    this.overwriteCandidate = undefined
+    const targetUri: string = (overwrite && candidate) ? candidate.albumUri : ''
+    void this.launchExport(targetUri)
+  }
+
+  private overwritePromptText(): string {
+    if (this.recordId.length > 0) {
+      return '这条作品已经导出过，要覆盖它吗？'
+    }
+    return `这趟行程已经导出过 ${this.overwriteCount} 条，要覆盖最近那一条吗？`
   }
 
   private cancelExportTask(): void {
@@ -1081,6 +1189,96 @@ struct Editor {
           .borderRadius(18)
           .border({ width: 1, color: $r('app.color.ed_line') })
           .shadow({ radius: 16, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 4 })
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor($r('app.color.export_scrim'))
+      }
+
+      if (this.driftVisible) {
+        Column({ space: 0 }) {
+          Column({ space: 12 }) {
+            Text('原始行程素材已不在')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+            Text('这次剪辑无法还原。可能是源素材被删除、被移动，或这是一次合并剪辑（重启后合并行程不再存在）。')
+              .fontSize(13)
+              .fontColor($r('app.color.text_tertiary'))
+              .lineHeight(19)
+            Row({ space: 12 }) {
+              Button('返回')
+                .layoutWeight(1)
+                .type(ButtonType.Capsule)
+                .fontSize(14)
+                .fontColor($r('app.color.text_primary'))
+                .backgroundColor($r('app.color.track_bg'))
+                .onClick(() => {
+                  this.driftVisible = false
+                  this.getUIContext().getRouter().back()
+                })
+              Button('当作新剪辑打开')
+                .layoutWeight(1)
+                .type(ButtonType.Capsule)
+                .fontSize(14)
+                .fontColor($r('app.color.card_bg'))
+                .backgroundColor($r('app.color.ink'))
+                .onClick(() => {
+                  // 页面在弹窗打开前已经铺成白纸，这里只需收起弹窗。
+                  this.driftVisible = false
+                })
+            }
+            .width('100%')
+            .margin({ top: 4 })
+          }
+          .width('84%')
+          .padding(24)
+          .backgroundColor($r('app.color.ed_surface'))
+          .borderRadius(18)
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor($r('app.color.export_scrim'))
+      }
+
+      if (this.overwritePromptVisible) {
+        Column({ space: 0 }) {
+          Column({ space: 12 }) {
+            Text(this.overwritePromptText())
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+            Text('覆盖会直接替换相册里那条成片，并更新「我的剪辑」里的这条作品；存成新的则保留旧的、多出一条。')
+              .fontSize(13)
+              .fontColor($r('app.color.text_tertiary'))
+              .lineHeight(19)
+            Row({ space: 12 }) {
+              Button('存成新的')
+                .layoutWeight(1)
+                .type(ButtonType.Capsule)
+                .fontSize(14)
+                .fontColor($r('app.color.text_primary'))
+                .backgroundColor($r('app.color.track_bg'))
+                .onClick(() => this.chooseOverwrite(false))
+              Button('覆盖那一条')
+                .layoutWeight(1)
+                .type(ButtonType.Capsule)
+                .fontSize(14)
+                .fontColor($r('app.color.card_bg'))
+                .backgroundColor($r('app.color.amber'))
+                .onClick(() => this.chooseOverwrite(true))
+            }
+            .width('100%')
+            .margin({ top: 4 })
+          }
+          .width('84%')
+          .padding(24)
+          .backgroundColor($r('app.color.ed_surface'))
+          .borderRadius(18)
         }
         .width('100%')
         .height('100%')
