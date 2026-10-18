@@ -151,6 +151,11 @@ export class EditorViewModel {
     return this.bridge.getTripSnapshotClone(tripId) ?? new TripSnapshot()
   }
 
+  /** 按 (标题, 起始时间) 找回现场行程 id。'' 表示素材真的不在了。 */
+  resolveTripIdByTitleStartTs(title: string, startTs: number): string {
+    return this.bridge.resolveTripIdByTitleStartTs(title, startTs)
+  }
+
   getTemplateUiName(card: TemplateCardModel): string {
     const name = getTemplateUiNameById(card.id)
     if (name.length > 0) {

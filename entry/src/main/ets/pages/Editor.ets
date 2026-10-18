@@ -8,7 +8,7 @@ import { EditorStateModel, PreviewSeekRequest, TemplateCardModel, TimelineTrackM
 import { Segment, MAX_SEGMENTS, createFullSegment, segmentIndexAtSec, segmentOrdinal } from '../model/SegmentModel'
 import { TripSnapshot } from '../model/TripModels'
 import { DEFAULT_TEMPLATE_ID, parseExportSnapshot, snapshotMatchesTrip } from '../model/Models'
-import { EditRecord, findRecordById, recordsForTrip } from '../model/EditRecord'
+import { EditRecord, findRecordById, recordMatchesTrip, recordsForTrip } from '../model/EditRecord'
 import { EditHistoryService } from '../service/EditHistoryService'
 import { startNativeExport, cancelNativeExport } from '../NativeExportManager'
 import { debugLog } from '../utils/Logger'
@@ -164,11 +164,17 @@ struct Editor {
     try {
       const record: EditRecord | undefined = await EditHistoryService.getInstance().findById(recordId)
       const stored = record ? parseExportSnapshot(record.snapshot) : undefined
-      const live = this.viewModel.getTripSnapshot(tripId)
+      // tripId 会随源素材增删而整体重编号，所以先按 (标题, 起始时间) 找回
+      // 现场的真实 id；找不回来才退回参数里的 tripId（此时后续校验会判漂移）。
+      const liveTripId = record !== undefined
+        ? this.viewModel.resolveTripIdByTitleStartTs(record.tripTitle, record.tripStartTs)
+        : ''
+      const effectiveTripId = liveTripId.length > 0 ? liveTripId : tripId
+      const live = this.viewModel.getTripSnapshot(effectiveTripId)
       if (record && stored && snapshotMatchesTrip(stored, live)) {
         this.recordId = recordId
-        this.applyHydrateResult(this.viewModel.hydrateFromRecord(tripId, JSON.stringify([record])))
-        debugLog('剪辑页', `按记录还原成功 recordId=${recordId}`)
+        this.applyHydrateResult(this.viewModel.hydrateFromRecord(effectiveTripId, JSON.stringify([record])))
+        debugLog('剪辑页', `按记录还原成功 recordId=${recordId} 现场行程=${effectiveTripId}`)
       } else {
         debugLog('剪辑页', `还原不可用：记录存在=${record !== undefined}，快照可用=${stored !== undefined}，判定为素材已漂移`)
         // 先把页面铺成白纸再弹窗：关掉弹窗后用户看到的是可编辑的正常页面，而不是空壳。
@@ -622,7 +628,14 @@ struct Editor {
     this.pauseAllPreview()
     let existing: Array<EditRecord> = []
     try {
-      existing = recordsForTrip(await EditHistoryService.getInstance().list(), this.state.tripId)
+      const all: Array<EditRecord> = await EditHistoryService.getInstance().list()
+      // 先按 (标题, 起始时间) 匹配：tripId 会随源素材增删重编号，只按 id 找
+      // 会漏掉明明存在的记录，于是覆盖询问被跳过、相册里多出一份重复成片。
+      existing = all.filter((item: EditRecord) =>
+        recordMatchesTrip(item, this.tripSnapshot.tripTitle, this.tripSnapshot.startTs))
+      if (existing.length === 0) {
+        existing = recordsForTrip(all, this.state.tripId)
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       debugLog('导出', `读取历史记录失败，按无历史处理：${message}`)

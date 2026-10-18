@@ -1125,6 +1125,27 @@ export class CoreBridge {
     return this.cloneTripSnapshot(snapshot)
   }
 
+  /**
+   * 按 (行程标题, 起始时间) 找回现场行程的真实 id。
+   *
+   * tripId 的构造里带着「该分组在整次扫描中的序号」，用户删掉靠前的源素材后，
+   * 后面的行程会整体重编号 —— 记录里存下来的 tripId 会查不到，甚至指向另一趟
+   * 行程。所以还原只能把 tripId 当线索，真正的身份要靠这对更稳定的字段。
+   *
+   * 返回 '' 表示现场确实没有这趟素材了，调用方据此走「素材已不在」分支。
+   */
+  resolveTripIdByTitleStartTs(title: string, startTs: number): string {
+    if (title.length === 0) {
+      return ''
+    }
+    let found: string = ''
+    this.trips.forEach((item: TripSnapshot) => {
+      if (found.length === 0 && item.tripTitle === title && item.startTs === startTs) {
+        found = item.id
+      }
+    })
+    return found
+  }
 }
 
 export const sharedCoreBridge: CoreBridge = new CoreBridge()
