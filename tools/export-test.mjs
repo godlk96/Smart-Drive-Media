@@ -207,10 +207,19 @@ test('a failed parallel track reports the original error after other tracks stop
 })
 
 function managerFixture(options = {}, content = Buffer.alloc(2500000, 7)) {
-  const fs = memoryFs(new Map([['source', content], ['album', Buffer.alloc(100, 2)]]), options)
+  // 相册目标初始为空：覆盖不再经过相册，saveVideoToAlbum 总是写进系统新建的空条目
+  // （旧代码靠 OpenMode.TRUNC 把这里预置的字节清掉，TRUNC 分支已随覆盖路径一并删除）。
+  const fs = memoryFs(new Map([['source', content], ['album', Buffer.alloc(0)]]), options)
   const { ExportManager } = loadEts('entry/src/main/ets/service/ExportManager.ets', {
     '@ohos.file.fs': fs,
-    '@ohos.file.photoAccessHelper': {},
+    // 覆盖不再经过相册后，saveVideoToAlbum 总是走系统保存对话框；桩返回一个已存在的目标路径。
+    '@ohos.file.photoAccessHelper': {
+      PhotoType: { VIDEO: 1 },
+      PhotoSubtype: { DEFAULT: 0 },
+      getPhotoAccessHelper: () => ({ showAssetsCreationDialog: async () => ['album'] })
+    },
+    // WorkStore.freeBytes() 走这条：返回一个很大的数，让导出前的空间预检无条件放行。
+    '@ohos.file.statvfs': { async getFreeSize() { return Number.MAX_SAFE_INTEGER } },
     '../model/Models': {}, '../model/TripModels': {}, './ExportService': {}, '../model/SegmentModel': {},
     './ExportNativeService': {}, '../model/EditRecord': {}, './EditHistoryService': {},
     './PreferencesService': {}, '../utils/Logger': { debugLog() {} }
@@ -218,10 +227,10 @@ function managerFixture(options = {}, content = Buffer.alloc(2500000, 7)) {
   const manager = new ExportManager()
   const updates = []
   const save = (isCancelled = () => false) => manager.saveVideoToAlbum('out.mp4', 'source', {}, 85,
-    (percent, detail) => updates.push({ percent, detail }), 'album', isCancelled)
+    (percent, detail) => updates.push({ percent, detail }), isCancelled)
   return { fs, manager, updates, save, content }
 }
-test('album overwrite retries short writes and truncates the old file', async () => {
+test('album save retries short writes and writes the exact bytes', async () => {
   const f = managerFixture({ writeLimit: 13 }, Buffer.from('new video bytes'))
   assert.equal(await f.save(), 'album')
   assert.deepEqual(f.fs.files.get('album'), f.content)
@@ -307,7 +316,9 @@ test('successful export clears its timeout without cancelling the job', async ()
   const pending = f.wrapper.startNativeExport({}, {})
   await f.ready
   f.emit({ jobId: 'job', status: '相册保存成功：album', progress: 100 })
-  assert.equal(await pending, 'album')
+  const outcome = await pending
+  assert.equal(outcome.workId, 'album')
+  assert.equal(outcome.metaSaved, false)
   assert.equal(f.cleared, true)
   assert.deepEqual(f.cancelled, [])
 })
