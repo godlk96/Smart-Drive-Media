@@ -2,12 +2,13 @@ import common from '@ohos.app.ability.common'
 import fs from '@ohos.file.fs'
 import photoAccessHelper from '@ohos.file.photoAccessHelper'
 import { CameraPosition, ExportSnapshot, toLegacyCamera } from '../model/Models'
-import { DvrMeta } from '../model/TripModels'
+import { DvrMeta, ExportComposeRequest } from '../model/TripModels'
 import { buildComposeRequestByService } from './ExportService'
 import { exportDurationSec } from '../model/SegmentModel'
 import { executeComposeByService, cancelNativeExportPipeline } from './ExportNativeService'
-import { EditRecord, makeRecordId } from '../model/EditRecord'
-import { EditHistoryService } from './EditHistoryService'
+import { WorkMeta, workIdFromFileName } from '../model/WorkMeta'
+import { collectWorkTracks } from '../model/WorkRestore'
+import { WorkStore } from './WorkStore'
 import { PreferencesService } from './PreferencesService'
 import { debugLog } from '../utils/Logger'
 import { copyExportFileData } from './ExportFileCopy'
@@ -35,8 +36,8 @@ interface ExportJobRecord {
   status: string
   lastNotificationAt: number
   lastNotifiedStage: string
-  /** 空串 = 新建相册条目；非空 = 就地覆写这个已有条目的 URI（spec 4.5） */
-  overwriteTargetUri: string
+  /** 空串 = 新建作品；非空 = 就地覆写这个已有作品（文件基名即作品 id） */
+  overwriteWorkId: string
 }
 
 function snapshotToLegacyClips(snapshot: ExportSnapshot): Array<DvrMeta> {
@@ -161,7 +162,7 @@ export class ExportManager {
   async start(
     snapshot: ExportSnapshot,
     context: common.UIAbilityContext,
-    overwriteTargetUri?: string
+    overwriteWorkId?: string
   ): Promise<ExportJobId> {
     // 原生只有一份进度/取消状态；旧任务完全退出前不能复用这份全局状态。
     if (this.jobs.size > 0) {
@@ -181,7 +182,7 @@ export class ExportManager {
       status: '准备导出',
       lastNotificationAt: 0,
       lastNotifiedStage: '',
-      overwriteTargetUri: overwriteTargetUri ?? ''
+      overwriteWorkId: overwriteWorkId ?? ''
     }
     this.jobs.set(jobId, record)
     this.notify(record, '导出处理中 0%', 0)
@@ -190,7 +191,10 @@ export class ExportManager {
   }
 
   private async run(record: ExportJobRecord, context: common.UIAbilityContext): Promise<void> {
+    const store = WorkStore.getInstance()
     const fileName = buildExportFileName()
+    // 覆盖时沿用被覆盖那条作品的 id（文件基名）；新建时取本次导出文件名去扩展名。
+    const workId = record.overwriteWorkId.length > 0 ? record.overwriteWorkId : workIdFromFileName(fileName)
     let outputPath: string = ''
     try {
       const snapshot = record.snapshot
@@ -199,7 +203,9 @@ export class ExportManager {
         throw new Error('缺少可导出素材')
       }
       const cacheDir = context.cacheDir ?? context.filesDir ?? '/data/storage/el2/base/files'
-      outputPath = `${cacheDir}/${fileName}`
+      // 合成产物先落 cacheDir：native 会把 `<outputPath>.front.concat.mp4` 之类的中间态写在同级、
+      // JS 侧的素材副本也落在 outputPath 的父目录 —— 绝不能是 exports/，否则作品库被垃圾污染。
+      outputPath = `${cacheDir}/${workId}.mp4.tmp`
       const request = buildComposeRequestByService(
         clips,
         fileName,
@@ -209,7 +215,7 @@ export class ExportManager {
         snapshot.playback.segments,
         snapshot.brand.watermarkEnabled
       )
-      debugLog('导出', `【导出参数-任务快照】fileName=${fileName} template=${request.templateId} expectedDurationSec=${request.expectedDurationSec} watermark=${request.watermarkEnabled}`)
+      debugLog('导出', `【导出参数-任务快照】workId=${workId} template=${request.templateId} expectedDurationSec=${request.expectedDurationSec} watermark=${request.watermarkEnabled}`)
       debugLog('导出', `【导出参数-轨道输入】Front=${request.frontUris.length}路 Back=${request.backUris.length}路 Side=${request.sideUris.length}路`)
       request.frontUris.forEach((uri, idx) => debugLog('导出', `  -> Front[${idx}]: ${uri}`))
       request.backUris.forEach((uri, idx) => debugLog('导出', `  -> Back[${idx}]: ${uri}`))
@@ -221,6 +227,14 @@ export class ExportManager {
       }
       if (record.cancelled) {
         return
+      }
+      // 合成前查空间：freeBytes() 取不到返回 -1（探针失败 = 未知），此时跳过校验继续导出 ——
+      // 写成 `free < max(...)` 的话，一次探针失败会让**每一次**导出都永久失败。
+      // 预留 3 倍源大小：合成期间同时存在 native 的轨道 concat 副本、JS 侧落地的素材副本、成品本身。
+      const sourceBytes = await this.sumSourceBytes(request)
+      const free = await store.freeBytes()
+      if (free >= 0 && free < Math.max(512 * 1024 * 1024, sourceBytes * 3)) {
+        throw new Error('存储空间不足，无法导出')
       }
       const sourceUri = await executeComposeByService(
         request,
@@ -238,25 +252,24 @@ export class ExportManager {
         return
       }
       const saveStartProgress = Math.max(85, Math.min(99, record.progress))
-      this.notify(record, record.overwriteTargetUri.length > 0 ? '保存相册 · 正在打开成片' : '请选择相册保存位置', saveStartProgress)
-      const albumUri = await this.saveVideoToAlbum(fileName, sourceUri, context, saveStartProgress, (progress: number, detail: string) => {
-        if (!record.cancelled) {
-          this.notify(record, `保存相册 · ${progress.toFixed(1)}% · ${detail}`, progress)
-        }
-      }, record.overwriteTargetUri, (): boolean => record.cancelled)
-      // 取消可能发生在拷贝途中：拷完才发的取消也不能再落记录，
-      // 否则用户看到「已取消导出」，相册却多了一条、历史里也多了一条。
-      if (record.cancelled) {
-        debugLog('导出', '相册写入完成后发现已取消，放弃落记录')
-        return
+      this.notify(record, '正在写入作品库', saveStartProgress)
+      // 成片本体搬进作品库：mp4 才是作品本体，这一步失败就没有「作品」可言，如实报失败。
+      const moved = await store.moveIntoLibrary(sourceUri, workId)
+      if (!moved) {
+        throw new Error('导出产物保存失败')
       }
-      // 先落记录再发成功事件：列表里能立刻看到这条作品。
-      // persistRecord 内部吞掉一切异常 —— 落盘失败不能把成功的导出判成失败。
-      await this.persistRecord(record, albumUri, fileName)
-      const successEvent: ExportJobEvent = { jobId: record.id, status: `相册保存成功：${albumUri}`, progress: 100 }
+      // 覆盖时沿用旧作品的 createdAt；sidecar 缺失（首次导出 / 降级卡片）则用现在。
+      const existingMeta = record.overwriteWorkId.length > 0 ? await store.readMeta(workId) : undefined
+      const meta = this.buildWorkMeta(snapshot, clips, request, workId, existingMeta)
+      const metaSaved = await store.writeMeta(meta)
+      if (!metaSaved) {
+        // mp4 已经是作品本体，sidecar 没落盘只影响卡片的元信息；此时把导出报成失败是撒谎。
+        debugLog('导出', `作品元数据写入失败（成片已落库） id=${workId}`)
+      }
+      const successEvent: ExportJobEvent = { jobId: record.id, status: `已保存：${workId}`, progress: 100 }
       this.recordTerminalEvent(record.id, successEvent)
-      this.notify(record, `导出完成：${fileName}`, 100)
-      this.notify(record, `相册保存成功：${albumUri}`, 100)
+      this.notify(record, `导出完成：${workId}`, 100)
+      this.notify(record, `已保存：${workId}`, 100)
     } catch (error) {
       if (record.cancelled) {
         debugLog('导出', '任务已取消，终止 run 并清理残留文件')
@@ -293,158 +306,146 @@ export class ExportManager {
     }
   }
 
+  /**
+   * 把成片写入系统相册（**总是新建条目**）。
+   *
+   * 本任务已把它的**调用**移出导出主流程：成片改为落进 App 私有作品库，相册不再参与导出。
+   * 方法体保留给 Task 10 抽成显式的「保存到相册」动作复用，故此处只删掉就地覆写
+   * （`fs.OpenMode.TRUNC`）分支 —— 覆盖不再经过相册，不再需要截断旧字节。
+   */
   private async saveVideoToAlbum(
     fileName: string,
     sourceUri: string,
     context: common.UIAbilityContext,
     startProgress: number,
     onProgress: (percent: number, detail: string) => void,
-    overwriteTargetUri: string,
     isCancelled: () => boolean
   ): Promise<string> {
-    const isOverwrite = overwriteTargetUri.length > 0
-    let albumUri = overwriteTargetUri
     try {
-        if (!isOverwrite) {
-          const helper = photoAccessHelper.getPhotoAccessHelper(context)
-          const srcFileUris: Array<string> = [sourceUri]
-          const dotIndex = fileName.lastIndexOf('.')
-          const title = dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName
-          const photoCreationConfigs: Array<photoAccessHelper.PhotoCreationConfig> = [{
-            title: title,
-            fileNameExtension: 'mp4',
-            photoType: photoAccessHelper.PhotoType.VIDEO,
-            subtype: photoAccessHelper.PhotoSubtype.DEFAULT
-          }]
-          const desFileUris = await helper.showAssetsCreationDialog(srcFileUris, photoCreationConfigs)
-          const created = desFileUris[0]
-          if (!created || created.length === 0) {
-            throw new Error('未选择相册保存位置')
-          }
-          albumUri = created
-        }
-        debugLog('导出', `相册写入开始 source=${sourceUri} target=${albumUri} 覆盖=${isOverwrite ? 'YES' : 'NO'}`)
-        let srcFd: number = -1
-        let dstFd: number = -1
-        let totalSize: number = 0
-        let copiedSize: number = 0
-        const baseProgress: number = Math.max(85, Math.min(99, startProgress))
+      const helper = photoAccessHelper.getPhotoAccessHelper(context)
+      const srcFileUris: Array<string> = [sourceUri]
+      const dotIndex = fileName.lastIndexOf('.')
+      const title = dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName
+      const photoCreationConfigs: Array<photoAccessHelper.PhotoCreationConfig> = [{
+        title: title,
+        fileNameExtension: 'mp4',
+        photoType: photoAccessHelper.PhotoType.VIDEO,
+        subtype: photoAccessHelper.PhotoSubtype.DEFAULT
+      }]
+      const desFileUris = await helper.showAssetsCreationDialog(srcFileUris, photoCreationConfigs)
+      const created = desFileUris[0]
+      if (!created || created.length === 0) {
+        throw new Error('未选择相册保存位置')
+      }
+      const albumUri = created
+      debugLog('导出', `相册写入开始 source=${sourceUri} target=${albumUri}`)
+      let srcFd: number = -1
+      let dstFd: number = -1
+      let totalSize: number = 0
+      let copiedSize: number = 0
+      const baseProgress: number = Math.max(85, Math.min(99, startProgress))
+      try {
         try {
-          try {
-            const stat = await fs.stat(sourceUri)
-            totalSize = Number(stat.size ?? 0)
-          } catch (_) {
-            totalSize = 0
+          const stat = await fs.stat(sourceUri)
+          totalSize = Number(stat.size ?? 0)
+        } catch (_) {
+          totalSize = 0
+        }
+        if (isCancelled()) {
+          throw new Error('已取消导出')
+        }
+        const src = await fs.open(sourceUri, fs.OpenMode.READ_ONLY)
+        srcFd = src.fd
+        const dst = await fs.open(albumUri, fs.OpenMode.READ_WRITE)
+        dstFd = dst.fd
+        try {
+          await copyExportFileData(srcFd, dstFd, totalSize, (copied: number, total: number) => {
+            copiedSize = copied
+            const percent = total > 0 ? exportPercent(baseProgress + Math.min(1, copied / total) * (99 - baseProgress)) : baseProgress
+            const detail = total > 0 ? `${(copied / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB` :
+              `已写入 ${(copied / 1048576).toFixed(1)} MB`
+            onProgress(percent, detail)
+          }, isCancelled)
+          if (copiedSize <= 0) {
+            throw new Error('导出文件为空，未写入相册')
           }
+          await fs.fsync(dstFd)
+        } catch (error) {
           if (isCancelled()) {
             throw new Error('已取消导出')
           }
-          const src = await fs.open(sourceUri, fs.OpenMode.READ_ONLY)
-          srcFd = src.fd
-          // 覆盖必须带 TRUNC：新成片比旧的短时，不截断会在文件尾部残留旧字节，
-          // 产物直接损坏（spec 4.6）。新建条目本来就是空的，不需要。
-          const dstMode = isOverwrite
-            ? fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC
-            : fs.OpenMode.READ_WRITE
-          const dst = await fs.open(albumUri, dstMode)
-          dstFd = dst.fd
+          const copyError = error instanceof Error ? error.message : String(error)
+          throw new Error(`相册写入中断（已写入 ${copiedSize}/${totalSize} 字节）：${copyError}`)
+        }
+      } finally {
+        if (srcFd >= 0) {
           try {
-            await copyExportFileData(srcFd, dstFd, totalSize, (copied: number, total: number) => {
-              copiedSize = copied
-              const percent = total > 0 ? exportPercent(baseProgress + Math.min(1, copied / total) * (99 - baseProgress)) : baseProgress
-              const detail = total > 0 ? `${(copied / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB` :
-                `已写入 ${(copied / 1048576).toFixed(1)} MB`
-              onProgress(percent, detail)
-            }, isCancelled)
-            if (copiedSize <= 0) {
-              throw new Error('导出文件为空，未写入相册')
-            }
-            await fs.fsync(dstFd)
-          } catch (error) {
-            if (isCancelled()) {
-              throw new Error('已取消导出')
-            }
-            const copyError = error instanceof Error ? error.message : String(error)
-            throw new Error(isOverwrite
-              ? `相册写入中断（已写入 ${copiedSize}/${totalSize} 字节）：${copyError}；上一次导出的成片可能已被截断，建议重新导出`
-              : `相册写入中断（已写入 ${copiedSize}/${totalSize} 字节）：${copyError}`)
-          }
-        } finally {
-          if (srcFd >= 0) {
-            try {
-              await fs.close(srcFd)
-            } catch (_) {
-            }
-          }
-          if (dstFd >= 0) {
-            try {
-              await fs.close(dstFd)
-            } catch (error) {
-              throw new Error(`相册文件关闭失败：${error instanceof Error ? error.message : String(error)}`)
-            }
+            await fs.close(srcFd)
+          } catch (_) {
           }
         }
-        return albumUri
-      } catch (error) {
-        throw new Error(`保存到相册失败: ${error instanceof Error ? error.message : String(error)}`)
+        if (dstFd >= 0) {
+          try {
+            await fs.close(dstFd)
+          } catch (error) {
+            throw new Error(`相册文件关闭失败：${error instanceof Error ? error.message : String(error)}`)
+          }
+        }
       }
+      return albumUri
+    } catch (error) {
+      throw new Error(`保存到相册失败: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   /**
-   * 把这次导出写进「我的剪辑」历史。
+   * 四条轨道全部源片段的字节和，用于导出前的空间校验。
    *
-   * **吞掉一切异常**：记录没落盘，成片也已经在相册里了，此时把导出报成失败是撒谎。
-   * 覆盖场景沿用被覆盖那条记录的 id —— id 不变，upsertRecord 才会替换而不是追加。
-   * 若那条记录已被用户删掉，就退回新建一条：相册条目此时已被覆写，
-   * 新记录指向同一个 albumUri，语义仍然正确。
+   * 单个文件 `fs.stat` 失败按 0 计 —— 探不到就当它小，绝不因为一个源文件读不到就阻断导出。
    */
-  private async persistRecord(
-    record: ExportJobRecord,
-    albumUri: string,
-    fileName: string
-  ): Promise<void> {
-    try {
-      const snapshot = record.snapshot
-      const service = EditHistoryService.getInstance()
-      let recordId = ''
-      let coverPath = ''
-      if (record.overwriteTargetUri.length > 0) {
-        const existing = await service.list()
-        for (let i = 0; i < existing.length; i++) {
-          if (existing[i].albumUri === record.overwriteTargetUri) {
-            recordId = existing[i].id
-            // 刻意**不**继承旧记录的 coverPath：相册里那条视频已经被换了内容，
-            // 旧的首帧缓存还停在上一版画面上。留空让列表重新取一次。
-            break
-          }
-        }
+  private async sumSourceBytes(request: ExportComposeRequest): Promise<number> {
+    const uris: Array<string> = [
+      ...request.frontUris,
+      ...request.backUris,
+      ...request.sideUris,
+      ...request.side2Uris
+    ]
+    let total: number = 0
+    for (let i = 0; i < uris.length; i++) {
+      try {
+        const stat = await fs.stat(uris[i])
+        total += Math.max(0, Number(stat.size ?? 0))
+      } catch (_) {
       }
-      if (recordId.length === 0) {
-        recordId = makeRecordId(Date.now(), Math.random())
-      }
-      const item = new EditRecord()
-      item.id = recordId
-      item.tripId = snapshot.trip.tripId
-      item.tripTitle = snapshot.trip.title
-      item.tripStartTs = snapshot.trip.startTs
-      item.tripEndTs = snapshot.trip.endTs
-      item.albumUri = albumUri
-      item.fileName = fileName
-      item.exportedAt = Date.now()
-      item.durationMs = Math.round(exportDurationSec(snapshot.playback.segments) * 1000)
-      item.segmentCount = snapshot.playback.segments.length
-      item.templateId = snapshot.selectedTemplateId
-      item.snapshot = JSON.stringify(snapshot)
-      item.coverPath = coverPath
-      const saved = await service.upsert(item)
-      if (saved) {
-        debugLog('我的剪辑', `作品记录已保存 id=${recordId} 覆盖=${record.overwriteTargetUri.length > 0 ? 'YES' : 'NO'}`)
-      } else {
-        debugLog('我的剪辑', `作品记录仅留在内存（落盘失败） id=${recordId}`)
-      }
-    } catch (error) {
-      debugLog('我的剪辑', `作品记录保存失败：${error instanceof Error ? error.message : String(error)}`)
     }
+    return total
+  }
+
+  /**
+   * 构造作品 sidecar。`createdAt` 在覆盖时沿用旧作品的，新建时用现在；
+   * `tracks` 记的是导出那一刻真正送进 native 的四条轨道（Task 3 的 `collectWorkTracks`）。
+   */
+  private buildWorkMeta(
+    snapshot: ExportSnapshot,
+    clips: Array<DvrMeta>,
+    request: ExportComposeRequest,
+    workId: string,
+    existing: WorkMeta | undefined
+  ): WorkMeta {
+    const meta = new WorkMeta()
+    meta.id = workId
+    meta.createdAt = existing ? existing.createdAt : Date.now()
+    meta.exportedAt = Date.now()
+    meta.tripTitle = snapshot.trip.title
+    meta.tripStartTs = snapshot.trip.startTs
+    meta.tripEndTs = snapshot.trip.endTs
+    meta.tracks = collectWorkTracks(clips, request)
+    meta.templateId = snapshot.selectedTemplateId
+    meta.playback = snapshot.playback
+    meta.watermarkEnabled = snapshot.brand.watermarkEnabled
+    meta.segmentCount = snapshot.playback.segments.length
+    meta.durationMs = Math.round(exportDurationSec(snapshot.playback.segments) * 1000)
+    return meta
   }
 }
 

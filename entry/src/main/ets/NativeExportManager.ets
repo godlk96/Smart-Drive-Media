@@ -6,9 +6,9 @@ export async function startNativeExport(
   snapshot: ExportSnapshot,
   context: common.UIAbilityContext,
   onEvent?: (event: ExportJobEvent) => void,
-  overwriteTargetUri?: string
+  overwriteWorkId?: string
 ): Promise<string> {
-  const jobId = await sharedExportManager.start(snapshot, context, overwriteTargetUri)
+  const jobId = await sharedExportManager.start(snapshot, context, overwriteWorkId)
   return await new Promise<string>((resolve, reject) => {
     let settled = false
     const timeoutTimer = setTimeout(() => {

@@ -8,8 +8,10 @@ import { EditorStateModel, PreviewSeekRequest, TemplateCardModel, TimelineTrackM
 import { Segment, MAX_SEGMENTS, createFullSegment, segmentIndexAtSec, segmentOrdinal } from '../model/SegmentModel'
 import { TripSnapshot } from '../model/TripModels'
 import { DEFAULT_TEMPLATE_ID, parseExportSnapshot, snapshotMatchesTrip } from '../model/Models'
-import { EditRecord, findRecordById, recordMatchesTrip, recordsForTrip } from '../model/EditRecord'
+import { EditRecord } from '../model/EditRecord'
+import { WorkMeta, findWorkByTrip } from '../model/WorkMeta'
 import { EditHistoryService } from '../service/EditHistoryService'
+import { WorkStore } from '../service/WorkStore'
 import { startNativeExport, cancelNativeExport } from '../NativeExportManager'
 import { debugLog } from '../utils/Logger'
 import { formatTripDay, formatTripDuration } from '../utils/TripFormat'
@@ -58,8 +60,8 @@ struct Editor {
   @State private toastText: string = ''
   @State private toastVisible: boolean = false
   private toastTimer: number = -1
-  /** 从「我的剪辑」进来的那条记录的 id；空串 = 从行程库进来的，没有历史上下文 */
-  @State private recordId: string = ''
+  /** 从「我的剪辑」进来的那条作品的 id（文件基名）；空串 = 从行程库进来的，没有作品上下文 */
+  @State private workId: string = ''
   /** 记录还原是异步的，首帧到还原完成之间不允许导出 */
   @State private restorePending: boolean = false
   /** 记录与现场行程对不上时的明确出口（反目标 3：绝不静默用错素材） */
@@ -67,7 +69,7 @@ struct Editor {
   @State private overwritePromptVisible: boolean = false
   /** 这趟行程已有几条作品，覆盖询问文案要用 */
   @State private overwriteCount: number = 0
-  private overwriteCandidate: EditRecord | undefined = undefined
+  private overwriteCandidate: WorkMeta | undefined = undefined
   @State private state: EditorStateModel = {
     tripId: '',
     tripTitle: '剪辑工作台',
@@ -172,7 +174,7 @@ struct Editor {
       const effectiveTripId = liveTripId.length > 0 ? liveTripId : tripId
       const live = this.viewModel.getTripSnapshot(effectiveTripId)
       if (record && stored && snapshotMatchesTrip(stored, live)) {
-        this.recordId = recordId
+        this.workId = recordId
         this.applyHydrateResult(this.viewModel.hydrateFromRecord(effectiveTripId, JSON.stringify([record])))
         debugLog('剪辑页', `按记录还原成功 recordId=${recordId} 现场行程=${effectiveTripId}`)
       } else {
@@ -617,44 +619,53 @@ struct Editor {
   /**
    * 导出入口：**先问要不要覆盖，再真正开跑**。
    *
-   * 覆盖是在保存阶段跳过相册对话框、直接就地覆写旧条目（spec 4.5），
-   * 所以这个问题必须在合成开始之前问 —— 问晚了相册里就已经多出一条新成片，
-   * 而删掉它需要我们没有的受控权限，就变成永远收不回来的重复文件。
+   * 覆盖是把旧作品就地在作品库里替换掉，所以这个问题必须在合成开始之前问 ——
+   * 问晚了作品库里就已经多出一件新作品，再删就多一步。
    */
   private async startNativeExportTask(): Promise<void> {
     if (this.exportLoadingVisible || this.restorePending || this.overwritePromptVisible) {
       return
     }
     this.pauseAllPreview()
-    let existing: Array<EditRecord> = []
+    const metas: Array<WorkMeta> = []
     try {
-      const all: Array<EditRecord> = await EditHistoryService.getInstance().list()
-      // 先按 (标题, 起始时间) 匹配：tripId 会随源素材增删重编号，只按 id 找
-      // 会漏掉明明存在的记录，于是覆盖询问被跳过、相册里多出一份重复成片。
-      existing = all.filter((item: EditRecord) =>
-        recordMatchesTrip(item, this.tripSnapshot.tripTitle, this.tripSnapshot.startTs))
-      if (existing.length === 0) {
-        existing = recordsForTrip(all, this.state.tripId)
+      const entries = await WorkStore.getInstance().list()
+      for (let i = 0; i < entries.length; i++) {
+        const meta = entries[i].meta
+        if (meta) {
+          metas.push(meta)
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      debugLog('导出', `读取历史记录失败，按无历史处理：${message}`)
+      debugLog('导出', `读取作品库失败，按无作品处理：${message}`)
     }
-    // 从「我的剪辑」进来时目标是那条记录本身；从行程库进来时目标是最近一条（spec 5.1）。
-    const target: EditRecord | undefined = this.recordId.length > 0
-      ? findRecordById(existing, this.recordId)
-      : (existing.length > 0 ? existing[0] : undefined)
+    // 软匹配：只按 (标题, 起始时间) 判断「这趟行程是不是导出过」，只决定问不问（spec 5.1）。
+    const softMatch: WorkMeta | undefined =
+      findWorkByTrip(metas, this.tripSnapshot.tripTitle, this.tripSnapshot.startTs)
+    // 覆盖询问第二分支的文案要用「这趟行程已有几件作品」，与软匹配同一套 (标题, 起点) 口径。
+    let tripWorks = 0
+    for (let i = 0; i < metas.length; i++) {
+      const meta = metas[i]
+      if (meta.tripTitle === this.tripSnapshot.tripTitle && meta.tripStartTs === this.tripSnapshot.startTs) {
+        tripWorks++
+      }
+    }
+    // 从「我的剪辑」进来时目标是那条作品本身；从行程库进来时目标是软匹配到的那条。
+    const target: WorkMeta | undefined = this.workId.length > 0
+      ? metas.find((meta: WorkMeta) => meta.id === this.workId)
+      : softMatch
     if (target) {
       this.overwriteCandidate = target
-      this.overwriteCount = existing.length
+      this.overwriteCount = tripWorks
       this.overwritePromptVisible = true
       return
     }
     await this.launchExport('')
   }
 
-  /** 真正的导出。overwriteTargetUri 为空 = 新建相册条目；非空 = 就地覆写那一条。 */
-  private async launchExport(overwriteTargetUri: string): Promise<void> {
+  /** 真正的导出。overwriteWorkId 为空 = 新建作品；非空 = 就地覆写作品库里那一件。 */
+  private async launchExport(overwriteWorkId: string): Promise<void> {
     if (this.exportLoadingVisible) {
       return
     }
@@ -674,7 +685,7 @@ struct Editor {
     this.exportProgress = 0
     this.updateExportStatus('准备导出...')
     debugLog('导出', `====================【导出开始】====================`)
-    debugLog('导出', `【导出参数-前端状态】tripId=${this.state.tripId} activeTemplateId=${this.state.activeTemplateId} totalDurationSec=${this.state.totalDurationSec} selectedSegmentId=${this.state.selectedSegmentId} watermarkEnabled=${this.state.watermarkEnabled} 覆盖=${overwriteTargetUri.length > 0 ? 'YES' : 'NO'}`)
+    debugLog('导出', `【导出参数-前端状态】tripId=${this.state.tripId} activeTemplateId=${this.state.activeTemplateId} totalDurationSec=${this.state.totalDurationSec} selectedSegmentId=${this.state.selectedSegmentId} watermarkEnabled=${this.state.watermarkEnabled} 覆盖=${overwriteWorkId.length > 0 ? 'YES' : 'NO'}`)
     debugLog('导出', `【导出参数-前端片段总数】count=${this.state.segments.length}`)
     for (let i = 0; i < this.state.segments.length; i++) {
       const s = this.state.segments[i]
@@ -686,7 +697,7 @@ struct Editor {
         this.exportLoadingText = event.status
         this.exportProgress = event.progress
         debugLog('导出', `导出事件 job=${event.jobId} status=${event.status} progress=${event.progress}`)
-      }, overwriteTargetUri)
+      }, overwriteWorkId)
       // 覆盖与新建共用这一句：用户要的就是「保存成功」的回执（spec 4.9）。
       // 注意这里不解析 outputPath —— NativeExportManager 在第一个终结事件上就 resolve，
       // 拿到的可能是文件名而不是相册 URI，但成功与否是确定的。
@@ -715,15 +726,15 @@ struct Editor {
 
   /** 覆盖询问的两个出口。candidate 可能在弹窗打开期间被清空，故此处再取一次。 */
   private chooseOverwrite(overwrite: boolean): void {
-    const candidate: EditRecord | undefined = this.overwriteCandidate
+    const candidate: WorkMeta | undefined = this.overwriteCandidate
     this.overwritePromptVisible = false
     this.overwriteCandidate = undefined
-    const targetUri: string = (overwrite && candidate) ? candidate.albumUri : ''
-    void this.launchExport(targetUri)
+    const targetWorkId: string = (overwrite && candidate) ? candidate.id : ''
+    void this.launchExport(targetWorkId)
   }
 
   private overwritePromptText(): string {
-    if (this.recordId.length > 0) {
+    if (this.workId.length > 0) {
       return '这条作品已经导出过，要覆盖它吗？'
     }
     return `这趟行程已经导出过 ${this.overwriteCount} 条，要覆盖最近那一条吗？`
