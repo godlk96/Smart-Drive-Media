@@ -49,12 +49,12 @@
 - Modify: `tools/offline-test.mjs:38-46`（`SUITES` 加一行）
 
 **Interfaces:**
-- Consumes: 无（纯模块，只依赖内置 `Date` / `JSON` 与 `../model/TripModels` 的 `PlaybackState` 类型）
+- Consumes: 无（纯模块，只依赖内置 `Date` / `JSON`，以及 `./Models` 的 `PlaybackState` 类型 —— **`PlaybackState` 在 `Models.ets:337`，不在 `TripModels.ets`**）
 - Produces（后续 Task 3/4/6/7/8/9 依赖）:
   - `export const WORK_META_SCHEMA_VERSION: number = 1`
   - `export class WorkTracks { front: Array<string>; back: Array<string>; side: Array<string>; side2: Array<string> }`（全部带初值 `[]`）
-  - `export class WorkMeta { schemaVersion, id, createdAt, exportedAt, tripTitle, tripStartTs, tripEndTs, tracks: WorkTracks, templateId, playback: PlaybackState | null, watermarkEnabled: boolean, segmentCount: number, durationMs: number }`
-  - `export function parseWorkMeta(raw: string): WorkMeta | undefined` —— 永不抛错；坏 JSON / 缺 `id` / 非对象一律返回 `undefined`
+  - `export class WorkMeta { schemaVersion, id, createdAt, exportedAt, tripTitle, tripStartTs, tripEndTs, tracks: WorkTracks, templateId: string, playback: PlaybackState, watermarkEnabled: boolean, segmentCount: number, durationMs: number }` —— **`playback` 非空**，默认 `{ playheadMs: 0, segments: [] }`；`templateId` 存 `string` 而不是 `TemplateId`（sidecar 是外部数据，可能含未知值，转换交给 Task 3）
+  - `export function parseWorkMeta(raw: string): WorkMeta | undefined` —— 永不抛错；坏 JSON / 缺 `id` / **缺 `playback` 或 `playback.segments` 非数组** 一律返回 `undefined`
   - `export function serializeWorkMeta(meta: WorkMeta): string`
   - `export function isWorkVideoFileName(name: string): boolean` —— 严格匹配 `^SmartDrive_Export_\d{8}_\d{6}(_\d+)?\.mp4$`
   - `export function workIdFromFileName(name: string): string` —— 去掉扩展名
@@ -74,7 +74,9 @@
 | 空串返回 undefined | `expectTrue(parseWorkMeta('') === undefined, '空串')` |
 | 坏 JSON 返回 undefined | `expectTrue(parseWorkMeta('{oops') === undefined, '坏 JSON')` |
 | 缺 id 返回 undefined | `expectTrue(parseWorkMeta('{"tripTitle":"x"}') === undefined, '缺 id')` |
-| 合法条目补齐默认值 | 喂 `{"id":"w1"}`：`tracks.front.length === 0`、`exportedAt === 0`、`schemaVersion === 1`、`playback === null` |
+| 缺 playback 返回 undefined | `expectTrue(parseWorkMeta('{"id":"w1"}') === undefined, '缺 playback')` |
+| playback.segments 非数组返回 undefined | `expectTrue(parseWorkMeta('{"id":"w1","playback":{"segments":1}}') === undefined, 'segments 非数组')` |
+| 合法条目补齐默认值 | 喂 `{"id":"w1","playback":{"playheadMs":0,"segments":[]}}`：`tracks.front.length === 0`、`exportedAt === 0`、`schemaVersion === 1`、`templateId === ''` |
 | 序列化→解析往返保真 | `parseWorkMeta(serializeWorkMeta(m))` 的 `id` / `exportedAt` / `templateId` 相等 |
 | **轨道顺序与重复往返不丢** | `m.tracks.front = ['a.mp4','b.mp4','a.mp4']`，往返后仍严格等于该数组（**Review Focus 3 的前置**） |
 | 作品视频名严格匹配 | `expectTrue(isWorkVideoFileName('SmartDrive_Export_20261018_210400.mp4'), '标准名')` |
@@ -206,7 +208,7 @@ git commit -m "feat(model): ClipSegment 保留源片段文件名"
 - Modify: `tools/offline-test.mjs:38-46`（`SUITES` 加一行）
 
 **Interfaces:**
-- Consumes: `WorkTracks` / `WorkMeta`（Task 1）；`ClipSegment.fileName`（Task 2）；`DvrMeta`、`ExportComposeRequest`、`TripSnapshot`（`entry/src/main/ets/model/TripModels.ets`）
+- Consumes: `WorkTracks` / `WorkMeta`（Task 1）；`ClipSegment.fileName`（Task 2）；`DvrMeta`、`ExportComposeRequest`、`TripSnapshot`（`./TripModels`）；`ExportSnapshot`、`normalizeTemplateIdValue`、`tripFromSnapshot`（`./Models`，全部已导出）
 - Produces（Task 6/9 依赖）:
   - `export function collectWorkTracks(clips: Array<DvrMeta>, request: ExportComposeRequest): WorkTracks` —— 把 request 四条轨道的 URI 按顺序反查回 `DvrMeta.fileName`；**URI 查不到就放空串**（宁可判缺失，也不静默跳过）
   - `export function collectTrackClipNames(tracks: WorkTracks): Array<string>` —— 四条轨道合并去重，过滤空串
@@ -214,6 +216,8 @@ git commit -m "feat(model): ClipSegment 保留源片段文件名"
   - `export class RebuiltTracks { front: Array<string>; back: Array<string>; side: Array<string>; side2: Array<string>; missing: Array<string> }`
   - `export function rebuildTrackUris(tracks: WorkTracks, liveClips: Array<DvrMeta>): RebuiltTracks` —— **逐位**复现每条轨道（含重复）；同名多份时取 `timestamp` 最小的那条；找不到的进 `missing`
   - `export function buildRestoredTripSnapshot(meta: WorkMeta, liveClips: Array<DvrMeta>): TripSnapshot` —— `id` = `trip-restored-<meta.id>`，`durationSec` **取自 `meta.durationMs / 1000`**（不是从片段累加），`clips` 是命中的片段并集（按 timestamp 升序），`previewCamera` / `previewUri` 从并集里挑第一个非空的
+    - **`timeline` 留空数组**：`buildTimeline` 在 `entry/src/main/ets/service/TimelineService.ets:58`，那个模块导入了 `libsmartdrive_exporter.so` 与 `./CoreApiContract`，**不是纯模块**，本文件不能引。由 Task 9 的 `CoreBridge` 在拿到快照后填 `live.timeline = buildTimeline(live.clips)`
+  - `export function exportSnapshotFromWorkMeta(meta: WorkMeta, live: TripSnapshot): ExportSnapshot` —— 把 sidecar 还原成 `restoreEditorStateFromSnapshot` 需要的那份 `ExportSnapshot`：`trip` 用 `tripFromSnapshot(live)`、`selectedTemplateId` 用 `normalizeTemplateIdValue(meta.templateId)`（`Models.ets:289` 已导出）、`playback` 直接取 `meta.playback`、`brand.watermarkEnabled` 取 `meta.watermarkEnabled`。**Task 9 靠它，不要自己在 `CoreBridge` 里拼**
 
 - [ ] **Step 1: 先写失败用例**
 
@@ -239,6 +243,10 @@ git commit -m "feat(model): ClipSegment 保留源片段文件名"
 | 合成快照的 durationSec 取自 meta | `meta.durationMs = 32000` → `snapshot.durationSec === 32`（**不是片段累加值**） |
 | 合成快照的 id 稳定可复现 | 同 `meta.id` 跑两次 → 同一个 `id` |
 | 合成快照的 clips 是命中并集且升序 | live 乱序输入 → `snapshot.clips` 的 `timestamp` 单调不减 |
+| 合成快照的 timeline 留空 | `expectNumber(snapshot.timeline.length, 0, 'timeline 留空')`（由 Task 9 的 CoreBridge 填） |
+| `exportSnapshotFromWorkMeta` 的模板走归一化 | `meta.templateId = 'T3'` → `snapshot.selectedTemplateId === TemplateId.T3` |
+| `exportSnapshotFromWorkMeta` 的未知模板回落到默认 | `meta.templateId = 'ZZ'` → `snapshot.selectedTemplateId === TemplateId.T5`（`normalizeTemplateIdValue` 的行为） |
+| `exportSnapshotFromWorkMeta` 透传 playback 与水印 | `meta.playback.playheadMs` 与 `meta.watermarkEnabled` 原样出现在结果里 |
 
 - [ ] **Step 2: 跑用例确认失败**
 
@@ -508,7 +516,16 @@ git commit -m "feat(works): 我的剪辑列表改为直接列作品目录"
 
 - [ ] **Step 1: 改 `CoreBridge`**
 
-`createLibraryState(permissionGranted, context)` 里记下 `this.libraryPermissionGranted = permissionGranted`，加 `public isPermissionGranted(): boolean`。新增 `restoreEditorStateFromLive(live, meta)`：内部调 `restoreEditorStateFromSnapshot(deepCloneExportSnapshot(...), live, `${live.id}_restore_${Date.now()}`, '已还原历史剪辑')`，再走现有的 `applyRestoredState(restored, live)`。`applyRestoredState` 一行不改 —— 它已经用 `live.durationSec` 建时间轴、算 `isRawFull`。
+`createLibraryState(permissionGranted, context)` 里记下 `this.libraryPermissionGranted = permissionGranted`，加 `public isPermissionGranted(): boolean`。
+
+新增 `restoreEditorStateFromLive(live: TripSnapshot, meta: WorkMeta): EditorStateModel`，四步：
+
+1. `live.timeline = buildTimeline(live.clips)` —— **必须做**。`buildEditorState`（`:698`）把 `activeSnapshot.timeline` 直接赋给 `this.tripTimeline`，而 Task 3 的 `buildRestoredTripSnapshot` 刻意把 `timeline` 留空（`TimelineService` 非纯，它引不了）。不填的话剪辑页时间轴是空的，模板选择与机位切换全废。
+2. `const stored = exportSnapshotFromWorkMeta(meta, live)`（Task 3）。
+3. `const restored = restoreEditorStateFromSnapshot(stored, live, \`${live.id}_restore_${Date.now()}\`, '已还原历史剪辑')`。
+4. `return this.applyRestoredState(restored, live)`。
+
+`applyRestoredState` 一行不改 —— 它已经用 `live.durationSec` 建时间轴、算 `isRawFull`。**合成快照不注册进 `this.trips`。**
 
 `restoreEditorState(tripId, recordJson)`（`:827`）与 `snapshotMatchesTrip` 一起删。
 
@@ -652,9 +669,11 @@ DevEco 构建 + 真机验收：整机冒烟 —— 行程库能扫出行程 → 
 - [ ] **Step 3: 提交**
 
 ```bash
-git add -A
+git add entry/src/main/ets/model/EditRecord.ets entry/src/main/ets/service/EditHistoryService.ets entry/src/main/ets/service/PreferencesService.ets entry/src/main/ets/viewmodel/EditorViewModel.ets entry/src/main/ets/pages/Editor.ets entry/src/main/ets/pages/Index.ets entry/src/ohosTest/ets/test/EditHistoryCases.ets entry/src/ohosTest/ets/test/EditHistory.test.ets entry/src/ohosTest/ets/test/List.test.ets tools/offline-test.mjs tools/typecheck-player.mjs
 git commit -m "refactor(works): 移除 preferences 记录表与孤儿检测"
 ```
+
+**不要用 `git add -A`** —— 工作区里可能有 `.device/` 之类的真机验收产物，会被一起带进提交。
 
 ---
 
