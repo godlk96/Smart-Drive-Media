@@ -5,10 +5,10 @@
  * run() 返回 '' 表示通过。
  */
 
-import { TripSnapshot, ExportSegment } from '../../../main/ets/model/TripModels'
-import { ExportSnapshot, EditorState, TemplateId, deepCloneExportSnapshot,
+import { TripSnapshot, ExportSegment, DvrMeta } from '../../../main/ets/model/TripModels'
+import { ExportSnapshot, EditorState, TemplateId, CameraPosition, deepCloneExportSnapshot,
   createEditorStateFromSnapshot, parseExportSnapshot, snapshotMatchesTrip,
-  restoreEditorStateFromSnapshot } from '../../../main/ets/model/Models'
+  restoreEditorStateFromSnapshot, tripFromSnapshot } from '../../../main/ets/model/Models'
 import { Segment, createFullSegment, toEditorSegments,
   isRawFullSegments } from '../../../main/ets/model/SegmentModel'
 import { TimelineCase, expectString, expectNumber, expectTrue, expectFalse, firstError } from './TestSupport'
@@ -191,6 +191,30 @@ export function editRestoreCases(): Array<TimelineCase> {
     second.startSec = 300
     second.endSec = 720
     return expectFalse(isRawFullSegments([first, second], 720), '两段拼满')
+  }))
+
+  cases.push(makeCase('tripFromSnapshot 保留源片段文件名', () => {
+    const live = makeLive()
+    const clip = new DvrMeta()
+    clip.fileName = 'DVR_LoopRecording_2026-10-01_13-28-18_front_camera.mp4'
+    clip.uri = 'file://media/Photo/1/IMG_1/DVR_LoopRecording_2026-10-01_13-28-18_front_camera.mp4'
+    clip.camera = 'Front'
+    clip.timestamp = 1759296000000
+    live.clips = [clip]
+    const trip = tripFromSnapshot(live)
+    return expectString(trip.tracks[CameraPosition.FRONT].segments[0].fileName,
+      clip.fileName, '文件名')
+  }))
+
+  cases.push(makeCase('tripFromSnapshot 的空文件名保持空串', () => {
+    const live = makeLive()
+    const clip = new DvrMeta()
+    clip.uri = 'file://media/Photo/1/IMG_1/x.mp4'
+    clip.camera = 'Front'
+    clip.timestamp = 1759296000000
+    live.clips = [clip]
+    const trip = tripFromSnapshot(live)
+    return expectString(trip.tracks[CameraPosition.FRONT].segments[0].fileName, '', '空文件名')
   }))
 
   return cases

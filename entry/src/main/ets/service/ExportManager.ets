@@ -53,7 +53,9 @@ function snapshotToLegacyClips(snapshot: ExportSnapshot): Array<DvrMeta> {
     const track = snapshot.trip.tracks[camera]
     track.segments.forEach((segment) => {
       const clip = new DvrMeta()
-      clip.fileName = `${segment.clipId}.mp4`
+      // 用快照里记的真名，不要再拿 `${clipId}.mp4` 编一个：clipId 里嵌着不稳定的
+      // trip id 和一个会随片段增删移位的下标，编出来的名字对不上任何源文件。
+      clip.fileName = segment.fileName
       clip.uri = segment.uri
       clip.camera = toLegacyCamera(camera)
       clip.timestamp = segment.timestampMs

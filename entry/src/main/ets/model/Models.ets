@@ -23,6 +23,13 @@ export interface ClipSegment {
   clipId: string
   camera: CameraPosition
   uri: string
+  /**
+   * 源片段文件名（`DvrMeta.fileName`）。
+   *
+   * 为什么留着它：`uri` 是随时可能失效的相册路径，文件名才是作品侧车要记录的
+   * 「这一段出自哪个源文件」。导出侧车按 URI 反查文件名时靠的就是这里。
+   */
+  fileName: string
   timestampMs: number
   durationSec: number
 }
@@ -434,6 +441,7 @@ export function tripFromSnapshot(snapshot: TripSnapshot): Trip {
         clipId: `${snapshot.id}_${camera}_${clip.timestamp}_${index}`,
         camera: camera,
         uri: clip.uri,
+        fileName: clip.fileName,
         timestampMs: clip.timestamp,
         durationSec: 60
       }
