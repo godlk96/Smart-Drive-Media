@@ -14,6 +14,7 @@ import { EditHistoryService } from '../service/EditHistoryService'
 import { WorkStore } from '../service/WorkStore'
 import { parseDvrFileName } from '../service/DvrScannerService'
 import { REQUIRED_MEDIA_PERMISSIONS } from '../constants/AppConstants'
+import { requestOpenMyEdits } from '../constants/PendingNavigation'
 import { startNativeExport, cancelNativeExport } from '../NativeExportManager'
 import { debugLog } from '../utils/Logger'
 import { formatTripDay, formatTripDuration } from '../utils/TripFormat'
@@ -62,6 +63,8 @@ struct Editor {
   @State private backConfirmVisible: boolean = false
   @State private toastText: string = ''
   @State private toastVisible: boolean = false
+  /** 这条提示能不能点。只有「导出成功」那条可点（点了回首页看新作品），其余一律不可点。 */
+  @State private toastTappable: boolean = false
   private toastTimer: number = -1
   /** 从「我的剪辑」进来的那条作品的 id（文件基名）；空串 = 从行程库进来的，没有作品上下文 */
   @State private workId: string = ''
@@ -289,9 +292,12 @@ struct Editor {
         return
       }
       this.permissionPromptVisible = false
+      // 整个还原期间（含这次授权后的重跑）保持 restorePending=true：此刻页面还是空白的，
+      // 导出按钮必须一直禁用。否则在这段窗口里点导出会走 startNativeExportTask →
+      // launchExport，buildExportSnapshot 拿不到行程数据，弹出假错误「导出失败：缺少行程数据」。
+      // 复位交给 resolveRestore 的 finally 统一负责 —— 还原真正落定后才放开导出。
       this.restorePending = true
       await this.bridge.createLibraryState(true, context)
-      this.restorePending = false
       debugLog('剪辑页', `授权成功，重跑还原 workId=${workId}`)
       void this.resolveRestore(workId)
     } catch (error) {
@@ -418,8 +424,13 @@ struct Editor {
     this.hasUnsavedChanges = true
   }
 
-  private showToast(message: string): void {
+  /**
+   * 弹提示。`tappable=true` 时这条提示可点（见 handleToastTap），默认不可点 ——
+   * 剪刀、模板、取消导出那类提示点一下不该有任何跳转，否则会莫名其妙退出剪辑页。
+   */
+  private showToast(message: string, tappable: boolean = false): void {
     this.toastText = message
+    this.toastTappable = tappable
     this.toastVisible = true
     if (this.toastTimer >= 0) {
       clearTimeout(this.toastTimer)
@@ -428,6 +439,28 @@ struct Editor {
       this.toastVisible = false
       this.toastTimer = -1
     }, 2000)
+  }
+
+  /**
+   * 点「已保存 · 查看作品」提示：回首页，由 Index.onPageShow 消费 pending 标记切到「我的剪辑」。
+   *
+   * 只有导出成功那条提示可点（toastTappable）；其余提示点一下不该跳转，直接忽略。
+   */
+  private handleToastTap(): void {
+    if (!this.toastTappable) {
+      return
+    }
+    if (this.toastTimer >= 0) {
+      clearTimeout(this.toastTimer)
+      this.toastTimer = -1
+    }
+    this.toastVisible = false
+    try {
+      this.getUIContext().getRouter().back()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('剪辑页', `返回失败：${message}`)
+    }
   }
 
   private getTemplateUiName(card: TemplateCardModel): string {
@@ -810,12 +843,16 @@ struct Editor {
       // 覆盖与新建共用这一句：用户要的就是「保存成功」的回执（spec 4.9）。
       debugLog('导出', `导出返回：workId=${outcome.workId} metaSaved=${outcome.metaSaved ? 'YES' : 'NO'}`)
       this.updateExportStatus('已保存到作品库')
+      // 置「回首页切到我的剪辑」标记：用户点这条提示回首页时，Index 会消费它并停在「我的剪辑」，
+      // 立刻看到刚导出的这条（列表按导出时间倒序，新作品在最上面）。
+      requestOpenMyEdits()
       // 成片本体已落进作品库；sidecar 写失败时如实降级告知（spec：报成功 + 一句告警），
       // 绝不假装元数据也在 —— 否则用户下次打开看到降级卡片却不知道原因。
+      // 提示可点（第二参 true）：点了回首页看新作品。
       if (outcome.metaSaved) {
-        this.showToast('已保存到作品库')
+        this.showToast('已保存 · 查看作品', true)
       } else {
-        this.showToast('已保存到作品库（元数据未写入）')
+        this.showToast('已保存 · 查看作品（元数据未写入）', true)
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -1231,6 +1268,10 @@ struct Editor {
           .padding({ left: 20, right: 20, top: 10, bottom: 10 })
           .borderRadius(8)
           .position({ x: '22%', y: '86%' })
+          // 默认即可命中：这条提示是 Stack 的直接子节点、压在内容层之上，没有
+          // hitTestBehavior(HitTestMode.None)、显示期间也没有全屏 scrim 盖住它，
+          // 所以无需改命中行为，挂上 onClick 就能点到（见 handleToastTap）。
+          .onClick(() => this.handleToastTap())
       }
 
       if (this.backConfirmVisible) {

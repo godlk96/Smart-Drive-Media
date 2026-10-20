@@ -45,7 +45,8 @@ const SUITES = [
   { path: 'entry/src/ohosTest/ets/test/EditHistoryCases.ets', exportName: 'editHistoryCases' },
   { path: 'entry/src/ohosTest/ets/test/EditRestoreCases.ets', exportName: 'editRestoreCases' },
   { path: 'entry/src/ohosTest/ets/test/WorkMetaCases.ets', exportName: 'workMetaCases' },
-  { path: 'entry/src/ohosTest/ets/test/WorkRestoreCases.ets', exportName: 'workRestoreCases' }
+  { path: 'entry/src/ohosTest/ets/test/WorkRestoreCases.ets', exportName: 'workRestoreCases' },
+  { path: 'entry/src/ohosTest/ets/test/PendingNavigationCases.ets', exportName: 'pendingNavigationCases' }
 ]
 
 const TSC_CANDIDATES = [

@@ -9,6 +9,7 @@ import editHistoryTest from './EditHistory.test'
 import editRestoreTest from './EditRestore.test'
 import workMetaTest from './WorkMeta.test'
 import workRestoreTest from './WorkRestore.test'
+import pendingNavigationTest from './PendingNavigation.test'
 
 export default function testsuite(): void {
   appStateModelTest()
@@ -22,4 +23,5 @@ export default function testsuite(): void {
   editRestoreTest()
   workMetaTest()
   workRestoreTest()
+  pendingNavigationTest()
 }

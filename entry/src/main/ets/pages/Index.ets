@@ -8,6 +8,7 @@ import { saveWorkToAlbum } from '../service/AlbumExport'
 import { debugLog } from '../utils/Logger'
 import { formatTripDay, formatTripDuration, getTripStartTime, isTripComplete } from '../utils/TripFormat'
 import { HomeViewModel, MyEditsViewState } from '../viewmodel/HomeViewModel'
+import { consumeOpenMyEdits } from '../constants/PendingNavigation'
 
 /** 时间轴轨宽度：时间右对齐、状态点压在最右侧，与封面之间留 10vp */
 // 46 装不下 "13:28"：右侧还要留 13vp 给状态点，可用只有 33vp，
@@ -96,8 +97,19 @@ struct Index {
   /**
    * 从剪辑页返回时刷新「我的剪辑」—— 那边可能刚导出一条新记录，
    * 也可能覆盖了旧记录，列表不及时更新用户会以为没生效。
+   *
+   * 导出成功后 Editor 会置 pending 标记：回到首页要停在「我的剪辑」，
+   * 让用户立刻看到刚导出的那条（列表按导出时间倒序，新作品在最上面）。
    */
   onPageShow(): void {
+    const openMyEdits: boolean = consumeOpenMyEdits()
+    if (openMyEdits && this.activeTab !== 1) {
+      // 从别的 Tab 切过来：switchTab 内部会重读「我的剪辑」，无需再补。
+      this.switchTab(1)
+      return
+    }
+    // 停在「我的剪辑」时 switchTab 会早退、跳过重读（从「我的剪辑」进剪辑页
+    // 导出再返回，activeTab 本来就是 1），这里补一次，新作品才会出现在最上面。
     if (this.activeTab === 1) {
       void this.refreshMyEdits()
     }
