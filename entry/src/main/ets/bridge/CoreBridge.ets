@@ -26,6 +26,7 @@ import { parseDvrFileName, pickPreviewSource } from '../service/DvrScannerServic
 import { buildTimeline, mergeTimeline } from '../service/TimelineService'
 import { extractFirstFrameByService, isUsableThumbnail, resolveThumbnailCachePath } from '../service/ExportNativeService'
 import { PreferencesService } from '../service/PreferencesService'
+import { WorkStore } from '../service/WorkStore'
 import { debugLog } from '../utils/Logger'
 import { RUN_GAP_MS, SLICE_MS } from '../media/TimelineMath'
 import {
@@ -572,6 +573,7 @@ export class CoreBridge {
     debugLog('扫描', `开始构建行程，授权状态=${permissionGranted}`)
     this.lastContext = context
     PreferencesService.getInstance().setContext(context ?? null)
+    WorkStore.getInstance().setContext(context ?? null)
     if (!permissionGranted) {
       return {
         title: '行程库',

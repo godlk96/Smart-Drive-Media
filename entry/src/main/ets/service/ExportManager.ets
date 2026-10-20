@@ -168,9 +168,10 @@ export class ExportManager {
     if (this.jobs.size > 0) {
       throw new Error('上一次导出仍在结束处理中，请稍后重试')
     }
-    // 记录落盘要用 context 打开偏好设置。导出不一定经过 CoreBridge，
-    // 那条路径上的 setContext 可能还没跑过，这里补一次（重复设置无副作用）。
+    // 导出不一定经过 CoreBridge，那条路径上的 setContext 可能还没跑过，这里补一次
+    // （重复设置无副作用）。PreferencesService 供旧记录链，WorkStore 供作品库文件系统层。
     PreferencesService.getInstance().setContext(context)
+    WorkStore.getInstance().setContext(context)
     const isolatedSnapshot = cloneExportSnapshot(snapshot)
     const jobId = `${isolatedSnapshot.sessionId}_${Date.now()}`
     const record: ExportJobRecord = {

@@ -71,9 +71,11 @@ const GROUPS = {
       'entry/src/main/ets/service/ExportFileCopy.ets',
       'entry/src/main/ets/model/ExportProgress.ets',
       'entry/src/main/ets/service/PreferencesService.ets',
+      'entry/src/main/ets/service/WorkStore.ets',
       'entry/src/main/ets/service/TimelineService.ets',
       'entry/src/main/ets/utils/Logger.ets',
       'entry/src/main/ets/model/EditRecord.ets',
+      'entry/src/main/ets/model/WorkMeta.ets',
       'entry/src/main/ets/media/TimelineMath.ets'
     ]
   },

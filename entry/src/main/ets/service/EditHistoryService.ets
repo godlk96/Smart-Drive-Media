@@ -13,6 +13,7 @@ import common from '@ohos.app.ability.common'
 import { EditRecord, findRecordById, findLatestRecordForTrip, removeRecords,
   upsertRecord } from '../model/EditRecord'
 import { PreferencesService } from './PreferencesService'
+import { WorkStore } from './WorkStore'
 import { debugLog } from '../utils/Logger'
 
 export class EditHistoryService {
@@ -46,6 +47,9 @@ export class EditHistoryService {
   /** 转调 PreferencesService。App 启动时注入一次 context 即可。 */
   public async setContext(context: common.UIAbilityContext | null): Promise<void> {
     PreferencesService.getInstance().setContext(context)
+    // 本服务是 HomeViewModel 当前的 context 入口，顺带把作品库文件系统层的 context 也注入
+    // （单例、幂等、多设无害）。Task 12 删本文件时这行会一起搬走。
+    WorkStore.getInstance().setContext(context)
   }
 
   public async list(): Promise<Array<EditRecord>> {

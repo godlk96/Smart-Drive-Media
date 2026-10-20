@@ -31,11 +31,11 @@ export async function startNativeExport(
         }
         return
       }
-      if (event.status.startsWith('导出完成：') || event.status.startsWith('相册保存成功：')) {
+      if (event.status.startsWith('导出完成：') || event.status.startsWith('相册保存成功：') || event.status.startsWith('已保存：')) {
         if (!settled) {
           settled = true
           clearTimeout(timeoutTimer)
-          resolve(event.status.replace('导出完成：', '').replace('相册保存成功：', ''))
+          resolve(event.status.replace('导出完成：', '').replace('相册保存成功：', '').replace('已保存：', ''))
         }
       }
     })
