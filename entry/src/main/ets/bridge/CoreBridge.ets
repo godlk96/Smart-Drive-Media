@@ -14,14 +14,13 @@ import {
   listTemplateDefinitions,
   listEditorTemplateDefinitions,
   normalizeTemplateIdValue,
-  parseExportSnapshot,
   resolveTemplateDefinition,
   restoreEditorStateFromSnapshot,
-  snapshotMatchesTrip,
   toLegacyCamera
 } from '../model/Models'
-import { EditRecord, parseEditRecords } from '../model/EditRecord'
 import { DvrMeta, TripSnapshot } from '../model/TripModels'
+import { WorkMeta } from '../model/WorkMeta'
+import { exportSnapshotFromWorkMeta } from '../model/WorkRestore'
 import { parseDvrFileName, pickPreviewSource } from '../service/DvrScannerService'
 import { buildTimeline, mergeTimeline } from '../service/TimelineService'
 import { extractFirstFrameByService, isUsableThumbnail, resolveThumbnailCachePath } from '../service/ExportNativeService'
@@ -167,6 +166,25 @@ export class CoreBridge {
   private previewFrameCache: Map<string, string> = new Map()
   private previewResolutionToken: number = 0
   private onCoverReadyListener?: (tripId: string, coverPath: string) => void
+  /**
+   * 相册权限的最近一次判定结果，由 `createLibraryState` 记下。
+   *
+   * **这是权限三态判定的唯一依据**：行程库为空既可能是「没授权」、也可能是
+   * 「素材被删了」，只有这个标志能把两者分开 —— 少了它，没授权时会对用户说一句
+   * 假的「素材已不在」，把本次改动最大的一个用户可感知收益吃掉。
+   */
+  private libraryPermissionGranted: boolean = false
+  /**
+   * 还原链路合成出来的那份快照（`restoreEditorStateFromLive` 的入参）。
+   *
+   * **刻意不放进 `this.trips`**：那是扫描结果的行程库，把还原的临时产物混进去
+   * 会污染首页列表。但编辑器后续每一次操作（切模板 / 切机位 / 落刀 / 导出取素材）
+   * 都是「按 `this.tripId` 回查快照」，而还原态的 `this.tripId` 是
+   * `trip-restored-<作品id>`，在 `this.trips` 里必然查不到 —— 少了这个单槽兜底，
+   * 还原后第一次操作就会把 `previewSlots` 清空（画面从播放器掉回一张封面图），
+   * 导出也会在 `buildExportSnapshot` 里报「缺少行程数据」。
+   */
+  private restoredTrip?: TripSnapshot = undefined
 
   setOnCoverReadyListener(listener?: (tripId: string, coverPath: string) => void): void {
     this.onCoverReadyListener = listener
@@ -174,6 +192,46 @@ export class CoreBridge {
 
   getRequiredPermissions(): Array<string> {
     return [...this.requiredPermissions]
+  }
+
+  /** 最近一次 `createLibraryState` 的授权判定（见 `libraryPermissionGranted` 的注释）。 */
+  isPermissionGranted(): boolean {
+    return this.libraryPermissionGranted
+  }
+
+  /**
+   * 行程库里全部行程的源片段，摊平成一个数组（去重交给调用方）。
+   *
+   * 还原的片段级校验要回答的是「这些源文件现在还在不在」，与它属于哪趟行程无关 ——
+   * 一件作品可能是跨行程、跨机位拼出来的，逐趟去查反而查不全。
+   */
+  allLibraryClips(): Array<DvrMeta> {
+    const out: Array<DvrMeta> = []
+    this.trips.forEach((trip: TripSnapshot) => {
+      for (let i = 0; i < trip.clips.length; i++) {
+        out.push(trip.clips[i])
+      }
+    })
+    return out
+  }
+
+  /**
+   * 按 `this.tripId` 找当前素材：先查行程库，查不到再认还原快照（仅当 id 对得上）。
+   *
+   * 还原快照的 id 形如 `trip-restored-<作品id>`，与扫描产出的 `trip-…` 不会撞车，
+   * 所以这条兜底对普通行程完全无影响；而它正是还原态下切模板 / 切机位 / 落刀
+   * 还能拿到素材的唯一通路（见 `restoredTrip` 的注释）。
+   */
+  private resolveLiveTrip(): TripSnapshot | undefined {
+    const scanned = this.trips.get(this.tripId)
+    if (scanned) {
+      return scanned
+    }
+    const restored = this.restoredTrip
+    if (restored !== undefined && restored.id === this.tripId) {
+      return restored
+    }
+    return undefined
   }
 
   private async collectDvrMetas(fetchResult: photoAccessHelper.FetchResult<photoAccessHelper.PhotoAsset>): Promise<Array<DvrMeta>> {
@@ -571,6 +629,7 @@ export class CoreBridge {
 
   async createLibraryState(permissionGranted: boolean, context?: common.UIAbilityContext): Promise<LibraryStateModel> {
     debugLog('扫描', `开始构建行程，授权状态=${permissionGranted}`)
+    this.libraryPermissionGranted = permissionGranted
     this.lastContext = context
     PreferencesService.getInstance().setContext(context ?? null)
     WorkStore.getInstance().setContext(context ?? null)
@@ -687,7 +746,7 @@ export class CoreBridge {
     let activeSnapshot = snapshot
     let anchorTimestamp: number = 0
     if (!activeSnapshot) {
-      const cached = this.trips.get(this.tripId)
+      const cached = this.resolveLiveTrip()
       if (cached) {
         activeSnapshot = cached
       }
@@ -820,35 +879,25 @@ export class CoreBridge {
   }
 
   /**
-   * 按一条历史记录还原剪辑页状态。
+   * 按作品 sidecar + 现场片段**装配好的快照**还原剪辑页（spec 4.5）。
    *
-   * 本方法**不判断**能不能还原 —— 调用方先用 snapshotMatchesTrip 给出明确的
-   * 「行程已变更」出口。这里只做最后一道防线：任何一环缺失就退回白纸状态，
-   * 绝不拿半个快照拼出一个参数错乱的剪辑页。
+   * 与旧入口 `restoreEditorState(tripId, recordJson)` 的根本区别：素材是**跨行程、跨机位**
+   * 拼出来的，现场根本没有对应的行程条目，所以直接收装配好的快照，不走 `this.trips.get`。
+   * 「能不能还原」也不在这里判断 —— 那是片段级的活（`findMissingClipNames`），
+   * 由调用方在拿到明确结论后再进来。
+   *
+   * 合成快照**不注册进 `this.trips`**，只记在 `this.restoredTrip`（见其注释）。
    */
-  restoreEditorState(tripId: string, recordJson: string): EditorStateModel {
-    const live = this.trips.get(tripId)
-    if (!live) {
-      debugLog('剪辑', `还原失败：现场行程不存在，tripId=${tripId}，降级为默认状态`)
-      return this.createEditorState(tripId, '', '')
-    }
-    const records: Array<EditRecord> = parseEditRecords(recordJson)
-    if (records.length === 0) {
-      debugLog('剪辑', '还原失败：记录解析不出条目，降级为默认状态')
-      return this.createEditorState(tripId, '', '')
-    }
-    const stored = parseExportSnapshot(records[0].snapshot)
-    if (!stored) {
-      debugLog('剪辑', '还原失败：记录里的快照不可用，降级为默认状态')
-      return this.createEditorState(tripId, '', '')
-    }
-    if (!snapshotMatchesTrip(stored, live)) {
-      debugLog('剪辑', '还原失败：记录与现场行程身份不符（源素材可能已变动），降级为默认状态')
-      return this.createEditorState(tripId, '', '')
-    }
+  restoreEditorStateFromLive(live: TripSnapshot, meta: WorkMeta): EditorStateModel {
+    // 必须补时间轴：buildEditorState 把 activeSnapshot.timeline 直接赋给 this.tripTimeline，
+    // 而 Task 3 的 buildRestoredTripSnapshot 刻意把 timeline 留空（TimelineService 引了
+    // native 的 .so，纯模块引不了）。不填的话剪辑页时间轴是空的，模板选择与机位切换全废。
+    live.timeline = buildTimeline(live.clips)
+    const stored = exportSnapshotFromWorkMeta(meta, live)
     const restored = restoreEditorStateFromSnapshot(
-      stored, live, `${tripId}_restore_${Date.now()}`, '已还原历史剪辑')
-    debugLog('剪辑', `按记录还原，模板=${restored.selectedTemplateId} 段数=${restored.playback.segments.length} 播放头=${restored.playback.playheadMs}ms`)
+      stored, live, `${live.id}_restore_${Date.now()}`, '已还原历史剪辑')
+    this.restoredTrip = live
+    debugLog('剪辑', `按作品还原，模板=${restored.selectedTemplateId} 段数=${restored.playback.segments.length} 播放头=${restored.playback.playheadMs}ms 素材片段=${live.clips.length}`)
     return this.applyRestoredState(restored, live)
   }
 
@@ -1121,32 +1170,17 @@ export class CoreBridge {
   getTripSnapshotClone(tripId?: string): TripSnapshot | undefined {
     const targetId = tripId && tripId.length > 0 ? tripId : this.tripId
     const snapshot = this.trips.get(targetId)
-    if (!snapshot) {
-      return undefined
+    if (snapshot) {
+      return this.cloneTripSnapshot(snapshot)
     }
-    return this.cloneTripSnapshot(snapshot)
-  }
-
-  /**
-   * 按 (行程标题, 起始时间) 找回现场行程的真实 id。
-   *
-   * tripId 的构造里带着「该分组在整次扫描中的序号」，用户删掉靠前的源素材后，
-   * 后面的行程会整体重编号 —— 记录里存下来的 tripId 会查不到，甚至指向另一趟
-   * 行程。所以还原只能把 tripId 当线索，真正的身份要靠这对更稳定的字段。
-   *
-   * 返回 '' 表示现场确实没有这趟素材了，调用方据此走「素材已不在」分支。
-   */
-  resolveTripIdByTitleStartTs(title: string, startTs: number): string {
-    if (title.length === 0) {
-      return ''
+    // 还原态：合成快照不在行程库里，但它的 id 就是编辑器当前的 tripId
+    // （见 restoredTrip 的注释）—— 少了这一支，导出取素材与切机位后的
+    // tripSnapshot 刷新都会落空。
+    const restored = this.restoredTrip
+    if (restored !== undefined && restored.id === targetId) {
+      return this.cloneTripSnapshot(restored)
     }
-    let found: string = ''
-    this.trips.forEach((item: TripSnapshot) => {
-      if (found.length === 0 && item.tripTitle === title && item.startTs === startTs) {
-        found = item.id
-      }
-    })
-    return found
+    return undefined
   }
 }
 

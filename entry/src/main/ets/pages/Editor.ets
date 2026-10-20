@@ -7,14 +7,17 @@ import { sharedCoreBridge } from '../bridge/CoreBridge'
 import { EditorStateModel, PreviewSeekRequest, TemplateCardModel, TimelineTrackModel } from '../model/AppState'
 import { Segment, MAX_SEGMENTS, createFullSegment, segmentIndexAtSec, segmentOrdinal } from '../model/SegmentModel'
 import { TripSnapshot } from '../model/TripModels'
-import { DEFAULT_TEMPLATE_ID, parseExportSnapshot, snapshotMatchesTrip } from '../model/Models'
-import { EditRecord } from '../model/EditRecord'
+import { DEFAULT_TEMPLATE_ID } from '../model/Models'
 import { WorkMeta, findWorkByTrip } from '../model/WorkMeta'
+import { buildRestoredTripSnapshot, collectLiveFileNames, collectTrackClipNames, findMissingClipNames } from '../model/WorkRestore'
 import { EditHistoryService } from '../service/EditHistoryService'
 import { WorkStore } from '../service/WorkStore'
+import { parseDvrFileName } from '../service/DvrScannerService'
+import { REQUIRED_MEDIA_PERMISSIONS } from '../constants/AppConstants'
 import { startNativeExport, cancelNativeExport } from '../NativeExportManager'
 import { debugLog } from '../utils/Logger'
 import { formatTripDay, formatTripDuration } from '../utils/TripFormat'
+import abilityAccessCtrl from '@ohos.abilityAccessCtrl'
 import common from '@ohos.app.ability.common'
 import window from '@ohos.window'
 import { EditorViewModel, EditorHydrateResult } from '../viewmodel/EditorViewModel'
@@ -66,6 +69,17 @@ struct Editor {
   @State private restorePending: boolean = false
   /** 记录与现场行程对不上时的明确出口（反目标 3：绝不静默用错素材） */
   @State private driftVisible: boolean = false
+  /** 「素材已不在」弹窗里的动态明细：缺几个片段、涉及哪些机位 */
+  @State private driftDetail: string = ''
+  /** sidecar 缺失或时长非法：剪辑参数已经没了，这条作品只能当新剪辑打开 */
+  @State private paramsLostVisible: boolean = false
+  /**
+   * 没有相册权限。**绝不与「素材已不在」混用**：没权限时行程库本来就是空的，
+   * 判成缺失会对着用户说一句假话（spec 4.5 三态）。
+   */
+  @State private permissionPromptVisible: boolean = false
+  /** 未授权态下待重跑的还原目标；授权成功后拿它再跑一次 resolveRestore。 */
+  private pendingRestoreWorkId: string = ''
   @State private overwritePromptVisible: boolean = false
   /** 这趟行程已有几条作品，覆盖询问文案要用 */
   @State private overwriteCount: number = 0
@@ -140,56 +154,151 @@ struct Editor {
       const message = error instanceof Error ? error.message : String(error)
       debugLog('剪辑页', `读取路由参数失败：${message}`)
     }
-    const tripId = params.tripId ?? 'trip-demo-1'
+    const tripId = params.tripId ?? ''
     const title = params.title ?? ''
     const subtitle = params.subtitle ?? ''
-    const recordId = params.recordId ?? ''
-    debugLog('剪辑页', `进入页面，行程ID=${tripId}，标题提示=${title}，副标题提示=${subtitle}，记录ID=${recordId}`)
-    if (recordId.length > 0) {
-      // 从「我的剪辑」进来：要先把记录读出来才能判断能不能还原，是异步的。
-      // 生命周期保持同步（ArkUI 不保证 async 生命周期），这里 fire-and-forget。
+    const workId = params.workId ?? ''
+    debugLog('剪辑页', `进入页面，行程ID=${tripId}，标题提示=${title}，副标题提示=${subtitle}，作品ID=${workId}`)
+    if (workId.length > 0) {
+      // 从「我的剪辑」进来：`workId` 是**唯一**的还原入口（旧的 `recordId` 通路已删）。
+      // 还原要先读 sidecar、判权限、逐位比对素材，是异步的 —— 生命周期保持同步
+      // （ArkUI 不保证 async 生命周期），这里 fire-and-forget。
       this.restorePending = true
-      void this.resolveRestore(recordId, tripId)
+      void this.resolveRestore(workId)
       return
     }
     this.applyHydrateResult(this.viewModel.hydrate(tripId))
   }
 
   /**
-   * 从一条历史记录还原剪辑页。
+   * 从作品库里的一条作品还原剪辑页（spec 4.5）。
    *
-   * 「能不能还原」的判断放在这里而不是 CoreBridge：只有页面知道还原失败时该给用户
-   * 说什么（弹窗 + 两条出口）；桥接层只负责「能还原时怎么装配」。
-   * 参数以记录为准、素材以现场为准，两边对不上就明确报错，绝不静默换素材。
+   * 身份锚是 sidecar 里**导出那一刻真正送进 native 的四条轨道**（源片段文件名，有序含重复），
+   * 不再是「标题 + 起点」：后者在用户删掉中间某个源片段时照样通过，还原出来的成片
+   * 从删除点起整体错位 —— 正是这次重构要消灭的那条静默错。
+   *
+   * 三个出口必须分开，**顺序不能换**：
+   *   1. sidecar 缺失 / 时长非法 → 剪辑参数已丢失；
+   *   2. 没有相册权限 → 权限提示（没权限时行程库本来就是空的，判成「素材已不在」是假话）；
+   *   3. 有权限、但逐位比对缺片段 → 素材已不在。
+   * 参数以 sidecar 为准、素材以现场为准；两边对不上就明确报错，绝不静默换素材。
    */
-  private async resolveRestore(recordId: string, tripId: string): Promise<void> {
+  private async resolveRestore(workId: string): Promise<void> {
     try {
-      const record: EditRecord | undefined = await EditHistoryService.getInstance().findById(recordId)
-      const stored = record ? parseExportSnapshot(record.snapshot) : undefined
-      // tripId 会随源素材增删而整体重编号，所以先按 (标题, 起始时间) 找回
-      // 现场的真实 id；找不回来才退回参数里的 tripId（此时后续校验会判漂移）。
-      const liveTripId = record !== undefined
-        ? this.viewModel.resolveTripIdByTitleStartTs(record.tripTitle, record.tripStartTs)
-        : ''
-      const effectiveTripId = liveTripId.length > 0 ? liveTripId : tripId
-      const live = this.viewModel.getTripSnapshot(effectiveTripId)
-      if (record && stored && snapshotMatchesTrip(stored, live)) {
-        this.workId = recordId
-        this.applyHydrateResult(this.viewModel.hydrateFromRecord(effectiveTripId, JSON.stringify([record])))
-        debugLog('剪辑页', `按记录还原成功 recordId=${recordId} 现场行程=${effectiveTripId}`)
-      } else {
-        debugLog('剪辑页', `还原不可用：记录存在=${record !== undefined}，快照可用=${stored !== undefined}，判定为素材已漂移`)
-        // 先把页面铺成白纸再弹窗：关掉弹窗后用户看到的是可编辑的正常页面，而不是空壳。
-        this.applyHydrateResult(this.viewModel.hydrate(tripId))
-        this.driftVisible = true
+      const meta = await WorkStore.getInstance().readMeta(workId)
+      // 时长为 0/负数的 sidecar 与缺失同样不可用：放它过去会得到一条空的、
+      // 时长错乱的时间轴 —— 那正是「看着对、其实错」的静默错。
+      if (meta === undefined || meta.durationMs <= 0) {
+        debugLog('剪辑页', `还原不可用：sidecar 缺失或时长非法 workId=${workId}，读到=${meta !== undefined}`)
+        this.applyHydrateResult(this.viewModel.hydrate(workId))
+        this.paramsLostVisible = true
+        return
       }
+      // 四条轨道一条片段名都没记 —— 这份 sidecar 说明不了它当初用了哪些素材，
+      // 也就**无从校验**。放它过去等于「不比对就还原」，正是这次要消灭的静默错；
+      // 判「素材已不在」又是假话（我们并不知道有素材没了）。归到参数不可用。
+      if (collectTrackClipNames(meta.tracks).length === 0) {
+        debugLog('剪辑页', `还原不可用：sidecar 未记录任何源片段 workId=${workId}`)
+        this.applyHydrateResult(this.viewModel.hydrate(workId))
+        this.paramsLostVisible = true
+        return
+      }
+      if (!this.viewModel.isPermissionGranted()) {
+        debugLog('剪辑页', `还原未授权：需要相册权限才能重新剪辑 workId=${workId}`)
+        this.pendingRestoreWorkId = workId
+        this.applyHydrateResult(this.viewModel.hydrate(workId))
+        this.permissionPromptVisible = true
+        return
+      }
+      const liveClips = this.viewModel.allLibraryClips()
+      // 「可用片段」只由 collectLiveFileNames 定义：`findMissingClipNames` 只认名字、
+      // 看不见 URI，直接喂 `fileName` 会把一条空 URI 的片段判成「还在」，而
+      // `rebuildTrackUris` 会判它「找不到」—— 同一份数据两处结论相反，就会漏报缺失，
+      // 把一段黑屏送进编码器。所以两个判定必须走同一个定义。
+      const missing = findMissingClipNames(meta.tracks, collectLiveFileNames(liveClips))
+      if (missing.length > 0) {
+        debugLog('剪辑页', `还原不可用：缺 ${missing.length} 个源片段 workId=${workId}`)
+        // 先把页面铺成白纸再弹窗：关掉弹窗后用户看到的是可编辑的正常页面，而不是空壳。
+        this.applyHydrateResult(this.viewModel.hydrate(workId))
+        this.driftDetail = this.missingDetailText(missing)
+        this.driftVisible = true
+        return
+      }
+      const live = buildRestoredTripSnapshot(meta, liveClips)
+      this.workId = workId
+      this.applyHydrateResult(this.viewModel.hydrateFromWork(live, meta))
+      debugLog('剪辑页', `按作品还原成功 workId=${workId} 模板=${meta.templateId} 素材片段=${live.clips.length}`)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       debugLog('剪辑页', `还原过程异常：${message}`)
-      this.applyHydrateResult(this.viewModel.hydrate(tripId))
-      this.driftVisible = true
+      this.applyHydrateResult(this.viewModel.hydrate(workId))
+      this.driftDetail = ''
+      this.paramsLostVisible = true
     } finally {
       this.restorePending = false
+    }
+  }
+
+  /**
+   * 「素材已不在」弹窗的明细行：缺几个、涉及哪些机位。
+   *
+   * 机位只写在 DVR 文件名里（`WorkMeta.tracks` 只记文件名不记机位），所以用扫描链路
+   * 同一个解析器把名字反解回机位，免得在页面里再抄一份文件名正则。解析不出的名字
+   * 直接跳过 —— 宁可少列一个机位，也不猜一个给用户看。
+   */
+  private missingDetailText(missing: Array<string>): string {
+    const cameras: Array<string> = []
+    for (let i = 0; i < missing.length; i++) {
+      // 第二参只被原样回填进结果的 uri 字段（native 与 JS 两条解析路径都不看它），
+      // 这里要的只是机位，传文件名本身即可。
+      const parsed = parseDvrFileName(missing[i], missing[i])
+      if (!parsed) {
+        continue
+      }
+      const zh = this.viewModel.cameraZhName(parsed.camera)
+      if (zh.length > 0 && cameras.indexOf(zh) < 0) {
+        cameras.push(zh)
+      }
+    }
+    const suffix = cameras.length > 0 ? `（涉及${cameras.join('、')}机位）` : ''
+    return `这次剪辑缺少 ${missing.length} 个源片段${suffix}。`
+  }
+
+  /**
+   * 未授权态的授权出口：复用首页那套 `requestPermissionsFromUser`。
+   *
+   * 授权成功后必须**先把行程库扫一遍**再重跑还原：`isPermissionGranted()` 记的是
+   * 最近一次 `createLibraryState` 的入参，`allLibraryClips()` 读的也是那次扫描填好的
+   * 行程表 —— 不刷新的话，重跑只会再弹一次权限提示。
+   */
+  private async requestRestorePermission(): Promise<void> {
+    const workId = this.pendingRestoreWorkId
+    const host = this.getUIContext().getHostContext()
+    if (!host) {
+      this.showToast('无法获取页面上下文')
+      return
+    }
+    const context = host as common.UIAbilityContext
+    try {
+      const atManager = abilityAccessCtrl.createAtManager()
+      const result = await atManager.requestPermissionsFromUser(context, REQUIRED_MEDIA_PERMISSIONS)
+      const allGranted = result.authResults.every((item: number) => item === 0)
+      if (!allGranted) {
+        debugLog('剪辑页', '还原授权未通过')
+        this.showToast('未获得相册权限')
+        return
+      }
+      this.permissionPromptVisible = false
+      this.restorePending = true
+      await this.bridge.createLibraryState(true, context)
+      this.restorePending = false
+      debugLog('剪辑页', `授权成功，重跑还原 workId=${workId}`)
+      void this.resolveRestore(workId)
+    } catch (error) {
+      this.restorePending = false
+      const message = error instanceof Error ? error.message : String(error)
+      debugLog('剪辑页', `还原授权链路失败：${message}`)
+      this.showToast('未获得相册权限')
     }
   }
 
@@ -1236,10 +1345,16 @@ struct Editor {
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
-            Text('这次剪辑无法还原。可能是源素材被删除、被移动，或这是一次合并剪辑（重启后合并行程不再存在）。')
+            Text('这次剪辑无法还原。源素材可能被删除或被移动了。')
               .fontSize(13)
               .fontColor($r('app.color.text_tertiary'))
               .lineHeight(19)
+            if (this.driftDetail.length > 0) {
+              Text(this.driftDetail)
+                .fontSize(13)
+                .fontColor($r('app.color.text_tertiary'))
+                .lineHeight(19)
+            }
             Row({ space: 12 }) {
               Button('返回')
                 .layoutWeight(1)
@@ -1260,6 +1375,100 @@ struct Editor {
                 .onClick(() => {
                   // 页面在弹窗打开前已经铺成白纸，这里只需收起弹窗。
                   this.driftVisible = false
+                })
+            }
+            .width('100%')
+            .margin({ top: 4 })
+          }
+          .width('84%')
+          .padding(24)
+          .backgroundColor($r('app.color.ed_surface'))
+          .borderRadius(18)
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor($r('app.color.export_scrim'))
+      }
+
+      if (this.paramsLostVisible) {
+        Column({ space: 0 }) {
+          Column({ space: 12 }) {
+            Text('剪辑参数已丢失')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+            Text('这条作品的剪辑参数已丢失，无法重新剪辑。模板、分段与水印都没能保存下来，可以当作一次新的剪辑重来。')
+              .fontSize(13)
+              .fontColor($r('app.color.text_tertiary'))
+              .lineHeight(19)
+            Row({ space: 12 }) {
+              Button('返回')
+                .layoutWeight(1)
+                .type(ButtonType.Capsule)
+                .fontSize(14)
+                .fontColor($r('app.color.text_primary'))
+                .backgroundColor($r('app.color.track_bg'))
+                .onClick(() => {
+                  this.paramsLostVisible = false
+                  this.getUIContext().getRouter().back()
+                })
+              Button('当作新剪辑打开')
+                .layoutWeight(1)
+                .type(ButtonType.Capsule)
+                .fontSize(14)
+                .fontColor($r('app.color.card_bg'))
+                .backgroundColor($r('app.color.ink'))
+                .onClick(() => {
+                  this.paramsLostVisible = false
+                })
+            }
+            .width('100%')
+            .margin({ top: 4 })
+          }
+          .width('84%')
+          .padding(24)
+          .backgroundColor($r('app.color.ed_surface'))
+          .borderRadius(18)
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor($r('app.color.export_scrim'))
+      }
+
+      if (this.permissionPromptVisible) {
+        Column({ space: 0 }) {
+          Column({ space: 12 }) {
+            Text('需要相册权限')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+            Text('需要相册权限才能重新剪辑。授权后会自动接着还原这条作品。')
+              .fontSize(13)
+              .fontColor($r('app.color.text_tertiary'))
+              .lineHeight(19)
+            Row({ space: 12 }) {
+              Button('返回')
+                .layoutWeight(1)
+                .type(ButtonType.Capsule)
+                .fontSize(14)
+                .fontColor($r('app.color.text_primary'))
+                .backgroundColor($r('app.color.track_bg'))
+                .onClick(() => {
+                  this.permissionPromptVisible = false
+                  this.getUIContext().getRouter().back()
+                })
+              Button('去授权')
+                .layoutWeight(1)
+                .type(ButtonType.Capsule)
+                .fontSize(14)
+                .fontColor($r('app.color.card_bg'))
+                .backgroundColor($r('app.color.ink'))
+                .onClick(() => {
+                  void this.requestRestorePermission()
                 })
             }
             .width('100%')

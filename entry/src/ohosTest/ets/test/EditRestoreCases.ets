@@ -7,7 +7,7 @@
 
 import { TripSnapshot, ExportSegment, DvrMeta } from '../../../main/ets/model/TripModels'
 import { ExportSnapshot, EditorState, TemplateId, CameraPosition, deepCloneExportSnapshot,
-  createEditorStateFromSnapshot, parseExportSnapshot, snapshotMatchesTrip,
+  createEditorStateFromSnapshot, parseExportSnapshot,
   restoreEditorStateFromSnapshot, tripFromSnapshot } from '../../../main/ets/model/Models'
 import { Segment, createFullSegment, toEditorSegments,
   isRawFullSegments } from '../../../main/ets/model/SegmentModel'
@@ -77,26 +77,6 @@ export function editRestoreCases(): Array<TimelineCase> {
   cases.push(makeCase('合法快照往返可用', () => {
     const stored = makeStored()
     return expectTrue(parseExportSnapshot(JSON.stringify(stored)) !== undefined, '往返')
-  }))
-
-  cases.push(makeCase('身份匹配：标题+起点一致', () => {
-    const stored = makeStored()
-    const live = makeLive()
-    return expectTrue(snapshotMatchesTrip(stored, live), '匹配')
-  }))
-
-  cases.push(makeCase('身份漂移：起点不同', () => {
-    const stored = makeStored()
-    const live = makeLive()
-    live.startTs = live.startTs + 1
-    return expectFalse(snapshotMatchesTrip(stored, live), '起点漂移')
-  }))
-
-  cases.push(makeCase('身份漂移：标题不同', () => {
-    const stored = makeStored()
-    const live = makeLive()
-    live.tripTitle = '10月2日 周四'
-    return expectFalse(snapshotMatchesTrip(stored, live), '标题漂移')
   }))
 
   cases.push(makeCase('还原用现场素材不用记录素材', () => {

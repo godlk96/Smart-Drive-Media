@@ -8,7 +8,8 @@ import {
 import { EditorStateModel, TemplateCardModel, TimelineTrackModel } from '../model/AppState'
 import { createEditorStateFromSnapshot, deepCloneExportSnapshot, ExportSnapshot, resolveTemplateDefinition, TemplateId } from '../model/Models'
 import { formatSegmentDuration as segmentDurationText, outputDurationSec, Segment } from '../model/SegmentModel'
-import { TripSnapshot } from '../model/TripModels'
+import { DvrMeta, TripSnapshot } from '../model/TripModels'
+import { WorkMeta } from '../model/WorkMeta'
 import { debugLog } from '../utils/Logger'
 
 export interface EditorHydrateResult {
@@ -35,19 +36,37 @@ export class EditorViewModel {
   }
 
   /**
-   * 从「我的剪辑」的一条历史记录进入剪辑页。
+   * 从「我的剪辑」的一条作品进入剪辑页。
    *
-   * 与 hydrate 的区别只有一处：编辑器状态不是新建的白纸，而是按记录还原的。
-   * 素材仍然取现场快照 —— 记录里存的是参数，不是源文件。
+   * 与 hydrate 的区别只有一处：编辑器状态不是新建的白纸，而是按 sidecar 还原的。
+   * 素材以现场为准（由调用方按文件名逐位装配好传进来），sidecar 只提供参数
+   * （模板 / 分段 / 水印 / 播放头）。
+   *
+   * `tripSnapshot` 直接用传进来的 `live`：合成快照**不注册进行程库**，按
+   * `state.tripId` 回查是查不到的（CoreBridge 里另有一个单槽兜底，见其注释）。
    */
-  hydrateFromRecord(tripId: string, recordJson: string): EditorHydrateResult {
-    const state = this.bridge.restoreEditorState(tripId, recordJson)
-    const tripSnapshot = this.bridge.getTripSnapshotClone(state.tripId) ?? new TripSnapshot()
+  hydrateFromWork(live: TripSnapshot, meta: WorkMeta): EditorHydrateResult {
+    const state = this.bridge.restoreEditorStateFromLive(live, meta)
     return {
       state,
-      tripSnapshot,
-      exportSessionSeed: `${state.tripId}_${Date.now()}`
+      tripSnapshot: live,
+      exportSessionSeed: `${live.id}_${Date.now()}`
     }
+  }
+
+  /** 相册权限的最近一次判定（转发 CoreBridge）。还原三态的第一道分叉。 */
+  isPermissionGranted(): boolean {
+    return this.bridge.isPermissionGranted()
+  }
+
+  /**
+   * 行程库里全部行程的源片段，摊平成一个数组。
+   *
+   * 还原的片段级校验要的是「这些源文件现在还在不在」，与它属于哪趟行程无关 ——
+   * 一件作品可能是跨行程、跨机位拼出来的。
+   */
+  allLibraryClips(): Array<DvrMeta> {
+    return this.bridge.allLibraryClips()
   }
 
   seekGlobalPlayhead(second: number): EditorStateModel {
@@ -149,11 +168,6 @@ export class EditorViewModel {
 
   getTripSnapshot(tripId: string): TripSnapshot {
     return this.bridge.getTripSnapshotClone(tripId) ?? new TripSnapshot()
-  }
-
-  /** 按 (标题, 起始时间) 找回现场行程 id。'' 表示素材真的不在了。 */
-  resolveTripIdByTitleStartTs(title: string, startTs: number): string {
-    return this.bridge.resolveTripIdByTitleStartTs(title, startTs)
   }
 
   getTemplateUiName(card: TemplateCardModel): string {

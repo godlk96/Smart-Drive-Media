@@ -527,22 +527,6 @@ export function parseExportSnapshot(raw: string): ExportSnapshot | undefined {
 }
 
 /**
- * 记录与现场行程的身份校验。
- *
- * **不能只信 tripId**：它的构造含「该分组在整次扫描里的序号」，用户删掉靠前的
- * 源素材后，后面的行程会整体重编号，一个存下来的 tripId 会静默指向另一趟行程，
- * 于是「还原」会把用户带到别人的片段上。标题 + 起点这对字段稳定得多。
- * 标题为空一律判不匹配 —— 那说明记录本身残缺，宁可报错也不能猜。
- */
-export function snapshotMatchesTrip(stored: ExportSnapshot, live: TripSnapshot): boolean {
-  const storedTitle = stored.trip ? stored.trip.title : ''
-  if (storedTitle.length === 0) {
-    return false
-  }
-  return storedTitle === live.tripTitle && stored.trip.startTs === live.startTs
-}
-
-/**
  * 用历史快照还原出一份编辑器状态。
  *
  * 权威来源是**分裂**的，这是本函数最要紧的一条约定：
@@ -550,7 +534,7 @@ export function snapshotMatchesTrip(stored: ExportSnapshot, live: TripSnapshot):
  *     可能已被用户删掉或换过位置，照抄只会得到一堆打不开的片段；
  *   - 参数（模板、播放头、分段、水印）以**记录**为准 —— 这正是用户点
  *     「重新剪辑」想拿回来的东西。
- * 两边对不上时由调用方先用 snapshotMatchesTrip 拦下，本函数不重复判断。
+ * 两边对不上时由调用方先用 `findMissingClipNames` 逐位拦下（片段级），本函数不重复判断。
  */
 export function restoreEditorStateFromSnapshot(
   stored: ExportSnapshot,

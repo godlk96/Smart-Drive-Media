@@ -76,6 +76,7 @@ const GROUPS = {
       'entry/src/main/ets/utils/Logger.ets',
       'entry/src/main/ets/model/EditRecord.ets',
       'entry/src/main/ets/model/WorkMeta.ets',
+      'entry/src/main/ets/model/WorkRestore.ets',
       'entry/src/main/ets/media/TimelineMath.ets'
     ]
   },
