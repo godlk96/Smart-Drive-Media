@@ -6,7 +6,7 @@ import { DvrMeta, ExportComposeRequest } from '../model/TripModels'
 import { buildComposeRequestByService } from './ExportService'
 import { exportDurationSec } from '../model/SegmentModel'
 import { executeComposeByService, cancelNativeExportPipeline } from './ExportNativeService'
-import { WorkMeta, workIdFromFileName } from '../model/WorkMeta'
+import { WorkMeta, workIdFromFileName, templateAspectRatio } from '../model/WorkMeta'
 import { collectWorkTracks } from '../model/WorkRestore'
 import { WorkStore } from './WorkStore'
 import { PreferencesService } from './PreferencesService'
@@ -262,6 +262,13 @@ export class ExportManager {
       const moved = await store.moveIntoLibrary(sourceUri, workId)
       if (!moved) {
         throw new Error('导出产物保存失败')
+      }
+      // 封面首帧：抽成片本体（此刻已在 exports/<id>.mp4）的首帧写 <id>.jpg。
+      // 失败只记日志、不阻断导出 —— 没有 jpg 就是卡片回落到占位图（Task 7）。
+      const coverSaved = await store.writeCoverFrom(`${store.exportsDir()}/${workId}.mp4`, workId,
+        templateAspectRatio(snapshot.selectedTemplateId))
+      if (!coverSaved) {
+        debugLog('导出', `封面首帧写入失败（成片已落库） id=${workId}`)
       }
       // 覆盖时沿用旧作品的 createdAt；sidecar 缺失（首次导出 / 降级卡片）则用现在。
       const existingMeta = record.overwriteWorkId.length > 0 ? await store.readMeta(workId) : undefined

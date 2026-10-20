@@ -23,6 +23,7 @@ import statvfs from '@ohos.file.statvfs'
 import common from '@ohos.app.ability.common'
 import { WorkMeta, isWorkVideoFileName, parseWorkMeta, serializeWorkMeta, workIdFromFileName,
   workSortKey } from '../model/WorkMeta'
+import { extractFirstFrameToPath } from './ExportNativeService'
 import { debugLog } from '../utils/Logger'
 
 /** 列表项：一件作品的四个入口信息。`meta` 为 undefined 即降级卡片（无 sidecar）。 */
@@ -175,6 +176,64 @@ export class WorkStore {
       return true
     } catch (e) {
       debugLog('WorkStore', `替换 sidecar 失败 ${target}: ${String(e)}`)
+      await this.unlinkQuiet(tmp)
+      return false
+    }
+  }
+
+  /**
+   * 抽取成片首帧，原子落盘为 `exports/<id>.jpg`（封面）。失败返回 false（绝不抛）。
+   *
+   * **覆盖导出时有意重新抽帧**：文件名（= 作品 id）跨覆盖不变，任何基于文件名的
+   * 缓存 key 都会命中上一次的旧图，卡片永远停在旧封面。所以这里刻意绕开
+   * `isUsableThumbnail` 那条缓存路径，每次都真抽（`extractFirstFrameToPath`
+   * 自身也不查缓存）。别把它「优化」回缓存。
+   *
+   * 与 `writeMeta` 同一套原子替换：先写 `<id>.jpg.tmp`，成功再替换成 `<id>.jpg`；
+   * 真机上 `fs.rename` 可能拒绝覆盖已存在文件，故先 unlink 目标再改名。
+   * 任何路径都不留下 `.jpg.tmp`。
+   */
+  public async writeCoverFrom(sourceVideoPath: string, id: string, aspectRatio: number): Promise<boolean> {
+    if (sourceVideoPath.length === 0 || id.length === 0) {
+      return false
+    }
+    const dir = this.exportsDir()
+    if (dir.length === 0) {
+      return false
+    }
+    if (!(await this.ensureExportsDir())) {
+      return false
+    }
+    const target = `${dir}/${id}.jpg`
+    const tmp = `${target}.tmp`
+    // extractFirstFrameToPath 只写 tmp、失败返回 false、内部绝不抛；这里再兜一层
+    // try/catch，保证 writeCoverFrom 在任何情况下都只返回布尔、不向上抛。
+    let extracted = false
+    try {
+      extracted = await extractFirstFrameToPath(sourceVideoPath, tmp, aspectRatio)
+    } catch (e) {
+      debugLog('WorkStore', `抽取封面首帧异常 ${tmp}: ${String(e)}`)
+      extracted = false
+    }
+    if (!extracted) {
+      await this.unlinkQuiet(tmp)
+      return false
+    }
+    try {
+      // 先试直接 rename（能原子覆盖最好）。
+      await fs.rename(tmp, target)
+      return true
+    } catch (e) {
+      debugLog('WorkStore', `rename 覆盖封面失败，退化 unlink + rename: ${String(e)}`)
+    }
+    // 兜底：真机上 fs.rename 可能拒绝覆盖已存在文件。此刻 .tmp 已完整，
+    // 先删旧封面再改名，中间窗口极短。
+    try {
+      await this.unlinkQuiet(target)
+      await fs.rename(tmp, target)
+      return true
+    } catch (e) {
+      debugLog('WorkStore', `替换封面失败 ${target}: ${String(e)}`)
       await this.unlinkQuiet(tmp)
       return false
     }
