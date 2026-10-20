@@ -96,7 +96,10 @@ const GROUPS = {
       'entry/src/main/ets/utils/Logger.ets',
       'entry/src/main/ets/media/TimelineMath.ets',
       'entry/src/main/ets/model/EditRecord.ets',
-      'entry/src/main/ets/service/EditHistoryService.ets'
+      'entry/src/main/ets/service/EditHistoryService.ets',
+      'entry/src/main/ets/model/WorkMeta.ets',
+      'entry/src/main/ets/model/WorkRestore.ets',
+      'entry/src/main/ets/service/WorkStore.ets'
     ]
   },
   home: {
@@ -121,7 +124,10 @@ const GROUPS = {
       'entry/src/main/ets/media/TimelineMath.ets',
       'entry/src/main/ets/bridge/CoreBridge.ets',
       'entry/src/main/ets/model/EditRecord.ets',
-      'entry/src/main/ets/service/EditHistoryService.ets'
+      'entry/src/main/ets/service/EditHistoryService.ets',
+      'entry/src/main/ets/model/WorkMeta.ets',
+      'entry/src/main/ets/model/WorkRestore.ets',
+      'entry/src/main/ets/service/WorkStore.ets'
     ]
   },
   ability: {
