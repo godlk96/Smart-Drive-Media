@@ -122,27 +122,20 @@ async function writeArrayBufferToFile(targetPath: string, buffer: ArrayBuffer): 
 }
 
 /**
- * 提取视频首帧并落盘为 JPEG 缩略图。
- * 成功返回缩略图路径；任何失败均返回空字符串，由调用方回退到占位图（绝不返回视频 URI）。
+ * 抽取视频首帧并落盘为 JPEG 到**指定路径**。
+ *
+ * 调用方拥有目标路径、且需要每次都真抽（覆盖导出时内容变了，缓存命中会永远停在旧帧），
+ * 因此这里**不做**任何缓存判定 —— 不查 isUsableThumbnail、不碰 resolveThumbnailCachePath，
+ * 只写 targetPath 一个位置。成功返回 true；任何失败返回 false（绝不抛）。
  */
 // @SuppressWarnings syscap
-export async function extractFirstFrameByService(
+export async function extractFirstFrameToPath(
   sourceUri: string,
-  cacheDir: string,
-  cacheKey: string,
-  sourceAspectRatio: number = 0
-): Promise<string> {
-  if (!sourceUri || sourceUri.length === 0 || cacheDir.length === 0) {
-    return ''
-  }
-  if (isImagePath(sourceUri)) {
-    return sourceUri
-  }
-
-  const targetImagePath = resolveThumbnailCachePath(cacheDir, cacheKey)
-
-  if (await isUsableThumbnail(targetImagePath)) {
-    return targetImagePath
+  targetPath: string,
+  sourceAspectRatio: number
+): Promise<boolean> {
+  if (!sourceUri || sourceUri.length === 0 || !targetPath || targetPath.length === 0) {
+    return false
   }
 
   let generator: media.AVImageGenerator | undefined = undefined
@@ -154,12 +147,12 @@ export async function extractFirstFrameByService(
     sourceFd = sourceFile.fd
 
     if (!canIUse('SystemCapability.Multimedia.Media.AVImageGenerator')) {
-      return ''
+      return false
     }
     // @SuppressWarnings syscap
     const created = await media.createAVImageGenerator()
     if (!created) {
-      return ''
+      return false
     }
     generator = created
 
@@ -173,26 +166,23 @@ export async function extractFirstFrameByService(
       params
     )
     if (!pixelMap) {
-      return ''
+      return false
     }
 
     packer = image.createImagePacker()
     const option: image.PackingOption = { format: 'image/jpeg', quality: THUMB_JPEG_QUALITY }
     const packed: ArrayBuffer = await packer.packToData(pixelMap, option)
     if (!packed || packed.byteLength === 0) {
-      return ''
+      return false
     }
-    await writeArrayBufferToFile(targetImagePath, packed)
+    await writeArrayBufferToFile(targetPath, packed)
 
-    if (!(await isUsableThumbnail(targetImagePath))) {
-      return ''
-    }
-    debugLog('封面', `首帧提取成功，封面=${targetImagePath}`)
-    return targetImagePath
+    debugLog('封面', `首帧提取成功，封面=${targetPath}`)
+    return true
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     debugLog('封面', `首帧提取失败，回退占位图，原因=${message}`)
-    return ''
+    return false
   } finally {
     if (packer) {
       try {
@@ -219,6 +209,38 @@ export async function extractFirstFrameByService(
       }
     }
   }
+}
+
+/**
+ * 提取视频首帧并落盘为 JPEG 缩略图（带缓存层）。
+ * 成功返回缩略图路径；任何失败均返回空字符串，由调用方回退到占位图（绝不返回视频 URI）。
+ *
+ * 行程库封面仍在用本函数，签名与可观察行为保持不变：命中缓存直接返回旧路径，
+ * 图片源直接返回原路径。抽帧主体见 extractFirstFrameToPath。
+ */
+export async function extractFirstFrameByService(
+  sourceUri: string,
+  cacheDir: string,
+  cacheKey: string,
+  sourceAspectRatio: number = 0
+): Promise<string> {
+  if (!sourceUri || sourceUri.length === 0 || cacheDir.length === 0) {
+    return ''
+  }
+  if (isImagePath(sourceUri)) {
+    return sourceUri
+  }
+
+  const targetImagePath = resolveThumbnailCachePath(cacheDir, cacheKey)
+
+  if (await isUsableThumbnail(targetImagePath)) {
+    return targetImagePath
+  }
+
+  if (await extractFirstFrameToPath(sourceUri, targetImagePath, sourceAspectRatio)) {
+    return targetImagePath
+  }
+  return ''
 }
 
 function resolveParentDir(path: string): string {
