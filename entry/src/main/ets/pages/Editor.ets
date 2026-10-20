@@ -692,23 +692,21 @@ struct Editor {
       debugLog('导出', `【导出参数-前端片段明细】#${i} id=${s.id} 区间=[${s.startSec}s -> ${s.endSec}s] 倍速=${s.speedLabel} 静音=${s.muted ? 'YES' : 'NO'} 启用=${s.enabled ? 'YES' : 'NO'}`)
     }
     try {
-      const outputPath = await startNativeExport(exportSnapshot, context, (event) => {
+      const outcome = await startNativeExport(exportSnapshot, context, (event) => {
         this.updateExportStatus(event.status)
         this.exportLoadingText = event.status
         this.exportProgress = event.progress
         debugLog('导出', `导出事件 job=${event.jobId} status=${event.status} progress=${event.progress}`)
       }, overwriteWorkId)
       // 覆盖与新建共用这一句：用户要的就是「保存成功」的回执（spec 4.9）。
-      // 注意这里不解析 outputPath —— NativeExportManager 在第一个终结事件上就 resolve，
-      // 拿到的可能是文件名而不是相册 URI，但成功与否是确定的。
-      debugLog('导出', `导出返回：${outputPath}`)
-      this.updateExportStatus('已保存到相册')
-      // 成片进了相册，但记录可能只落在内存里（偏好写入失败 / 无 context）。
-      // 那种情况下重启就看不到这条作品，必须如实说出来，不能假装一切正常。
-      if (EditHistoryService.getInstance().isRecordsDurable()) {
-        this.showToast('已保存到相册')
+      debugLog('导出', `导出返回：workId=${outcome.workId} metaSaved=${outcome.metaSaved ? 'YES' : 'NO'}`)
+      this.updateExportStatus('已保存到作品库')
+      // 成片本体已落进作品库；sidecar 写失败时如实降级告知（spec：报成功 + 一句告警），
+      // 绝不假装元数据也在 —— 否则用户下次打开看到降级卡片却不知道原因。
+      if (outcome.metaSaved) {
+        this.showToast('已保存到作品库')
       } else {
-        this.showToast('已保存到相册，但历史记录暂时不可用')
+        this.showToast('已保存到作品库（元数据未写入）')
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

@@ -20,6 +20,8 @@ export interface ExportJobEvent {
   jobId: ExportJobId
   status: string
   progress: number
+  /** 仅终态事件带：sidecar 是否落盘。false = 降级卡片，调用方据此如实告知用户。 */
+  metaSaved?: boolean
 }
 
 type ExportListener = (event: ExportJobEvent) => void
@@ -104,7 +106,7 @@ export class ExportManager {
     }
   }
 
-  private notify(record: ExportJobRecord, status: string, progress: number): void {
+  private notify(record: ExportJobRecord, status: string, progress: number, metaSaved: boolean = false): void {
     const normalizedProgress = Math.max(record.progress, exportPercent(progress))
     record.progress = normalizedProgress
     record.status = status
@@ -115,7 +117,7 @@ export class ExportManager {
     }
     record.lastNotificationAt = Date.now()
     record.lastNotifiedStage = stage
-    const event: ExportJobEvent = { jobId: record.id, status: status, progress: normalizedProgress }
+    const event: ExportJobEvent = { jobId: record.id, status: status, progress: normalizedProgress, metaSaved: metaSaved }
     record.listeners.forEach((listener: ExportListener) => {
       listener(event)
     })
@@ -254,6 +256,8 @@ export class ExportManager {
       }
       const saveStartProgress = Math.max(85, Math.min(99, record.progress))
       this.notify(record, '正在写入作品库', saveStartProgress)
+      // 有意为之：合成后到这里之间不再做取消检查。moveIntoLibrary 只是一次 rename，
+      // 取消若落在它期间，成片已经进库、作品已成立 —— 此时改口说「已取消」才是撒谎。
       // 成片本体搬进作品库：mp4 才是作品本体，这一步失败就没有「作品」可言，如实报失败。
       const moved = await store.moveIntoLibrary(sourceUri, workId)
       if (!moved) {
@@ -267,10 +271,10 @@ export class ExportManager {
         // mp4 已经是作品本体，sidecar 没落盘只影响卡片的元信息；此时把导出报成失败是撒谎。
         debugLog('导出', `作品元数据写入失败（成片已落库） id=${workId}`)
       }
-      const successEvent: ExportJobEvent = { jobId: record.id, status: `已保存：${workId}`, progress: 100 }
-      this.recordTerminalEvent(record.id, successEvent)
-      this.notify(record, `导出完成：${workId}`, 100)
-      this.notify(record, `已保存：${workId}`, 100)
+      // 单一终态事件：文案只说「已保存」，降级信息走 metaSaved 结构化字段，由调用方措辞。
+      const terminalText: string = `已保存：${workId}`
+      this.recordTerminalEvent(record.id, { jobId: record.id, status: terminalText, progress: 100, metaSaved: metaSaved })
+      this.notify(record, terminalText, 100, metaSaved)
     } catch (error) {
       if (record.cancelled) {
         debugLog('导出', '任务已取消，终止 run 并清理残留文件')

@@ -2,14 +2,20 @@ import common from '@ohos.app.ability.common'
 import { ExportSnapshot } from './model/Models'
 import { ExportJobEvent, sharedExportManager } from './service/ExportManager'
 
+/** 导出结果：作品 id + sidecar 是否落盘（false = 降级卡片，调用方据此如实告知用户）。 */
+export interface ExportOutcome {
+  workId: string
+  metaSaved: boolean
+}
+
 export async function startNativeExport(
   snapshot: ExportSnapshot,
   context: common.UIAbilityContext,
   onEvent?: (event: ExportJobEvent) => void,
   overwriteWorkId?: string
-): Promise<string> {
+): Promise<ExportOutcome> {
   const jobId = await sharedExportManager.start(snapshot, context, overwriteWorkId)
-  return await new Promise<string>((resolve, reject) => {
+  return await new Promise<ExportOutcome>((resolve, reject) => {
     let settled = false
     const timeoutTimer = setTimeout(() => {
       if (!settled) {
@@ -31,11 +37,11 @@ export async function startNativeExport(
         }
         return
       }
-      if (event.status.startsWith('导出完成：') || event.status.startsWith('相册保存成功：') || event.status.startsWith('已保存：')) {
+      if (event.status.startsWith('已保存：') || event.status.startsWith('相册保存成功：')) {
         if (!settled) {
           settled = true
           clearTimeout(timeoutTimer)
-          resolve(event.status.replace('导出完成：', '').replace('相册保存成功：', '').replace('已保存：', ''))
+          resolve({ workId: event.status.replace('已保存：', '').replace('相册保存成功：', ''), metaSaved: event.metaSaved === true })
         }
       }
     })
