@@ -7,6 +7,7 @@ import segmentModelTest from './SegmentModel.test'
 import tripFormatTest from './TripFormat.test'
 import editHistoryTest from './EditHistory.test'
 import editRestoreTest from './EditRestore.test'
+import workMetaTest from './WorkMeta.test'
 
 export default function testsuite(): void {
   appStateModelTest()
@@ -18,4 +19,5 @@ export default function testsuite(): void {
   tripFormatTest()
   editHistoryTest()
   editRestoreTest()
+  workMetaTest()
 }
