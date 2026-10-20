@@ -1,9 +1,9 @@
 import common from '@ohos.app.ability.common'
 import window from '@ohos.window'
 import { AppIcon, AppIconName } from '../components/AppIcon'
-import { EditRecordCard } from '../components/EditRecordCard'
+import { WorkCard } from '../components/WorkCard'
 import { LibraryStateModel, TripCardModel } from '../model/AppState'
-import { EditRecord } from '../model/EditRecord'
+import { WorkEntry } from '../service/WorkStore'
 import { debugLog } from '../utils/Logger'
 import { formatTripDay, formatTripDuration, getTripStartTime, isTripComplete } from '../utils/TripFormat'
 import { HomeViewModel, MyEditsViewState } from '../viewmodel/HomeViewModel'
@@ -46,14 +46,11 @@ struct Index {
   /** 0 = 行程库，1 = 我的剪辑 */
   @State private activeTab: number = 0
   @State private myEdits: MyEditsViewState = {
-    records: [],
+    entries: [],
     isLoading: true,
     errorText: '',
-    coverPaths: {},
-    orphanIds: [],
-    unknownIds: [],
     selectionMode: false,
-    selectedRecordIds: []
+    selectedEntryIds: []
   }
   @State private deleteConfirmVisible: boolean = false
   @State private deleteCount: number = 0
@@ -291,82 +288,73 @@ struct Index {
     }
   }
 
-  private isRecordSelected(recordId: string): boolean {
-    return this.myEdits.selectedRecordIds.some((id: string) => id === recordId)
+  private isWorkSelected(entryId: string): boolean {
+    return this.myEdits.selectedEntryIds.some((id: string) => id === entryId)
   }
 
-  private coverPathOf(record: EditRecord): string {
-    const path = this.myEdits.coverPaths[record.id]
-    return path === undefined ? '' : path
-  }
-
-  /** 成片首帧取不到时回落到该行程在行程库里的封面，保证卡片永远有东西可画。 */
-  private fallbackCoverOf(record: EditRecord): string {
-    for (let i = 0; i < this.displayCards.length; i++) {
-      const card = this.displayCards[i]
-      if (card.id === record.tripId) {
-        return card.previewFrameUri
-      }
-    }
-    return ''
+  /** 有 sidecar 才能重新剪辑；缺/坏 sidecar 的作品只能看、存、删。 */
+  private canReeditEntry(entry: WorkEntry): boolean {
+    return entry.meta !== undefined
   }
 
   /**
-   * ForEach 的 key 必须把「选中态 / 多选态 / 孤儿态」也编进去：
-   * 这些变化不会改变记录本身，key 不变 ForEach 就不会重建子组件，
-   * 卡片上的勾选和对 ▶ 的置灰就永远不更新。
+   * ForEach 的 key 必须把「选中态 / 多选态 / 可否重剪」也编进去：
+   * 这些变化不会改变作品本身，key 不变 ForEach 就不会重建子组件，
+   * 卡片上的勾选与重剪置灰就永远不更新。
    */
-  private recordCardKey(record: EditRecord): string {
-    const selected = this.isRecordSelected(record.id) ? '1' : '0'
+  private workCardKey(entry: WorkEntry): string {
+    const selected = this.isWorkSelected(entry.id) ? '1' : '0'
     const mode = this.myEdits.selectionMode ? '1' : '0'
-    const orphan = this.viewModel.isRecordOrphan(record.id) ? '1' : '0'
-    const unknown = this.viewModel.isRecordOrphanUnknown(record.id) ? '1' : '0'
-    return `${record.id}_${this.coverPathOf(record)}_${selected}${mode}${orphan}${unknown}`
+    const canReedit = this.canReeditEntry(entry) ? '1' : '0'
+    return `${entry.id}_${entry.coverPath}_${selected}${mode}${canReedit}`
   }
 
-  private handleRecordClick(record: EditRecord): void {
+  private handleWorkClick(entry: WorkEntry): void {
     if (this.myEdits.selectionMode) {
-      this.viewModel.toggleRecordSelection(record.id)
+      this.viewModel.toggleWorkSelection(entry.id)
       this.syncViewState()
       return
     }
-    this.openRecordEditor(record)
+    if (!this.canReeditEntry(entry)) {
+      return
+    }
+    this.openWorkEditor(entry)
   }
 
-  private openRecordEditor(record: EditRecord): void {
-    debugLog('首页', `从我的剪辑重新剪辑，记录=${record.id}`)
-    const route = this.viewModel.openEditorFromRecordRoute(record)
+  private openWorkEditor(entry: WorkEntry): void {
+    debugLog('首页', `从我的剪辑重新剪辑，作品=${entry.id}`)
+    const route = this.viewModel.openEditorFromWorkRoute(entry)
     try {
       this.getUIContext().getRouter().pushUrl(route)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      debugLog('首页', `从记录进入剪辑失败：${message}`)
+      debugLog('首页', `从作品进入剪辑失败：${message}`)
     }
   }
 
-  private async handleRecordPlay(record: EditRecord): Promise<void> {
+  private async handleWorkPlay(entry: WorkEntry): Promise<void> {
     const context = this.getHostContextOrNull()
     if (context === null) {
       return
     }
-    const message = await this.viewModel.playRecord(record, context)
+    const message = await this.viewModel.playWork(entry, context)
     if (message.length > 0) {
       this.showToast(message)
     }
   }
 
-  private handleRecordToggle(record: EditRecord): void {
-    this.viewModel.toggleRecordSelection(record.id)
+  private handleWorkToggle(entry: WorkEntry): void {
+    this.viewModel.toggleWorkSelection(entry.id)
     this.syncViewState()
   }
 
-  private toggleRecordSelectionMode(): void {
-    this.viewModel.toggleRecordSelectionMode()
+  private toggleWorkSelectionMode(): void {
+    this.viewModel.toggleWorkSelectionMode()
     this.syncViewState()
   }
 
   private askDeleteSelected(): void {
-    const count = this.myEdits.selectedRecordIds.length
+    const count = this.myEdits.selectedEntryIds.length
     if (count === 0) {
       return
     }
@@ -424,8 +412,8 @@ struct Index {
           .borderRadius(10)
           .onClick(() => this.toggleSelectionMode())
       } else {
-        if (this.myEdits.selectionMode && this.myEdits.selectedRecordIds.length >= 1) {
-          Button(`移除 ${this.myEdits.selectedRecordIds.length}`)
+        if (this.myEdits.selectionMode && this.myEdits.selectedEntryIds.length >= 1) {
+          Button(`移除 ${this.myEdits.selectedEntryIds.length}`)
             .height(38)
             .padding({ left: 17, right: 17 })
             .fontSize(14)
@@ -446,7 +434,7 @@ struct Index {
               color: this.myEdits.selectionMode ? $r('app.color.ink') : $r('app.color.ed_line')
             })
             .borderRadius(10)
-            .onClick(() => this.toggleRecordSelectionMode())
+            .onClick(() => this.toggleWorkSelectionMode())
         }
       }
     }
@@ -708,27 +696,26 @@ struct Index {
   @Builder
   myEditsList() {
     List({ space: 12 }) {
-      ForEach(this.myEdits.records, (item: EditRecord) => {
+      ForEach(this.myEdits.entries, (item: WorkEntry) => {
         ListItem() {
-          EditRecordCard({
-            record: item,
-            selected: this.isRecordSelected(item.id),
+          WorkCard({
+            entry: item,
+            selected: this.isWorkSelected(item.id),
             selectionMode: this.myEdits.selectionMode,
-            orphan: this.viewModel.isRecordOrphan(item.id),
-            coverPath: this.coverPathOf(item),
-            fallbackCoverUri: this.fallbackCoverOf(item),
+            canReedit: this.canReeditEntry(item),
+            fallbackCoverUri: '',
             onOpen: () => {
-              this.handleRecordClick(item)
+              this.handleWorkClick(item)
             },
             onPlay: () => {
-              void this.handleRecordPlay(item)
+              void this.handleWorkPlay(item)
             },
             onToggleSelect: () => {
-              this.handleRecordToggle(item)
+              this.handleWorkToggle(item)
             }
           })
         }
-      }, (item: EditRecord) => this.recordCardKey(item))
+      }, (item: WorkEntry) => this.workCardKey(item))
     }
     .layoutWeight(1)
     .width('100%')
@@ -817,7 +804,7 @@ struct Index {
       this.myEditsLoadingBlock()
     } else if (this.myEdits.errorText.length > 0) {
       this.myEditsErrorBlock()
-    } else if (this.myEdits.records.length === 0) {
+    } else if (this.myEdits.entries.length === 0) {
       this.myEditsEmptyBlock()
     } else {
       this.myEditsList()
@@ -825,8 +812,9 @@ struct Index {
   }
 
   /**
-   * 删除确认。文案必须说清「相册里的视频不会被删」——
-   * 我们只删记录，删文件需要受控权限，做不到也不该让用户误以为做到了。
+   * 删除确认。文案必须说清「相册里的副本不会被删」——
+   * App 空间那份（`.mp4`/`.json`/`.jpg`）是真删，而相册那份 App 删不掉
+   * （没有 `WRITE_IMAGEVIDEO`），做不到也不该让用户误以为做到了。
    */
   @Builder
   deleteConfirmModal() {
@@ -844,7 +832,7 @@ struct Index {
           .fontSize(17)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
-        Text('只会从「我的剪辑」列表移除，相册里的视频不会被删掉。')
+        Text('只会从「我的剪辑」移除，相册里的副本不会被删掉')
           .fontSize(13)
           .fontColor($r('app.color.text_secondary'))
           .textAlign(TextAlign.Center)

@@ -1,26 +1,25 @@
-import { EditRecord, formatExportTime, formatRecordSlotCount } from '../model/EditRecord'
+import { WorkEntry } from '../service/WorkStore'
+import { formatExportTime, formatRecordSlotCount } from '../model/WorkMeta'
 import { AppIcon, AppIconName } from './AppIcon'
 
 /**
  * 「我的剪辑」里的一张作品卡：大封面 + 两行元信息（导出时间 / 机位数）。
  *
- * 纯展示组件，不做任何业务判断 —— 记录能不能打开、成片还在不在都由父组件算好
- * 后通过 `orphan` / `coverPath` 传进来。这样列表可以整页替换数据而不影响这里。
+ * 纯展示组件，不做任何业务判断 —— 一件作品能不能重剪、封面用哪张都由父组件算好
+ * 后通过 `entry` / `canReedit` / `fallbackCoverUri` 传进来。这样列表可以整页替换数据而不影响这里。
  *
  * 卡片上的分工（spec 4.12）：**点卡片任意位置 = 重新剪辑，点右下角 ▶ = 看成片**。
- * ▶ 是「跳系统相册播放」，所以成片被删（`orphan`）时就置灰并吞掉点击 ——
- * 让用户点一个注定失败的东西比不给他点更糟。
+ * 降级卡片（有视频、无 sidecar）没有可还原的剪辑参数，`canReedit` 为假：
+ * 重剪入口置灰、点卡片不再进编辑器，但封面、导出时间、▶ 与删除都照常。
  */
 @Component
-export struct EditRecordCard {
-  @Prop record: EditRecord = new EditRecord()
+export struct WorkCard {
+  @Prop entry: WorkEntry = new WorkEntry()
   @Prop selected: boolean = false
   @Prop selectionMode: boolean = false
-  /** true = 相册里那份成片已被删除，降级显示 */
-  @Prop orphan: boolean = false
-  /** 父组件异步取到的成片首帧；空串时回落到 fallbackCoverUri */
-  @Prop coverPath: string = ''
-  /** 该行程在行程库里的封面，保证卡片永远有东西可画 */
+  /** true = sidecar 可读、能重新剪辑；false = 降级卡片，重剪入口置灰 */
+  @Prop canReedit: boolean = true
+  /** 该作品封面 `<id>.jpg` 的绝对路径；空串时回落到 fallbackCoverUri */
   @Prop fallbackCoverUri: string = ''
   onOpen?: () => void
   onPlay?: () => void
@@ -34,8 +33,8 @@ export struct EditRecordCard {
   }
 
   private effectiveCoverUri(): string {
-    if (this.coverPath.length > 0) {
-      return this.formatCoverUri(this.coverPath)
+    if (this.entry.coverPath.length > 0) {
+      return this.formatCoverUri(this.entry.coverPath)
     }
     if (this.fallbackCoverUri.length > 0) {
       return this.formatCoverUri(this.fallbackCoverUri)
@@ -43,9 +42,17 @@ export struct EditRecordCard {
     return ''
   }
 
-  /** 「4 机位」；模板取不到时返回空串，由 build() 决定整行不画。 */
+  /** 「4 机位」；无 sidecar 或模板取不到时返回空串，由 build() 决定整行不画。 */
   private slotText(): string {
-    return formatRecordSlotCount(this.record.templateId)
+    if (this.entry.meta) {
+      return formatRecordSlotCount(this.entry.meta.templateId)
+    }
+    return ''
+  }
+
+  /** 导出时间：有 sidecar 用 exportedAt，无则退回文件名时间戳（= sortKey）。 */
+  private exportTimeText(): string {
+    return formatExportTime(this.entry.sortKey)
   }
 
   private shadowOptions(): ShadowOptions {
@@ -70,18 +77,25 @@ export struct EditRecordCard {
           .fontColor($r('app.color.overlay_text'))
       }
 
-      if (this.orphan) {
-        // 成片没了：压一层暗罩并说明原因，卡片本身仍然可点（还能重新剪辑）。
-        Column({ space: 4 }) {
-          Text('相册里的视频已被删除')
-            .fontSize(12)
-            .fontColor($r('app.color.overlay_text'))
+      if (!this.canReedit) {
+        // 有视频、无元数据：封面照常画，只在左下角标出「重剪不可用」，不盖住封面。
+        // 用满尺寸 Column 承担对齐（Stack 的 alignContent 只作用于子组件本身，
+        // 元素的 .align() 管的是自身内容对齐，不能用它把角标挪到左下）。
+        Column() {
+          Text('无法重新剪辑')
+            .fontSize(10)
+            .fontColor($r('app.color.text_tertiary'))
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .backgroundColor($r('app.color.ed_surface'))
+            .border({ width: 1, color: $r('app.color.ed_line') })
+            .borderRadius(5)
+            .margin({ left: 8, bottom: 8 })
         }
         .width('100%')
         .height('100%')
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
-        .backgroundColor($r('app.color.overlay_veil'))
+        .justifyContent(FlexAlign.End)
+        .alignItems(HorizontalAlign.Start)
+        .hitTestBehavior(HitTestMode.None)
       }
 
       this.playButton()
@@ -100,19 +114,16 @@ export struct EditRecordCard {
       AppIcon({
         name: AppIconName.Play,
         iconSize: 13,
-        iconColor: this.orphan ? $r('app.color.text_disabled') : $r('app.color.ink')
+        iconColor: $r('app.color.ink')
       })
     }
     .width(30)
     .height(30)
     .borderRadius(15)
     .backgroundColor($r('app.color.card_bg'))
-    .opacity(this.orphan ? 0.45 : 0.92)
+    .opacity(0.92)
     .margin({ right: 8, bottom: 8 })
     .onClick(() => {
-      if (this.orphan) {
-        return
-      }
       if (this.onPlay) {
         this.onPlay()
       }
@@ -150,7 +161,7 @@ export struct EditRecordCard {
       .width('100%')
 
       Column({ space: 3 }) {
-        Text(formatExportTime(this.record.exportedAt))
+        Text(this.exportTimeText())
           .fontSize(14)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
@@ -178,6 +189,10 @@ export struct EditRecordCard {
     })
     .shadow(this.shadowOptions())
     .onClick(() => {
+      // 降级卡片没有可还原的参数，点卡片不进编辑器 —— 只能看/存/删。
+      if (!this.canReedit) {
+        return
+      }
       if (this.onOpen) {
         this.onOpen()
       }
