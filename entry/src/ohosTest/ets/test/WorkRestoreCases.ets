@@ -15,9 +15,10 @@ import { WorkMeta, WorkTracks } from '../../../main/ets/model/WorkMeta'
 import { DvrMeta, ExportComposeRequest, TripSnapshot } from '../../../main/ets/model/TripModels'
 import { TemplateId } from '../../../main/ets/model/Models'
 import { collectWorkTracks, collectTrackClipNames, findMissingClipNames,
-  rebuildTrackUris, RebuiltTracks, buildRestoredTripSnapshot,
+  collectLiveFileNames, rebuildTrackUris, RebuiltTracks, buildRestoredTripSnapshot,
   exportSnapshotFromWorkMeta } from '../../../main/ets/model/WorkRestore'
-import { TimelineCase, expectString, expectNumber, expectTrue, firstError } from './TestSupport'
+import { TimelineCase, expectString, expectNumber, expectTrue, expectFalse,
+  firstError } from './TestSupport'
 
 function makeCase(name: string, run: () => string): TimelineCase {
   const item = new TimelineCase()
@@ -154,11 +155,8 @@ export function workRestoreCases(): Array<TimelineCase> {
     const clips = makeClips([['a.mp4', 'Front', 1], ['b.mp4', 'Front', 2]])
     const tracks = makeTracks(['a.mp4', 'b.mp4', 'a.mp4'], [], [], [])
     const rebuilt = rebuildTrackUris(tracks, clips)
-    return firstError([
-      expectNumber(rebuilt.front.length, 3, '长度'),
-      expectString(rebuilt.front[0], rebuilt.front[2], '首尾同源'),
-      expectTrue(rebuilt.front[1] !== rebuilt.front[0], '中间不同源')
-    ])
+    return expectStringArray(rebuilt.front,
+      [uriOf('a.mp4'), uriOf('b.mp4'), uriOf('a.mp4')], 'front 轨道')
   }))
 
   cases.push(makeCase('重建：同名多份取时间戳最早', () => {
@@ -186,6 +184,37 @@ export function workRestoreCases(): Array<TimelineCase> {
     return firstError([
       expectTrue(rebuilt.missing.indexOf('b.mp4') >= 0, 'missing 含 b.mp4'),
       expectNumber(rebuilt.front.length, 1, '缺的不进轨道')
+    ])
+  }))
+
+  cases.push(makeCase('重建：全命中时 complete 为真', () => {
+    const clips = makeClips([['a.mp4', 'Front', 1], ['b.mp4', 'Front', 2]])
+    const tracks = makeTracks(['a.mp4', 'b.mp4'], [], [], [])
+    const rebuilt = rebuildTrackUris(tracks, clips)
+    return firstError([
+      expectTrue(rebuilt.complete, 'complete'),
+      expectNumber(rebuilt.missing.length, 0, 'missing 为空')
+    ])
+  }))
+
+  cases.push(makeCase('重建：有缺失时 complete 为假（调用方必须中止）', () => {
+    const clips = makeClips([['a.mp4', 'Front', 1]])
+    const tracks = makeTracks(['a.mp4', 'b.mp4'], [], [], [])
+    const rebuilt = rebuildTrackUris(tracks, clips)
+    return firstError([
+      expectFalse(rebuilt.complete, 'complete'),
+      expectNumber(rebuilt.missing.length, 1, 'missing 非空')
+    ])
+  }))
+
+  cases.push(makeCase('空 URI 的现场片段：算缺失且不进 clips 并集', () => {
+    const meta = makeWorkMeta('w-empty-uri', 1000)
+    const clips: Array<DvrMeta> = [makeClip('a.mp4', 'Front', 1, '')]
+    const missing = findMissingClipNames(meta.tracks, collectLiveFileNames(clips))
+    const snapshot = buildRestoredTripSnapshot(meta, clips)
+    return firstError([
+      expectTrue(missing.indexOf('a.mp4') >= 0, '空 URI 算缺失'),
+      expectNumber(snapshot.clips.length, 0, '空 URI 不进并集')
     ])
   }))
 

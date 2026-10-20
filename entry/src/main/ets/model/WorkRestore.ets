@@ -88,10 +88,34 @@ export function collectTrackClipNames(tracks: WorkTracks): Array<string> {
 }
 
 /**
+ * 现场**可用**的源片段文件名：丢掉空文件名与空 URI 的条目。给 `findMissingClipNames`
+ * 的第二参用。
+ *
+ * 为什么必须有它：`findMissingClipNames` 只认名字、看不见 URI，若调用方直接把
+ * `liveClips.map(c => c.fileName)` 递进去，一条 URI 为空的片段会被判成「还在」，
+ * 而 `rebuildTrackUris` / `collectHitClips` 会判成「找不到」—— 同一份数据两处结论相反，
+ * 还原链路就会漏报「素材已不在」，把一段黑屏送进编码器。
+ */
+export function collectLiveFileNames(clips: Array<DvrMeta>): Array<string> {
+  const out: Array<string> = []
+  for (let i = 0; i < clips.length; i++) {
+    const clip = clips[i]
+    if (clip.fileName.length === 0 || clip.uri.length === 0) {
+      continue
+    }
+    out.push(clip.fileName)
+  }
+  return out
+}
+
+/**
  * 返回缺失的源片段文件名，按**首次出现顺序**，同名只报一次；空串一律算缺失。
  *
  * 逐位扫四条轨道而不是只比首尾：缺的可能是中间某一格，而那一格正是旧校验漏掉、
  * 导致成片整体错位的情形。
+ *
+ * `liveFileNames` 只应传**可用**的现场片段名（见 `collectLiveFileNames`）—— 本函数
+ * 看不到 URI，传进来的名字一律当作「文件确实可用」。
  */
 export function findMissingClipNames(tracks: WorkTracks, liveFileNames: Array<string>): Array<string> {
   const present = new Set<string>()
@@ -121,6 +145,14 @@ export class RebuiltTracks {
   side: Array<string> = []
   side2: Array<string> = []
   missing: Array<string> = []
+  /**
+   * 是否完整（`missing.length === 0`）。
+   *
+   * **这是能否继续的唯一开关**：`missing` 非空时四条轨道已经缺位，其后每一位都前移了，
+   * 直接送进编码器就会得到「从删除点起整体错位」的成片 —— 正是本模块要防的静默错。
+   * 调用方必须读它，为 false 时走「素材已不在」的降级出口，不许拿轨道继续导出。
+   */
+  complete: boolean = true
 }
 
 /**
@@ -158,6 +190,11 @@ function rebuildTrack(names: Array<string>, byName: Map<string, DvrMeta>,
 /**
  * 按 sidecar 记录的轨道**逐位**复现出四条 URI 轨道（含重复），缺的进 `missing`。
  *
+ * **前置条件（调用方必须遵守）**：`missing` 非空时返回的轨道是**不完整**的 —— 缺位被丢掉后
+ * 其后每一位都前移了，直接送进编码器就会得到「从删除点起整体错位」的成片，正是本模块要防的
+ * 那条静默错。用 `complete`（即 `missing.length === 0`）判定：为 false 时**必须中止**，
+ * 走「素材已不在」的降级出口，**不得**把返回的轨道送进编码器或还原链路。
+ *
  * 空文件名与空 URI 都当「找不到」：空 URI 的片段送进 native 只会得到一段黑屏，
  * 与其放进去不如报缺失。
  */
@@ -178,6 +215,7 @@ export function rebuildTrackUris(tracks: WorkTracks, liveClips: Array<DvrMeta>):
   result.back = rebuildTrack(tracks.back, byName, result.missing)
   result.side = rebuildTrack(tracks.side, byName, result.missing)
   result.side2 = rebuildTrack(tracks.side2, byName, result.missing)
+  result.complete = result.missing.length === 0
   return result
 }
 
@@ -185,6 +223,11 @@ export function rebuildTrackUris(tracks: WorkTracks, liveClips: Array<DvrMeta>):
  * 命中并集：被任一轨道引用过的源片段，按**文件名**去重（同名多份取 timestamp 最早、
  * 再 uri 字典序，与 `rebuildTrackUris` 同一套取舍），最后按 timestamp 升序 ——
  * 保证与 liveClips 的输入顺序无关。
+ *
+ * 空文件名与**空 URI**的现场片段一律排除，与 `rebuildTrackUris` 的「找不到」判定同口径。
+ * 必须排除空 URI：`tripFromSnapshot` 会 `filter(clip.uri.length > 0)` 丢掉它们，而
+ * `applyRestoredState` 用 `live.clips.length` 当片段总数（`CoreBridge.ets:867`）——
+ * 放进来会让剪辑页的计数与实际行程对不上。
  */
 function collectHitClips(tracks: WorkTracks, liveClips: Array<DvrMeta>): Array<DvrMeta> {
   const referenced = new Set<string>()
@@ -195,7 +238,7 @@ function collectHitClips(tracks: WorkTracks, liveClips: Array<DvrMeta>): Array<D
   const chosen = new Map<string, DvrMeta>()
   for (let i = 0; i < liveClips.length; i++) {
     const clip = liveClips[i]
-    if (clip.fileName.length === 0 || !referenced.has(clip.fileName)) {
+    if (clip.fileName.length === 0 || clip.uri.length === 0 || !referenced.has(clip.fileName)) {
       continue
     }
     const existing = chosen.get(clip.fileName)
