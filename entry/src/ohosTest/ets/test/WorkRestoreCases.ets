@@ -1,5 +1,5 @@
 /**
- * `WorkRestore` 的用例：轨道记录、片段级缺失判定、逐位重建、快照合成。
+ * `WorkRestore` 的用例：轨道记录、片段级缺失判定、快照合成。
  *
  * 不含 hypium 依赖，同一份用例既跑设备也跑 tools/offline-test.mjs。
  * run() 返回 '' 表示通过。
@@ -7,17 +7,16 @@
  * 为什么这些用例值得钉死：还原的身份锚是「导出那一刻真正送进 native 的四条轨道」
  * （有序、含重复），而不是行程标题 + 起点。旧的 `snapshotMatchesTrip` 只比标题与起点，
  * 用户删掉中间某个源片段时它照样通过 —— 用户拿到一条看着对、其实从删除点起整体错位的
- * 成片。下面「差集：缺中间片段被检出」与「重建：逐位复现顺序与重复」就是那条静默错的
- * 回归测试（设计稿 3.2）。
+ * 成片。下面「差集：缺中间片段被检出」就是那条静默错的回归测试（设计稿 3.2）。
  */
 
 import { WorkMeta, WorkTracks } from '../../../main/ets/model/WorkMeta'
 import { DvrMeta, ExportComposeRequest, TripSnapshot } from '../../../main/ets/model/TripModels'
 import { TemplateId } from '../../../main/ets/model/Models'
 import { collectWorkTracks, collectTrackClipNames, findMissingClipNames,
-  collectLiveFileNames, rebuildTrackUris, RebuiltTracks, buildRestoredTripSnapshot,
+  collectLiveFileNames, buildRestoredTripSnapshot,
   exportSnapshotFromWorkMeta } from '../../../main/ets/model/WorkRestore'
-import { TimelineCase, expectString, expectNumber, expectTrue, expectFalse,
+import { TimelineCase, expectString, expectNumber, expectTrue,
   firstError } from './TestSupport'
 
 function makeCase(name: string, run: () => string): TimelineCase {
@@ -83,12 +82,6 @@ function expectStringArray(actual: Array<string>, expected: Array<string>, label
   return ''
 }
 
-/** 把重建结果压成一个串：比较「与输入顺序无关」时，四轨 + missing 一个都不能少。 */
-function rebuiltSignature(rebuilt: RebuiltTracks): string {
-  return `${rebuilt.front.join(',')}|${rebuilt.back.join(',')}|${rebuilt.side.join(',')}|` +
-    `${rebuilt.side2.join(',')}|${rebuilt.missing.join(',')}`
-}
-
 export function workRestoreCases(): Array<TimelineCase> {
   const cases: Array<TimelineCase> = []
 
@@ -149,62 +142,6 @@ export function workRestoreCases(): Array<TimelineCase> {
   cases.push(makeCase('差集保持首次出现顺序', () => {
     const tracks = makeTracks(['c.mp4', 'a.mp4'], [], [], [])
     return expectStringArray(findMissingClipNames(tracks, []), ['c.mp4', 'a.mp4'], '顺序')
-  }))
-
-  cases.push(makeCase('重建：逐位复现顺序与重复', () => {
-    const clips = makeClips([['a.mp4', 'Front', 1], ['b.mp4', 'Front', 2]])
-    const tracks = makeTracks(['a.mp4', 'b.mp4', 'a.mp4'], [], [], [])
-    const rebuilt = rebuildTrackUris(tracks, clips)
-    return expectStringArray(rebuilt.front,
-      [uriOf('a.mp4'), uriOf('b.mp4'), uriOf('a.mp4')], 'front 轨道')
-  }))
-
-  cases.push(makeCase('重建：同名多份取时间戳最早', () => {
-    const clips: Array<DvrMeta> = [
-      makeClip('a.mp4', 'Front', 2, uriOf('a-late.mp4')),
-      makeClip('a.mp4', 'Front', 1, uriOf('a-early.mp4'))
-    ]
-    const tracks = makeTracks(['a.mp4'], [], [], [])
-    const rebuilt = rebuildTrackUris(tracks, clips)
-    return expectString(rebuilt.front[0], uriOf('a-early.mp4'), '取最早')
-  }))
-
-  cases.push(makeCase('重建：结果与 live 输入顺序无关', () => {
-    const clips = makeClips([['a.mp4', 'Front', 3], ['b.mp4', 'Front', 1], ['c.mp4', 'Front', 2]])
-    const tracks = makeTracks(['a.mp4', 'b.mp4', 'c.mp4'], ['a.mp4'], ['c.mp4', 'a.mp4'], [])
-    const forward = rebuiltSignature(rebuildTrackUris(tracks, clips))
-    const backward = rebuiltSignature(rebuildTrackUris(tracks, clips.slice().reverse()))
-    return expectString(backward, forward, '倒序输入结果相同')
-  }))
-
-  cases.push(makeCase('重建：缺的进 missing 且不出现在轨道里', () => {
-    const clips = makeClips([['a.mp4', 'Front', 1]])
-    const tracks = makeTracks(['a.mp4', 'b.mp4'], [], [], [])
-    const rebuilt = rebuildTrackUris(tracks, clips)
-    return firstError([
-      expectTrue(rebuilt.missing.indexOf('b.mp4') >= 0, 'missing 含 b.mp4'),
-      expectNumber(rebuilt.front.length, 1, '缺的不进轨道')
-    ])
-  }))
-
-  cases.push(makeCase('重建：全命中时 complete 为真', () => {
-    const clips = makeClips([['a.mp4', 'Front', 1], ['b.mp4', 'Front', 2]])
-    const tracks = makeTracks(['a.mp4', 'b.mp4'], [], [], [])
-    const rebuilt = rebuildTrackUris(tracks, clips)
-    return firstError([
-      expectTrue(rebuilt.complete, 'complete'),
-      expectNumber(rebuilt.missing.length, 0, 'missing 为空')
-    ])
-  }))
-
-  cases.push(makeCase('重建：有缺失时 complete 为假（调用方必须中止）', () => {
-    const clips = makeClips([['a.mp4', 'Front', 1]])
-    const tracks = makeTracks(['a.mp4', 'b.mp4'], [], [], [])
-    const rebuilt = rebuildTrackUris(tracks, clips)
-    return firstError([
-      expectFalse(rebuilt.complete, 'complete'),
-      expectNumber(rebuilt.missing.length, 1, 'missing 非空')
-    ])
   }))
 
   cases.push(makeCase('空 URI 的现场片段：算缺失且不进 clips 并集', () => {

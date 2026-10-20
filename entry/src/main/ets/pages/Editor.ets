@@ -215,8 +215,9 @@ struct Editor {
       const liveClips = this.viewModel.allLibraryClips()
       // 「可用片段」只由 collectLiveFileNames 定义：`findMissingClipNames` 只认名字、
       // 看不见 URI，直接喂 `fileName` 会把一条空 URI 的片段判成「还在」，而
-      // `rebuildTrackUris` 会判它「找不到」—— 同一份数据两处结论相反，就会漏报缺失，
-      // 把一段黑屏送进编码器。所以两个判定必须走同一个定义。
+      // `collectHitClips`（真正决定还原出哪些片段的那一个）会判它「找不到」——
+      // 同一份数据两处结论相反，就会漏报缺失，把一段黑屏送进编码器。
+      // 所以两个判定必须走同一个定义。
       const missing = findMissingClipNames(meta.tracks, collectLiveFileNames(liveClips))
       if (missing.length > 0) {
         debugLog('剪辑页', `还原不可用：缺 ${missing.length} 个源片段 workId=${workId}`)
@@ -274,6 +275,13 @@ struct Editor {
    * 行程表 —— 不刷新的话，重跑只会再弹一次权限提示。
    */
   private async requestRestorePermission(): Promise<void> {
+    // 权限弹窗在授权后的扫描期间**保持可见**（见下面 permissionPromptVisible 的位置），
+    // 所以「去授权」按钮在这段时间里还能被再点一次。挡掉重入：否则会再发一次权限请求、
+    // 再扫一遍行程库、再跑一次还原。弹窗刚显示时 restorePending 为 false（resolveRestore
+    // 的 finally 刚复位过），不会误挡第一次点击。
+    if (this.restorePending) {
+      return
+    }
     const workId = this.pendingRestoreWorkId
     const host = this.getUIContext().getHostContext()
     if (!host) {
@@ -290,16 +298,19 @@ struct Editor {
         this.showToast('未获得相册权限')
         return
       }
-      this.permissionPromptVisible = false
       // 整个还原期间（含这次授权后的重跑）保持 restorePending=true：此刻页面还是空白的，
       // 导出按钮必须一直禁用。否则在这段窗口里点导出会走 startNativeExportTask →
       // launchExport，buildExportSnapshot 拿不到行程数据，弹出假错误「导出失败：缺少行程数据」。
       // 复位交给 resolveRestore 的 finally 统一负责 —— 还原真正落定后才放开导出。
       this.restorePending = true
       await this.bridge.createLibraryState(true, context)
+      // 权限弹窗**在扫描成功之后**才收起：放在 await 之前的话，createLibraryState 抛错时
+      // 弹窗已经没了、页面还停在空白纸上，而唯一的授权入口就在那个弹窗里 —— 用户没有重试的路。
+      this.permissionPromptVisible = false
       debugLog('剪辑页', `授权成功，重跑还原 workId=${workId}`)
       void this.resolveRestore(workId)
     } catch (error) {
+      // 弹窗保持可见（见上），用户可以再点一次「去授权」重试。
       this.restorePending = false
       const message = error instanceof Error ? error.message : String(error)
       debugLog('剪辑页', `还原授权链路失败：${message}`)
@@ -454,12 +465,12 @@ struct Editor {
       this.toastTimer = -1
     }
     this.toastVisible = false
-    try {
-      this.getUIContext().getRouter().back()
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      debugLog('剪辑页', `返回失败：${message}`)
-    }
+    // 走 handleBack()，**不要**在这里直接 router.back()：导出成功并不复位 markUnsaved，
+    // 用户在提示还在的那 ~2s 里拖过分段边界 / 换过模板时，裸 back() 会把这些改动
+    // 静默丢掉。交给 handleBack 判断：有未保存改动就弹「确认放弃修改？」，否则照常返回。
+    // 「回首页切到我的剪辑」的标记是导出成功那一刻置的（Ruling 29），与点不点这条提示
+    // 无关，这里不碰它。
+    this.handleBack()
   }
 
   private getTemplateUiName(card: TemplateCardModel): string {
@@ -1439,7 +1450,7 @@ struct Editor {
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
-            Text('这条作品的剪辑参数已丢失，无法重新剪辑。模板、分段与水印都没能保存下来，可以当作一次新的剪辑重来。')
+            Text('这条作品的剪辑参数已丢失，无法重新剪辑。作品元数据里缺少可用的源片段记录，还原不出原来的模板、分段与水印，可以当作一次新的剪辑重来。')
               .fontSize(13)
               .fontColor($r('app.color.text_tertiary'))
               .lineHeight(19)

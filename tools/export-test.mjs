@@ -31,10 +31,13 @@ function memoryFs(contents = new Map(), options = {}) {
   const opened = new Map()
   const buffers = new Set()
   const removed = []
+  const renamed = []
+  const dirs = new Set()
   let nextFd = 1
   let writeCount = 0
+  let renameCount = 0
   return {
-    files, opened, buffers, removed,
+    files, opened, buffers, removed, renamed, dirs,
     OpenMode: { READ_ONLY: 0, READ_WRITE: 2, CREATE: 64, TRUNC: 512 },
     async stat(path) {
       if (options.unknownSize) throw new Error('unknown size')
@@ -71,7 +74,30 @@ function memoryFs(contents = new Map(), options = {}) {
       opened.delete(fd)
       if (path === options.failClosePath) throw new Error('close failed')
     },
-    async unlink(path) { removed.push(path); files.delete(path) }
+    async unlink(path) { removed.push(path); files.delete(path) },
+    // 以下四个是 WorkStore（作品库文件层）要用的：`exists` 走 accessSync，
+    // `writeMeta` 走 rename，`readMeta` 走 readText，`ensureExportsDir` 走 mkdir。
+    accessSync(path) {
+      if (files.has(path) || dirs.has(path)) return true
+      // 目录没显式建过，但已经有文件挂在它下面 —— 沙盒里就是这么个事实。
+      for (const file of files.keys()) {
+        if (file.startsWith(`${path}/`)) return true
+      }
+      return false
+    },
+    async mkdir(path) { dirs.add(path) },
+    async readText(path) {
+      if (!files.has(path)) throw new Error('not found')
+      return files.get(path).toString('utf8')
+    },
+    async rename(from, to) {
+      // failRenameAt: 第 n 次 rename 抛错，用来复现「真机上 fs.rename 拒绝覆盖已存在文件」。
+      if (++renameCount === options.failRenameAt) throw new Error('rename refused')
+      if (!files.has(from)) throw new Error('not found')
+      files.set(to, files.get(from))
+      files.delete(from)
+      renamed.push({ from, to })
+    }
   }
 }
 
@@ -329,6 +355,181 @@ test('successful export clears its timeout without cancelling the job', async ()
   assert.equal(outcome.metaSaved, false)
   assert.equal(f.cleared, true)
   assert.deepEqual(f.cancelled, [])
+})
+
+/**
+ * `WorkStore`（作品库文件层）的夹具。
+ *
+ * 为什么值得单开一套：`WorkStore` 原来不进任何套件，而「覆盖导出」这条路的
+ * 每一步都在它身上 —— 先删目标再改名会**毁掉用户唯一一份成片**，
+ * 覆盖时不先清旧 sidecar 会留下「新成片 + 旧元数据」。这两条都是回归测试该咬住的。
+ *
+ * 每个用例自己传一份 `files`：`loadEts` 每次调用一份新的模块缓存，
+ * 因此每次拿到的都是全新的 `WorkStore` 单例与全新的 memoryFs，用例之间不串味。
+ */
+function workStoreFixture(files, options = {}) {
+  const fs = memoryFs(new Map(files), options)
+  const { WorkStore } = loadEts('entry/src/main/ets/service/WorkStore.ets', {
+    '@ohos.file.fs': fs,
+    '@ohos.file.statvfs': { async getFreeSize() { return Number.MAX_SAFE_INTEGER } },
+    // 封面抽帧要真的解 mp4，离线桩给不了 —— 固定返回 false（writeCoverFrom 只当它没抽到）。
+    './ExportNativeService': { async extractFirstFrameToPath() { return false } },
+    '../utils/Logger': { debugLog() {} }
+  })
+  const store = WorkStore.getInstance()
+  store.setContext({ filesDir: '/files', cacheDir: '/cache' })
+  return { fs, store }
+}
+
+test('moveIntoLibrary renames onto an existing work instead of unlinking it first', async () => {
+  const f = workStoreFixture([
+    ['/cache/render.mp4', Buffer.from('new render')],
+    ['/files/exports/W.mp4', Buffer.from('old render')]
+  ])
+  assert.equal(await f.store.moveIntoLibrary('/cache/render.mp4', 'W'), true)
+  assert.deepEqual(f.fs.files.get('/files/exports/W.mp4'), Buffer.from('new render'))
+  // 关键不变量：**没有**先 unlink 目标。先删再改名的话，改名一旦抛错，
+  // 用户手里那条作品就已经没了（而新成片还留在 cacheDir）。
+  assert.deepEqual(f.fs.removed, [])
+  assert.deepEqual(f.fs.renamed, [{ from: '/cache/render.mp4', to: '/files/exports/W.mp4' }])
+})
+
+test('a refused rename still lands the render through unlink plus rename', async () => {
+  // 真机上 fs.rename 可能拒绝覆盖已存在文件：第一次 rename 抛错，兜底路径必须接管。
+  const f = workStoreFixture([
+    ['/cache/render.mp4', Buffer.from('new render')],
+    ['/files/exports/W.mp4', Buffer.from('old render')]
+  ], { failRenameAt: 1 })
+  assert.equal(await f.store.moveIntoLibrary('/cache/render.mp4', 'W'), true)
+  assert.deepEqual(f.fs.files.get('/files/exports/W.mp4'), Buffer.from('new render'))
+  assert.deepEqual(f.fs.removed, ['/files/exports/W.mp4'])
+})
+
+test('clearing a work keeps its video and drops only the sidecar and the cover', async () => {
+  const f = workStoreFixture([
+    ['/files/exports/W.mp4', Buffer.from('video')],
+    ['/files/exports/W.json', Buffer.from('{"id":"W"}')],
+    ['/files/exports/W.jpg', Buffer.from('cover')]
+  ])
+  assert.equal(await f.store.clearWorkMetaAndCover('W'), true)
+  assert.deepEqual([...f.fs.files.keys()], ['/files/exports/W.mp4'])
+})
+
+/**
+ * 导出 → 落库整条路的夹具。
+ *
+ * 与 `managerFixture` 分开：那边只用到 `notify` 与 `saveWorkToAlbum`，所以
+ * `'./ExportService': {}` 这类空桩够用；这边的 `ExportManager.run()` 会把
+ * `buildComposeRequestByService` / `executeComposeByService` / `exportDurationSec`
+ * 逐个调起来，空桩一调就 TypeError，必须给出能跑的形状。
+ */
+function libraryFixture(options = {}) {
+  const oldRender = Buffer.from('edit-A-render')
+  const newRender = Buffer.from('edit-B-render')
+  const oldMeta = Buffer.from(JSON.stringify({
+    schemaVersion: 1, id: 'W', createdAt: 111, exportedAt: 222, tripTitle: '旧编辑',
+    tripStartTs: 1, tripEndTs: 2, templateId: 'T5',
+    tracks: { front: ['a.mp4'], back: [], side: [], side2: [] },
+    playback: { playheadMs: 0, segments: [{ startMs: 0, endMs: 1000, speedLabel: '1.0X', muted: false }] },
+    watermarkEnabled: true, segmentCount: 1, durationMs: 1000
+  }))
+  const fs = memoryFs(new Map([
+    ['/cache/render.mp4', newRender],
+    ['/files/exports/W.mp4', oldRender],
+    ['/files/exports/W.json', oldMeta],
+    ['/files/exports/W.jpg', Buffer.from('edit-A-cover')]
+  ]), options)
+  const { ExportManager } = loadEts('entry/src/main/ets/service/ExportManager.ets', {
+    '@ohos.file.fs': fs,
+    '@ohos.file.statvfs': { async getFreeSize() { return Number.MAX_SAFE_INTEGER } },
+    '../model/Models': {
+      // 六个机位都要给：snapshotToLegacyClips 会挨个查 snapshot.trip.tracks[camera]，
+      // 少一个就是 undefined.segments。
+      CameraPosition: {
+        FRONT: 'Front', REAR: 'Rear', LEFT: 'Left', RIGHT: 'Right',
+        LEFT_FRONT: 'LeftFront', RIGHT_FRONT: 'RightFront'
+      },
+      toLegacyCamera: camera => camera
+    },
+    '../model/TripModels': {
+      DvrMeta: class {
+        constructor() {
+          this.fileName = ''
+          this.uri = ''
+          this.camera = ''
+          this.timestamp = 0
+          this.date = ''
+          this.time = ''
+        }
+      }
+    },
+    './ExportService': {
+      buildComposeRequestByService: (clips, fileName, outputPath, expectedDurationSec, templateId) => ({
+        frontUris: clips.map(clip => clip.uri), backUris: [], sideUris: [], side2Uris: [],
+        templateId, outputPath, segments: [], rangeStartMs: 0, rangeEndMs: 0, expectedDurationSec
+      })
+    },
+    '../model/SegmentModel': { exportDurationSec: () => 3 },
+    './ExportNativeService': {
+      // 合成产物：run() 会把它当 sourceUri 搬进作品库，所以路径要落在 memoryFs 里。
+      executeComposeByService: async () => '/cache/render.mp4',
+      extractFirstFrameToPath: async () => false,
+      cancelNativeExportPipeline: () => {}
+    },
+    './PreferencesService': { PreferencesService: { getInstance: () => ({ setContext() {} }) } },
+    '../utils/Logger': { debugLog() {} }
+  })
+  const snapshot = {
+    sessionId: 's1',
+    createdAt: 1,
+    trip: {
+      id: 'trip-1', title: '行程', startTs: 100, endTs: 200,
+      tracks: {
+        Front: { segments: [{ fileName: 'a.mp4', uri: 'file://clip/a.mp4', timestampMs: 1 }] },
+        Rear: { segments: [] }, Left: { segments: [] }, Right: { segments: [] },
+        LeftFront: { segments: [] }, RightFront: { segments: [] }
+      }
+    },
+    selectedTemplateId: 'T5',
+    playback: { playheadMs: 0, segments: [{ startMs: 0, endMs: 3000, speedLabel: '1.0X', muted: false }] },
+    brand: { watermarkEnabled: false }
+  }
+  const context = { filesDir: '/files', cacheDir: '/cache' }
+  return { fs, manager: new ExportManager(), snapshot, context, newRender }
+}
+
+/** 起一次导出并等到终态事件（`run()` 是 `void` 出去的，只能靠订阅收口）。 */
+async function runExportToTerminal(f) {
+  const events = []
+  const jobId = await f.manager.start(f.snapshot, f.context, 'W')
+  await new Promise(resolve => {
+    f.manager.subscribe(jobId, event => {
+      events.push(event)
+      if (event.status.startsWith('已保存：') || event.status.startsWith('导出失败：') ||
+        event.status === '已取消导出') {
+        resolve()
+      }
+    })
+  })
+  return events
+}
+
+test('an overwrite whose sidecar write fails leaves no trace of the previous edit', async () => {
+  // failWriteAt: 1 —— run() 走到写 sidecar 之前一次 fs.write 都没有（素材字节和是 stat，
+  // 搬运用的是 rename，封面抽帧被桩成没抽到），所以第一次写就是 `<id>.json.tmp`。
+  const f = libraryFixture({ failWriteAt: 1 })
+  const events = await runExportToTerminal(f)
+  const terminal = events.at(-1)
+  assert.equal(terminal.status, '已保存：W')
+  assert.equal(terminal.metaSaved, false)
+  // 成片本体确实换成了新渲染。
+  assert.deepEqual(f.fs.files.get('/files/exports/W.mp4'), f.newRender)
+  // 不变量：**不得**还挂着上一次编辑的 sidecar / 封面。
+  // 唯一允许的结局是「有 mp4 无 json」的降级态（卡片显示「无法重新剪辑」）——
+  // 留下旧 sidecar 的话，卡片看上去可以重新剪辑，点进去却按旧模板/旧分段去还原
+  // 一条不是它渲染出来的视频，再导出一次就把新编辑静默改回旧编辑。
+  assert.equal(f.fs.files.has('/files/exports/W.json'), false)
+  assert.equal(f.fs.files.has('/files/exports/W.jpg'), false)
 })
 
 let failed = 0

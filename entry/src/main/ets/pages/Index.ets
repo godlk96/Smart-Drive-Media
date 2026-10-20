@@ -848,16 +848,40 @@ struct Index {
     .alignItems(HorizontalAlign.Center)
   }
 
+  /**
+   * 有作品时的「非致命错误」提示行。
+   *
+   * 为什么需要它：`errorText` 原来无条件顶掉整个列表（见 `myEditsBlock` 的 else-if 顺序），
+   * 于是删除**部分失败**会把用户没选中的作品也一起藏起来 —— 盘上还在，界面上没了。
+   * 有作品时错误只占一行，列表照常显示；一条作品都没有时才是真正的错误页。
+   */
+  @Builder
+  myEditsErrorBanner() {
+    Text(this.myEdits.errorText)
+      .fontSize(12)
+      .fontColor($r('app.color.text_tertiary'))
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 4, bottom: 4 })
+  }
+
   @Builder
   myEditsBlock() {
     if (this.myEdits.isLoading) {
       this.myEditsLoadingBlock()
-    } else if (this.myEdits.errorText.length > 0) {
+    } else if (this.myEdits.entries.length === 0 && this.myEdits.errorText.length > 0) {
+      // 空列表 + 报错 = 读目录失败那条路径，整页错误页 + 重试。
       this.myEditsErrorBlock()
     } else if (this.myEdits.entries.length === 0) {
       this.myEditsEmptyBlock()
     } else {
-      this.myEditsList()
+      Column() {
+        if (this.myEdits.errorText.length > 0) {
+          this.myEditsErrorBanner()
+        }
+        this.myEditsList()
+      }
+      .width('100%')
+      .layoutWeight(1)
     }
   }
 

@@ -1,14 +1,15 @@
 /**
- * 「作品库」还原链路：轨道记录、片段级缺失判定、逐位重建、快照合成。
+ * 「作品库」还原链路：轨道记录、片段级缺失判定、命中并集、快照合成。
  *
  * 为什么需要它：旧的还原身份校验（`snapshotMatchesTrip`）只比 `(标题, 起点)`，
  * 用户在导出之后删掉**中间**某个源片段，校验照样通过 —— 用户拿到一条看着对、
  * 其实从删除点起整体错位的成片（设计稿 3.2 的静默错）。
  *
  * 新的身份锚是**导出那一刻真正送进 native 的四条轨道**（有序、含重复），记成源片段
- * 文件名。还原时逐位比对「这些文件还在不在」，并逐位把 URI 装回去：顺序与重复都必须
- * 保留，因为 native 侧把每条轨道先拼成一个文件、再按 atrim 偏移切段，任何一位的偏差
- * 都会让其后的段整体位移。
+ * 文件名。还原时逐位比对「这些文件还在不在」（`findMissingClipNames`），任一缺失即
+ * 判「素材已不在」。**不再**按记录逐位重建 URI 轨道：导出侧重算一次模板轨道的结果
+ * 与记录一致（见 `buildRestoredTripSnapshot` 的注释），多留一份「重建」API 只会
+ * 与真正跑的那条路分歧。
  *
  * 本文件**不得**导入 @ohos.* / @kit.*：它是纯数据 + 纯函数，要被
  * tools/offline-test.mjs 直接跑（离线桩遇到裸导入会直接抛错）。
@@ -93,7 +94,7 @@ export function collectTrackClipNames(tracks: WorkTracks): Array<string> {
  *
  * 为什么必须有它：`findMissingClipNames` 只认名字、看不见 URI，若调用方直接把
  * `liveClips.map(c => c.fileName)` 递进去，一条 URI 为空的片段会被判成「还在」，
- * 而 `rebuildTrackUris` / `collectHitClips` 会判成「找不到」—— 同一份数据两处结论相反，
+ * 而 `collectHitClips` 会判成「找不到」—— 同一份数据两处结论相反，
  * 还原链路就会漏报「素材已不在」，把一段黑屏送进编码器。
  */
 export function collectLiveFileNames(clips: Array<DvrMeta>): Array<string> {
@@ -138,23 +139,6 @@ export function findMissingClipNames(tracks: WorkTracks, liveFileNames: Array<st
   return missing
 }
 
-/** 逐位重建的结果：四条轨道的**URI**列表 + 找不到源文件的文件名。 */
-export class RebuiltTracks {
-  front: Array<string> = []
-  back: Array<string> = []
-  side: Array<string> = []
-  side2: Array<string> = []
-  missing: Array<string> = []
-  /**
-   * 是否完整（`missing.length === 0`）。
-   *
-   * **这是能否继续的唯一开关**：`missing` 非空时四条轨道已经缺位，其后每一位都前移了，
-   * 直接送进编码器就会得到「从删除点起整体错位」的成片 —— 正是本模块要防的静默错。
-   * 调用方必须读它，为 false 时走「素材已不在」的降级出口，不许拿轨道继续导出。
-   */
-  complete: boolean = true
-}
-
 /**
  * 同名多份的取舍：`timestamp` 升序、再 `uri` 字典序。
  *
@@ -169,62 +153,12 @@ function isEarlier(a: DvrMeta, b: DvrMeta): boolean {
   return a.uri < b.uri
 }
 
-/** 把一条轨道逐位装回 URI：命中的按原位 push，未命中的进 missing 且不占位。 */
-function rebuildTrack(names: Array<string>, byName: Map<string, DvrMeta>,
-  missing: Array<string>): Array<string> {
-  const uris: Array<string> = []
-  for (let i = 0; i < names.length; i++) {
-    const name = names[i]
-    const clip = name.length > 0 ? byName.get(name) : undefined
-    if (clip !== undefined) {
-      uris.push(clip.uri)
-      continue
-    }
-    if (missing.indexOf(name) < 0) {
-      missing.push(name)
-    }
-  }
-  return uris
-}
-
-/**
- * 按 sidecar 记录的轨道**逐位**复现出四条 URI 轨道（含重复），缺的进 `missing`。
- *
- * **前置条件（调用方必须遵守）**：`missing` 非空时返回的轨道是**不完整**的 —— 缺位被丢掉后
- * 其后每一位都前移了，直接送进编码器就会得到「从删除点起整体错位」的成片，正是本模块要防的
- * 那条静默错。用 `complete`（即 `missing.length === 0`）判定：为 false 时**必须中止**，
- * 走「素材已不在」的降级出口，**不得**把返回的轨道送进编码器或还原链路。
- *
- * 空文件名与空 URI 都当「找不到」：空 URI 的片段送进 native 只会得到一段黑屏，
- * 与其放进去不如报缺失。
- */
-export function rebuildTrackUris(tracks: WorkTracks, liveClips: Array<DvrMeta>): RebuiltTracks {
-  const byName = new Map<string, DvrMeta>()
-  for (let i = 0; i < liveClips.length; i++) {
-    const clip = liveClips[i]
-    if (clip.fileName.length === 0 || clip.uri.length === 0) {
-      continue
-    }
-    const existing = byName.get(clip.fileName)
-    if (existing === undefined || isEarlier(clip, existing)) {
-      byName.set(clip.fileName, clip)
-    }
-  }
-  const result = new RebuiltTracks()
-  result.front = rebuildTrack(tracks.front, byName, result.missing)
-  result.back = rebuildTrack(tracks.back, byName, result.missing)
-  result.side = rebuildTrack(tracks.side, byName, result.missing)
-  result.side2 = rebuildTrack(tracks.side2, byName, result.missing)
-  result.complete = result.missing.length === 0
-  return result
-}
-
 /**
  * 命中并集：被任一轨道引用过的源片段，按**文件名**去重（同名多份取 timestamp 最早、
- * 再 uri 字典序，与 `rebuildTrackUris` 同一套取舍），最后按 timestamp 升序 ——
+ * 再 uri 字典序，与 `isEarlier` 同一套取舍），最后按 timestamp 升序 ——
  * 保证与 liveClips 的输入顺序无关。
  *
- * 空文件名与**空 URI**的现场片段一律排除，与 `rebuildTrackUris` 的「找不到」判定同口径。
+ * 空文件名与**空 URI**的现场片段一律排除，与 `collectLiveFileNames` 的「不可用」判定同口径。
  * 必须排除空 URI：`tripFromSnapshot` 会 `filter(clip.uri.length > 0)` 丢掉它们，而
  * `applyRestoredState` 用 `live.clips.length` 当片段总数（`CoreBridge.ets:867`）——
  * 放进来会让剪辑页的计数与实际行程对不上。
@@ -275,6 +209,25 @@ function collectHitClips(tracks: WorkTracks, liveClips: Array<DvrMeta>): Array<D
  * `timeline` 刻意留空：`buildTimeline` 在 `service/TimelineService.ets`，那个模块导入了
  * `libsmartdrive_exporter.so` 与 `./CoreApiContract`，本纯模块引不了。由 Task 9 的
  * `CoreBridge` 拿到快照后补 `live.timeline = buildTimeline(live.clips)`。
+ *
+ * ## 与设计稿的**有意偏差**：还原不逐位复现记录下来的四条轨道，而是重算一次
+ *
+ * 设计稿（3.2）写的是「按 `meta.tracks` 逐位把 URI 装回去」。实际做法是：这里只从
+ * `meta.tracks` 取出**命中的片段集合**（`collectHitClips`，顺序无关），随后照常走
+ * 导出那条路 —— `ExportService.resolveTemplateTracks` 按模板的 `ffmpegPolicy` /
+ * `canvasWidth` / 候选顺序，**重新**推导出四条轨道。
+ *
+ * 今天这样是等价的，因为重算的输入恰好就是记录里引用过的那些片段：
+ * - 现场多出**从未被这条作品选中过**的源素材 → 它们进不了 `collectHitClips`，
+ *   也就进不了重算的输入，扰不动结果；
+ * - 少掉**从未被选中过**的候选片段 → 同上，删掉它不会让某个 argmin 换人；
+ * - 唯一能让重算结果与记录不同的情形，是模板本身的规则变了（`ffmpegPolicy` /
+ *   `canvasWidth` / 候选排序被改），那时「旧作品按新规则重导」本身就是要的效果。
+ *
+ * **残余风险（已知、接受）**：上面最后一条也是风险 —— 改了模板规则之后，一条老作品
+ * 重新导出的成片会与它**第一次渲染出来的**不一样（轨道选择可能变），而卡片上并没有
+ * 任何提示。真要改模板规则，得连同这条一起想清楚（版本化 `templateId`，或在 sidecar 里
+ * 记下当时的轨道快照）。
  */
 export function buildRestoredTripSnapshot(meta: WorkMeta, liveClips: Array<DvrMeta>): TripSnapshot {
   const snapshot = new TripSnapshot()

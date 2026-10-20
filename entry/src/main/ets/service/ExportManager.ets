@@ -38,6 +38,13 @@ interface ExportJobRecord {
   lastNotifiedStage: string
   /** 空串 = 新建作品；非空 = 就地覆写这个已有作品（文件基名即作品 id） */
   overwriteWorkId: string
+  /**
+   * 是否已进入「作品库写入阶段」（清旧 sidecar → 换 mp4 → 写新 sidecar）。
+   *
+   * 置位后这次导出就一定会落成一个作品，因此 `cancel()` 不再发「已取消导出」终态 ——
+   * 否则用户会看到「已取消导出」，作品却实实在在地出现在「我的剪辑」里。
+   */
+  libraryWriteStarted: boolean
 }
 
 function snapshotToLegacyClips(snapshot: ExportSnapshot): Array<DvrMeta> {
@@ -144,6 +151,13 @@ export class ExportManager {
     }
     record.cancelled = true
     cancelNativeExportPipeline()
+    // 已进入作品库写入阶段：成片会被保存下来，作品会成立。此刻立刻播「已取消导出」
+    // 是在撒谎 —— 而且 `run()` 有意在这个阶段不再做取消检查（见那里的注释），
+    // 它随后一定会发出 `已保存：` 终态，两条终态事件互相矛盾。
+    // 所以这里只置取消位、停掉 native 管线，终态交给 `run()` 唯一的那条事件。
+    if (record.libraryWriteStarted) {
+      return
+    }
     // 记录终态，保证订阅者必定 settle（否则只能等 180s 超时）
     const cancelEvent: ExportJobEvent = { jobId: record.id, status: '已取消导出', progress: 0 }
     this.recordTerminalEvent(record.id, cancelEvent)
@@ -183,7 +197,8 @@ export class ExportManager {
       status: '准备导出',
       lastNotificationAt: 0,
       lastNotifiedStage: '',
-      overwriteWorkId: overwriteWorkId ?? ''
+      overwriteWorkId: overwriteWorkId ?? '',
+      libraryWriteStarted: false
     }
     this.jobs.set(jobId, record)
     this.notify(record, '导出处理中 0%', 0)
@@ -253,6 +268,30 @@ export class ExportManager {
         return
       }
       const saveStartProgress = Math.max(85, Math.min(99, record.progress))
+      // 从这里起是「作品库写入阶段」：清旧 sidecar/封面 → 换 mp4 → 抽封面 → 写新 sidecar。
+      // 一旦进入这个阶段，这次导出就注定会落成一个作品，所以先置位：cancel() 见到它
+      // 就不再播「已取消导出」终态（作品确实会被保存下来，那时改口说「已取消」才是撒谎），
+      // 由本方法末尾那条唯一终态事件如实收尾。
+      record.libraryWriteStarted = true
+      // 覆盖时沿用旧作品的 createdAt，所以必须在成片被替换**之前**读它：此刻 `<id>.json`
+      // 还是上一次编辑的 sidecar，createdAt 就是那个值；挪到 moveIntoLibrary 之后读，
+      // 读到的会是刚被清掉的那份（什么都没有）。
+      const overwriting = record.overwriteWorkId.length > 0
+      const existingMeta = overwriting ? await store.readMeta(workId) : undefined
+      if (overwriting) {
+        // 覆盖 = 就地换掉 `<id>.mp4`，但 `<id>.json` / `<id>.jpg` 不会自己跟着换。
+        // 旧 sidecar 必须**在换 mp4 之前**删掉：否则 writeMeta 失败（ENOSPC/EIO）或
+        // 进程在中间被杀时，盘上留下的是「**新成片 + 上一次编辑的元数据**」——卡片照样
+        // 显示可重新剪辑（canReedit 只看 meta !== undefined），点进去按旧模板/旧分段还原
+        // 一条不是它渲染出来的视频，再导出一次就把新编辑静默改回旧编辑。
+        // 先删则最坏退化成**已设计**的降级态（有 mp4 无 json → 「无法重新剪辑」徽标）。
+        // 这一步也是「mp4 → jpg → json」那个写入顺序成立的前提：该顺序只对**新作品**
+        // 天然成立，覆盖时必须先把上一份 sidecar 拿掉才等价。
+        const cleared = await store.clearWorkMetaAndCover(workId)
+        if (!cleared) {
+          debugLog('导出', `旧元数据/封面清理失败（仍继续覆盖） id=${workId}`)
+        }
+      }
       this.notify(record, '正在写入作品库', saveStartProgress)
       // 有意为之：合成后到这里之间不再做取消检查。moveIntoLibrary 只是一次 rename，
       // 取消若落在它期间，成片已经进库、作品已成立 —— 此时改口说「已取消」才是撒谎。
@@ -268,8 +307,6 @@ export class ExportManager {
       if (!coverSaved) {
         debugLog('导出', `封面首帧写入失败（成片已落库） id=${workId}`)
       }
-      // 覆盖时沿用旧作品的 createdAt；sidecar 缺失（首次导出 / 降级卡片）则用现在。
-      const existingMeta = record.overwriteWorkId.length > 0 ? await store.readMeta(workId) : undefined
       const meta = this.buildWorkMeta(snapshot, clips, request, workId, existingMeta)
       const metaSaved = await store.writeMeta(meta)
       if (!metaSaved) {
@@ -288,6 +325,14 @@ export class ExportManager {
             fs.unlinkSync(outputPath)
           }
         } catch (_) {
+        }
+        // 进入作品库写入阶段后 `cancel()` 有意不再发终态（那时作品会成立，改口说「已取消」
+        // 是撒谎）。可这一步抛错意味着作品**并没有**成立 —— 必须由这里补一条终态，
+        // 否则订阅者拿不到任何 settle 信号，只能干等 NativeExportManager 的 180s 超时。
+        if (record.libraryWriteStarted) {
+          const cancelEvent: ExportJobEvent = { jobId: record.id, status: '已取消导出', progress: 0 }
+          this.recordTerminalEvent(record.id, cancelEvent)
+          this.notify(record, '已取消导出', 0)
         }
         return
       }

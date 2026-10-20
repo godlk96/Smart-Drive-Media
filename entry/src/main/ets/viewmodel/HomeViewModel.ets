@@ -363,25 +363,39 @@ export class HomeViewModel {
    * 删作品：`WorkStore.deleteWork(id)` 会删掉 App 空间里的 `.mp4` / `.json` / `.jpg` 三份。
    * 相册里的副本 App 管不着（没有 `WRITE_IMAGEVIDEO`），删不掉也不假装删掉了 ——
    * 确认弹窗的文案已如实说明。
+   *
+   * 部分失败时**只摘掉真的删掉了的那些**，不能像以前那样一件失败就整页返回：
+   * `Index.myEditsBlock` 见到 `errorText` 非空就把整块换成错误页，用户没选中的那些作品
+   * 会跟着一起消失 —— 明明还在盘上，界面上却没了。失败的留在列表里并保持选中，
+   * 用户可以再点一次删除重试。
    */
   async deleteSelectedRecords(): Promise<boolean> {
     if (this.myEdits.selectedEntryIds.length === 0) {
       return false
     }
     const ids: Array<string> = [...this.myEdits.selectedEntryIds]
-    let ok = true
+    const deletedIds: Array<string> = []
+    const failedIds: Array<string> = []
     for (let i = 0; i < ids.length; i++) {
       const deleted = await WorkStore.getInstance().deleteWork(ids[i])
-      if (!deleted) {
-        ok = false
+      if (deleted) {
+        deletedIds.push(ids[i])
+      } else {
+        failedIds.push(ids[i])
       }
     }
-    if (!ok) {
+    if (deletedIds.length > 0) {
+      this.myEdits.entries = this.myEdits.entries
+        .filter((entry: WorkEntry) => deletedIds.indexOf(entry.id) < 0)
+    }
+    if (failedIds.length > 0) {
+      // 错误文案留着（列表上方那一行），但不再用它顶掉整个列表。
       this.myEdits.errorText = '作品库暂时不可用'
+      this.myEdits.selectedEntryIds = failedIds
       this.notifyStateChanged()
       return false
     }
-    this.myEdits.entries = this.myEdits.entries.filter((entry: WorkEntry) => ids.indexOf(entry.id) < 0)
+    this.myEdits.errorText = ''
     this.myEdits.selectedEntryIds = []
     this.myEdits.selectionMode = false
     this.notifyStateChanged()

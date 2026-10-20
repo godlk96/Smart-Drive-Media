@@ -243,8 +243,12 @@ export class WorkStore {
    * 把合成产物（`cacheDir/<id>.mp4.tmp` 之类）搬成作品库里的 `<id>.mp4`。
    *
    * 跨目录搬运用 `fs.rename`：`cacheDir` 与 `filesDir` 同属 App 沙盒、同一挂载点。
-   * **目标已存在则先 unlink** —— 覆盖导出时旧 mp4 必须被替换，而真机上 `fs.rename`
-   * 是否允许覆盖已存在文件并不确定；先删再改名是唯一稳的写法（此时源文件已完整）。
+   *
+   * 与 `writeMeta` / `writeCoverFrom` 同一套替换顺序：**先试直接 rename**（能原子覆盖最好），
+   * 失败才退化成「先 unlink 目标再 rename」。绝不能反过来无条件先删 ——
+   * 删掉之后 rename 再抛错，用户手里那条作品就**没了**，而新成片还留在 cacheDir，
+   * 调用方只能报一句「导出产物保存失败」。覆盖导出删的是用户唯一一份成片，
+   * 这条路径必须走「删之前先确认改名能成」。
    */
   public async moveIntoLibrary(sourcePath: string, id: string): Promise<boolean> {
     if (sourcePath.length === 0 || id.length === 0) {
@@ -259,15 +263,60 @@ export class WorkStore {
     }
     const target = `${dir}/${id}.mp4`
     try {
-      if (this.exists(target)) {
-        await fs.unlink(target)
-      }
+      // 先试直接 rename（能原子覆盖最好）。
+      await fs.rename(sourcePath, target)
+      return true
+    } catch (e) {
+      debugLog('WorkStore', `rename 覆盖成片失败，退化 unlink + rename: ${String(e)}`)
+    }
+    // 兜底：真机上 fs.rename 可能拒绝覆盖已存在文件。此刻源文件已完整，
+    // 先删旧成片再改名，中间窗口极短。
+    try {
+      await this.unlinkQuiet(target)
       await fs.rename(sourcePath, target)
       return true
     } catch (e) {
       debugLog('WorkStore', `搬运成片失败 ${sourcePath} -> ${target}: ${String(e)}`)
       return false
     }
+  }
+
+  /**
+   * 删掉一件作品的 sidecar 与封面，**保留成片本体** `<id>.mp4`。任一不存在不算错；
+   * 返回 false 仅当有文件存在却删不掉。**永不抛错**。
+   *
+   * 覆盖导出专用，且必须在成片替换**之前**调用：作品 id 跨覆盖不变，旧 sidecar/封面
+   * 若不清掉，一旦其后的 `writeMeta` 失败（或进程在中间被杀），留在盘上的就是
+   * 「**新成片 + 上一次编辑的元数据**」—— 卡片看上去可以重新剪辑（`canReedit` 只看
+   * `meta !== undefined`），点进去却按旧模板/旧分段/旧水印去还原一条不是它渲染出来的视频，
+   * 再导出一次就把新编辑静默改回旧编辑。
+   *
+   * 清掉它们之后，最坏结局退化成**已设计**的降级态：有 mp4 无 json，卡片显示
+   * 「无法重新剪辑」，用户至少知道真相。这也是「mp4 → jpg → json」那个写入顺序的前提 ——
+   * 该顺序只对**新作品**成立，覆盖时得先把上一份 sidecar 拿掉才等价。
+   */
+  public async clearWorkMetaAndCover(id: string): Promise<boolean> {
+    if (id.length === 0) {
+      return false
+    }
+    const dir = this.exportsDir()
+    if (dir.length === 0) {
+      return false
+    }
+    const targets: Array<string> = [`${dir}/${id}.json`, `${dir}/${id}.jpg`]
+    let ok = true
+    for (let i = 0; i < targets.length; i++) {
+      const path = targets[i]
+      try {
+        if (this.exists(path)) {
+          await fs.unlink(path)
+        }
+      } catch (e) {
+        ok = false
+        debugLog('WorkStore', `清理旧元数据/封面失败 ${path}: ${String(e)}`)
+      }
+    }
+    return ok
   }
 
   /**
