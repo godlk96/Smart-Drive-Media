@@ -1,6 +1,5 @@
 import common from '@ohos.app.ability.common'
 import fs from '@ohos.file.fs'
-import photoAccessHelper from '@ohos.file.photoAccessHelper'
 import { CameraPosition, ExportSnapshot, toLegacyCamera } from '../model/Models'
 import { DvrMeta, ExportComposeRequest } from '../model/TripModels'
 import { buildComposeRequestByService } from './ExportService'
@@ -11,7 +10,6 @@ import { collectWorkTracks } from '../model/WorkRestore'
 import { WorkStore } from './WorkStore'
 import { PreferencesService } from './PreferencesService'
 import { debugLog } from '../utils/Logger'
-import { copyExportFileData } from './ExportFileCopy'
 import { ExportProgressUpdate, exportPercent, exportStageText } from '../model/ExportProgress'
 
 export type ExportJobId = string
@@ -315,98 +313,6 @@ export class ExportManager {
       this.notify(record, `导出失败：${message}`, 0)
     } finally {
       this.jobs.delete(record.id)
-    }
-  }
-
-  /**
-   * 把成片写入系统相册（**总是新建条目**）。
-   *
-   * 本任务已把它的**调用**移出导出主流程：成片改为落进 App 私有作品库，相册不再参与导出。
-   * 方法体保留给 Task 10 抽成显式的「保存到相册」动作复用，故此处只删掉就地覆写
-   * （`fs.OpenMode.TRUNC`）分支 —— 覆盖不再经过相册，不再需要截断旧字节。
-   */
-  private async saveVideoToAlbum(
-    fileName: string,
-    sourceUri: string,
-    context: common.UIAbilityContext,
-    startProgress: number,
-    onProgress: (percent: number, detail: string) => void,
-    isCancelled: () => boolean
-  ): Promise<string> {
-    try {
-      const helper = photoAccessHelper.getPhotoAccessHelper(context)
-      const srcFileUris: Array<string> = [sourceUri]
-      const dotIndex = fileName.lastIndexOf('.')
-      const title = dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName
-      const photoCreationConfigs: Array<photoAccessHelper.PhotoCreationConfig> = [{
-        title: title,
-        fileNameExtension: 'mp4',
-        photoType: photoAccessHelper.PhotoType.VIDEO,
-        subtype: photoAccessHelper.PhotoSubtype.DEFAULT
-      }]
-      const desFileUris = await helper.showAssetsCreationDialog(srcFileUris, photoCreationConfigs)
-      const created = desFileUris[0]
-      if (!created || created.length === 0) {
-        throw new Error('未选择相册保存位置')
-      }
-      const albumUri = created
-      debugLog('导出', `相册写入开始 source=${sourceUri} target=${albumUri}`)
-      let srcFd: number = -1
-      let dstFd: number = -1
-      let totalSize: number = 0
-      let copiedSize: number = 0
-      const baseProgress: number = Math.max(85, Math.min(99, startProgress))
-      try {
-        try {
-          const stat = await fs.stat(sourceUri)
-          totalSize = Number(stat.size ?? 0)
-        } catch (_) {
-          totalSize = 0
-        }
-        if (isCancelled()) {
-          throw new Error('已取消导出')
-        }
-        const src = await fs.open(sourceUri, fs.OpenMode.READ_ONLY)
-        srcFd = src.fd
-        const dst = await fs.open(albumUri, fs.OpenMode.READ_WRITE)
-        dstFd = dst.fd
-        try {
-          await copyExportFileData(srcFd, dstFd, totalSize, (copied: number, total: number) => {
-            copiedSize = copied
-            const percent = total > 0 ? exportPercent(baseProgress + Math.min(1, copied / total) * (99 - baseProgress)) : baseProgress
-            const detail = total > 0 ? `${(copied / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB` :
-              `已写入 ${(copied / 1048576).toFixed(1)} MB`
-            onProgress(percent, detail)
-          }, isCancelled)
-          if (copiedSize <= 0) {
-            throw new Error('导出文件为空，未写入相册')
-          }
-          await fs.fsync(dstFd)
-        } catch (error) {
-          if (isCancelled()) {
-            throw new Error('已取消导出')
-          }
-          const copyError = error instanceof Error ? error.message : String(error)
-          throw new Error(`相册写入中断（已写入 ${copiedSize}/${totalSize} 字节）：${copyError}`)
-        }
-      } finally {
-        if (srcFd >= 0) {
-          try {
-            await fs.close(srcFd)
-          } catch (_) {
-          }
-        }
-        if (dstFd >= 0) {
-          try {
-            await fs.close(dstFd)
-          } catch (error) {
-            throw new Error(`相册文件关闭失败：${error instanceof Error ? error.message : String(error)}`)
-          }
-        }
-      }
-      return albumUri
-    } catch (error) {
-      throw new Error(`保存到相册失败: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 

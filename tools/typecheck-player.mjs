@@ -130,7 +130,8 @@ const GROUPS = {
       'entry/src/main/ets/service/EditHistoryService.ets',
       'entry/src/main/ets/model/WorkMeta.ets',
       'entry/src/main/ets/model/WorkRestore.ets',
-      'entry/src/main/ets/service/WorkStore.ets'
+      'entry/src/main/ets/service/WorkStore.ets',
+      'entry/src/main/ets/service/AlbumExport.ets'
     ]
   },
   ability: {

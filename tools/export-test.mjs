@@ -207,39 +207,52 @@ test('a failed parallel track reports the original error after other tracks stop
 })
 
 function managerFixture(options = {}, content = Buffer.alloc(2500000, 7)) {
-  // 相册目标初始为空：覆盖不再经过相册，saveVideoToAlbum 总是写进系统新建的空条目
-  // （旧代码靠 OpenMode.TRUNC 把这里预置的字节清掉，TRUNC 分支已随覆盖路径一并删除）。
+  // 相册目标初始为空：相册那份 App 不再管理（不覆盖、不截断），saveWorkToAlbum
+  // 总是写进系统新建的空条目。
   const fs = memoryFs(new Map([['source', content], ['album', Buffer.alloc(0)]]), options)
   const { ExportManager } = loadEts('entry/src/main/ets/service/ExportManager.ets', {
     '@ohos.file.fs': fs,
-    // 覆盖不再经过相册后，saveVideoToAlbum 总是走系统保存对话框；桩返回一个已存在的目标路径。
-    '@ohos.file.photoAccessHelper': {
-      PhotoType: { VIDEO: 1 },
-      PhotoSubtype: { DEFAULT: 0 },
-      getPhotoAccessHelper: () => ({ showAssetsCreationDialog: async () => ['album'] })
-    },
     // WorkStore.freeBytes() 走这条：返回一个很大的数，让导出前的空间预检无条件放行。
     '@ohos.file.statvfs': { async getFreeSize() { return Number.MAX_SAFE_INTEGER } },
     '../model/Models': {}, '../model/TripModels': {}, './ExportService': {}, '../model/SegmentModel': {},
     './ExportNativeService': {}, '../model/EditRecord': {}, './EditHistoryService': {},
     './PreferencesService': {}, '../utils/Logger': { debugLog() {} }
   })
+  // 相册保存已从 ExportManager 抽到独立模块 AlbumExport（Task 10）。
+  const { saveWorkToAlbum } = loadEts('entry/src/main/ets/service/AlbumExport.ets', {
+    '@ohos.file.fs': fs,
+    // 系统保存对话框的桩：总是返回一个已存在的目标路径。
+    '@ohos.file.photoAccessHelper': {
+      PhotoType: { VIDEO: 1 },
+      PhotoSubtype: { DEFAULT: 0 },
+      getPhotoAccessHelper: () => ({ showAssetsCreationDialog: async () => ['album'] })
+    },
+    // WorkEntry 只被当类型用（导入会被转译器消除）；给个空桩，免得加载 WorkStore 的裸依赖。
+    './WorkStore': {},
+    '../model/ExportProgress': loadEts('entry/src/main/ets/model/ExportProgress.ets'),
+    '../utils/Logger': { debugLog() {} }
+  })
   const manager = new ExportManager()
   const updates = []
-  const save = (isCancelled = () => false) => manager.saveVideoToAlbum('out.mp4', 'source', {}, 85,
-    (percent, detail) => updates.push({ percent, detail }), isCancelled)
+  // saveWorkToAlbum 只读 entry.videoPath，用普通对象字面量即可（不必造真 WorkEntry）。
+  const save = () => saveWorkToAlbum({}, { videoPath: 'source' },
+    (percent, detail) => updates.push({ percent, detail }))
   return { fs, manager, updates, save, content }
 }
 test('album save retries short writes and writes the exact bytes', async () => {
   const f = managerFixture({ writeLimit: 13 }, Buffer.from('new video bytes'))
-  assert.equal(await f.save(), 'album')
+  // 契约：成功返回空串（调用方据此 toast「已保存到相册」）。
+  assert.equal(await f.save(), '')
   assert.deepEqual(f.fs.files.get('album'), f.content)
   assert.equal(f.fs.opened.size, 0)
   assert.ok(f.updates.every(update => update.percent < 100))
 })
 test('album write error never fabricates final progress', async () => {
   const f = managerFixture({ failWriteAt: 2 })
-  await assert.rejects(f.save(), /disk full/)
+  // 契约：失败返回给用户看的文案，而不是抛错。断言仍咬住底层原因，只是换成读返回值。
+  const message = await f.save()
+  assert.match(message, /^保存到相册失败：/)
+  assert.match(message, /disk full/)
   assert.ok(f.updates.every(update => update.percent < 99))
   assert.equal(f.fs.opened.size, 0)
 })
@@ -249,23 +262,17 @@ test('unknown album size holds percentage while reporting written bytes', async 
   assert.ok(f.updates.every(update => update.percent === 85))
   assert.ok(f.updates.at(-1).detail.includes('已写入'))
 })
-test('album cancellation stops copying and closes both handles', async () => {
-  const f = managerFixture()
-  await assert.rejects(f.save(() => f.fs.files.get('album').length > 0 && f.updates.length > 1), /取消/)
-  assert.equal(f.fs.files.get('album').length, 1048576)
-  assert.equal(f.fs.opened.size, 0)
-})
 test('album target close failure cannot report success', async () => {
   const f = managerFixture({ failClosePath: 'album' })
-  await assert.rejects(f.save(), /close failed/)
+  assert.match(await f.save(), /close failed/)
 })
 test('album flush failure cannot report success', async () => {
   const f = managerFixture({ failSync: true })
-  await assert.rejects(f.save(), /flush failed/)
+  assert.match(await f.save(), /flush failed/)
 })
 test('empty output cannot be saved as a successful video', async () => {
   const f = managerFixture({}, Buffer.alloc(0))
-  await assert.rejects(f.save(), /为空/)
+  assert.match(await f.save(), /为空/)
 })
 test('manager keeps fractional monotonic progress and immediately reports stage changes', () => {
   const { manager } = managerFixture()
@@ -315,9 +322,10 @@ test('successful export clears its timeout without cancelling the job', async ()
   const f = nativeManagerFixture()
   const pending = f.wrapper.startNativeExport({}, {})
   await f.ready
-  f.emit({ jobId: 'job', status: '相册保存成功：album', progress: 100 })
+  // 导出成功终态现在是 `已保存：<workId>`（Task 6 起，相册不再参与导出）。
+  f.emit({ jobId: 'job', status: '已保存：work1', progress: 100 })
   const outcome = await pending
-  assert.equal(outcome.workId, 'album')
+  assert.equal(outcome.workId, 'work1')
   assert.equal(outcome.metaSaved, false)
   assert.equal(f.cleared, true)
   assert.deepEqual(f.cancelled, [])

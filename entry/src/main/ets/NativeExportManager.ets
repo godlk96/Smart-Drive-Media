@@ -37,11 +37,11 @@ export async function startNativeExport(
         }
         return
       }
-      if (event.status.startsWith('已保存：') || event.status.startsWith('相册保存成功：')) {
+      if (event.status.startsWith('已保存：')) {
         if (!settled) {
           settled = true
           clearTimeout(timeoutTimer)
-          resolve({ workId: event.status.replace('已保存：', '').replace('相册保存成功：', ''), metaSaved: event.metaSaved === true })
+          resolve({ workId: event.status.replace('已保存：', ''), metaSaved: event.metaSaved === true })
         }
       }
     })

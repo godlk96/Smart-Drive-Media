@@ -24,6 +24,8 @@ export struct WorkCard {
   onOpen?: () => void
   onPlay?: () => void
   onToggleSelect?: () => void
+  /** 「保存到相册」：把成片显式存一份到系统相册（App 之后不管理那份副本） */
+  onSaveToAlbum?: () => void
 
   private formatCoverUri(uri: string): string {
     if (uri.startsWith('file://') || uri.startsWith('http://') || uri.startsWith('https://')) {
@@ -150,6 +152,28 @@ export struct WorkCard {
     })
   }
 
+  /**
+   * 「保存到相册」小按钮。放在元信息下方，而不是封面角上：封面右下角已被 ▶ 占用、
+   * 卡片主体点击是重新剪辑，这里独立成一个 pill，既不压 ▶ 也不误触重剪。
+   * 降级卡片（`canReedit` 为假）同样可用 —— 只能看/存/删的作品也要能存。
+   */
+  @Builder
+  saveToAlbumButton() {
+    Text('保存到相册')
+      .fontSize(12)
+      .fontColor($r('app.color.text_secondary'))
+      .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+      .backgroundColor($r('app.color.ed_surface'))
+      .border({ width: 1, color: $r('app.color.ed_line') })
+      .borderRadius(7)
+      .margin({ top: 6 })
+      .onClick(() => {
+        if (this.onSaveToAlbum) {
+          this.onSaveToAlbum()
+        }
+      })
+  }
+
   build() {
     Column({ space: 0 }) {
       Stack({ alignContent: Alignment.TopStart }) {
@@ -174,6 +198,7 @@ export struct WorkCard {
             .fontColor($r('app.color.text_secondary'))
             .width('100%')
         }
+        this.saveToAlbumButton()
       }
       .width('100%')
       .alignItems(HorizontalAlign.Start)

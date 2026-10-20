@@ -4,6 +4,7 @@ import { AppIcon, AppIconName } from '../components/AppIcon'
 import { WorkCard } from '../components/WorkCard'
 import { LibraryStateModel, TripCardModel } from '../model/AppState'
 import { WorkEntry } from '../service/WorkStore'
+import { saveWorkToAlbum } from '../service/AlbumExport'
 import { debugLog } from '../utils/Logger'
 import { formatTripDay, formatTripDuration, getTripStartTime, isTripComplete } from '../utils/TripFormat'
 import { HomeViewModel, MyEditsViewState } from '../viewmodel/HomeViewModel'
@@ -57,6 +58,9 @@ struct Index {
   @State private toastText: string = ''
   @State private toastVisible: boolean = false
   private toastTimer: number = -1
+  /** 「保存到相册」浮层：保存期间盖住全屏、吞掉点击，避免重复触发。 */
+  @State private albumSaveVisible: boolean = false
+  @State private albumSaveDetail: string = ''
 
   aboutToAppear(): void {
     const context = this.getHostContextOrNull()
@@ -340,6 +344,37 @@ struct Index {
     const message = await this.viewModel.playWork(entry, context)
     if (message.length > 0) {
       this.showToast(message)
+    }
+  }
+
+  /**
+   * 「保存到相册」：把成片显式存一份到系统相册。
+   *
+   * `saveWorkToAlbum` 契约上不抛错（失败返回文案），所以这里只按「空串 = 成功」处理：
+   * 成功 toast「已保存到相册」，失败 toast 返回的错误文案。保存期间浮层盖全屏，
+   * 用户点不到卡片，天然防重复触发。
+   */
+  private async handleWorkSaveToAlbum(entry: WorkEntry): Promise<void> {
+    const context = this.getHostContextOrNull()
+    if (context === null) {
+      return
+    }
+    if (this.albumSaveVisible) {
+      return
+    }
+    this.albumSaveDetail = ''
+    this.albumSaveVisible = true
+    try {
+      const message = await saveWorkToAlbum(context, entry, (_percent: number, detail: string) => {
+        this.albumSaveDetail = detail
+      })
+      this.showToast(message.length > 0 ? message : '已保存到相册')
+    } catch (error) {
+      // 契约上不该走到这里；真出现未预期异常也要如实告知，不静默吞掉。
+      const message = error instanceof Error ? error.message : String(error)
+      this.showToast(`保存到相册失败：${message}`)
+    } finally {
+      this.albumSaveVisible = false
     }
   }
 
@@ -712,6 +747,9 @@ struct Index {
             },
             onToggleSelect: () => {
               this.handleWorkToggle(item)
+            },
+            onSaveToAlbum: () => {
+              void this.handleWorkSaveToAlbum(item)
             }
           })
         }
@@ -892,6 +930,47 @@ struct Index {
     .hitTestBehavior(HitTestMode.None)
   }
 
+  /**
+   * 「保存到相册」进度浮层。
+   *
+   * 不画百分比环：`saveWorkToAlbum` 的 percent 落在导出收尾的 85~99 档（供导出浮层续用），
+   * 对一个全新的保存动作从 85% 起跳会误导用户。所以用不确定进度环 + 已写入字节数，
+   * 如实反映「在写、写了多少」，不编造一个百分数。
+   */
+  @Builder
+  albumSaveOverlay() {
+    Column() {
+      Column({ space: 12 }) {
+        LoadingProgress()
+          .width(34)
+          .height(34)
+          .color($r('app.color.amber'))
+        Text('正在保存到相册')
+          .fontSize(15)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary'))
+        Text(this.albumSaveDetail.length > 0 ? this.albumSaveDetail : '正在写入视频文件...')
+          .fontSize(13)
+          .fontColor($r('app.color.text_tertiary'))
+          .textAlign(TextAlign.Center)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width('78%')
+      .padding(22)
+      .alignItems(HorizontalAlign.Center)
+      .backgroundColor($r('app.color.card_bg'))
+      .borderRadius(16)
+      .border({ width: 1, color: $r('app.color.ed_line') })
+      .shadow({ radius: 16, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 6 })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .backgroundColor($r('app.color.export_scrim'))
+  }
+
   @Builder
   pageContent() {
     Column({ space: 0 }) {
@@ -930,6 +1009,10 @@ struct Index {
 
       if (this.deleteConfirmVisible) {
         this.deleteConfirmModal()
+      }
+
+      if (this.albumSaveVisible) {
+        this.albumSaveOverlay()
       }
 
       if (this.toastVisible) {
