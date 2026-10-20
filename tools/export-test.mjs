@@ -215,7 +215,7 @@ function managerFixture(options = {}, content = Buffer.alloc(2500000, 7)) {
     // WorkStore.freeBytes() 走这条：返回一个很大的数，让导出前的空间预检无条件放行。
     '@ohos.file.statvfs': { async getFreeSize() { return Number.MAX_SAFE_INTEGER } },
     '../model/Models': {}, '../model/TripModels': {}, './ExportService': {}, '../model/SegmentModel': {},
-    './ExportNativeService': {}, '../model/EditRecord': {}, './EditHistoryService': {},
+    './ExportNativeService': {},
     './PreferencesService': {}, '../utils/Logger': { debugLog() {} }
   })
   // 相册保存已从 ExportManager 抽到独立模块 AlbumExport（Task 10）。

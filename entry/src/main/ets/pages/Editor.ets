@@ -10,7 +10,6 @@ import { TripSnapshot } from '../model/TripModels'
 import { DEFAULT_TEMPLATE_ID } from '../model/Models'
 import { WorkMeta, findWorkByTrip } from '../model/WorkMeta'
 import { buildRestoredTripSnapshot, collectLiveFileNames, collectTrackClipNames, findMissingClipNames } from '../model/WorkRestore'
-import { EditHistoryService } from '../service/EditHistoryService'
 import { WorkStore } from '../service/WorkStore'
 import { parseDvrFileName } from '../service/DvrScannerService'
 import { REQUIRED_MEDIA_PERMISSIONS } from '../constants/AppConstants'
@@ -1534,7 +1533,7 @@ struct Editor {
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
-            Text('覆盖会直接替换相册里那条成片，并更新「我的剪辑」里的这条作品；存成新的则保留旧的、多出一条。')
+            Text('覆盖会直接替换作品库里这条作品的成片，并更新「我的剪辑」里的这一条；存成新的则保留旧的、多出一条。相册里已有的那份不受影响。')
               .fontSize(13)
               .fontColor($r('app.color.text_tertiary'))
               .lineHeight(19)

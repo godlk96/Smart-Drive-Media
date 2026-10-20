@@ -1,5 +1,5 @@
 export type ExportStage = 'preparing' | 'checking' | 'concatenating' | 'encoding' | 'finalizing' |
-  'awaitingSave' | 'saving' | 'completed'
+  'completed'
 
 export interface ExportProgressUpdate {
   percent: number
@@ -53,8 +53,6 @@ export function exportStageText(stage: ExportStage): string {
     case 'concatenating': return '拼接素材'
     case 'encoding': return '合成视频'
     case 'finalizing': return '完成封装'
-    case 'awaitingSave': return '请选择相册保存位置'
-    case 'saving': return '保存相册'
     case 'completed': return '保存完成'
   }
 }

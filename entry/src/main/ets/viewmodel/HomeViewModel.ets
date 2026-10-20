@@ -293,7 +293,7 @@ export class HomeViewModel {
     this.myEdits.errorText = ''
     this.notifyStateChanged()
     try {
-      // 与旧链路同一个注入点，只是把依赖从 EditHistoryService 换成 WorkStore ——
+      // 与旧链路同一个注入点，依赖换成 WorkStore ——
       // 少了这一句，WorkStore 拿不到 context，exportsDir() 返回空串，列表永远空。
       WorkStore.getInstance().setContext(context)
       let loaded: Array<WorkEntry> = []

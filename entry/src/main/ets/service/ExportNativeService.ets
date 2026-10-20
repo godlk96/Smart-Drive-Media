@@ -22,7 +22,7 @@ const THUMB_CACHE_VERSION: string = 'v3'
  * 首帧缓存文件名里必须带的版本标记。
  *
  * 记录里存着 `coverPath`，光递增版本号没用 —— 老路径指向的文件还在，
- * `isCoverUsable` 会判"能用"，拉伸的旧封面永远换不掉。调用方拿这个标记
+ * 只看文件是否存在就会判"能用"，拉伸的旧封面永远换不掉。调用方拿这个标记
  * 过一遍，旧版本的路径一律当失效处理。
  */
 export const THUMB_CACHE_TAG: string = `thumb_${THUMB_CACHE_VERSION}_`
@@ -522,7 +522,7 @@ export async function executeComposeByService(
     }
     onLog(`Native导出阶段 Native处理耗时=${Date.now() - nativeStart}ms`)
 
-    // 阶段 3: Native 合成完成，进入相册写入 (85% ~ 100%)
+    // 阶段 3: Native 合成完成，进入最终封装 (85%)
     onProgress({ percent: 85, stage: 'finalizing', detail: '视频已生成，正在准备保存' })
     onLog(`Native导出阶段 完成 输出=${outputPath}`)
     return outputPath

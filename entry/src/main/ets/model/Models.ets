@@ -502,7 +502,7 @@ export function deepCloneExportSnapshot(state: EditorState): ExportSnapshot {
 /**
  * 解析历史记录里存的 ExportSnapshot JSON。
  *
- * 与 parseEditRecords 同样是**永不抛错**的防御式解析：这份字符串来自磁盘，
+ * 与作品 sidecar 的解析同样是**永不抛错**的防御式解析：这份字符串来自磁盘，
  * 可能是旧版本写的、可能写坏了。缺 trip 或 playback.segments 不是数组时
  * 一律当不可用 —— 宁可让用户看到「这条记录打不开」，也不能拿半个快照
  * 去还原出一个参数错乱的剪辑页。

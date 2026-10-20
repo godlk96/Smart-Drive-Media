@@ -74,7 +74,6 @@ const GROUPS = {
       'entry/src/main/ets/service/WorkStore.ets',
       'entry/src/main/ets/service/TimelineService.ets',
       'entry/src/main/ets/utils/Logger.ets',
-      'entry/src/main/ets/model/EditRecord.ets',
       'entry/src/main/ets/model/WorkMeta.ets',
       'entry/src/main/ets/model/WorkRestore.ets',
       'entry/src/main/ets/media/TimelineMath.ets'
@@ -98,8 +97,6 @@ const GROUPS = {
       'entry/src/main/ets/service/PreferencesService.ets',
       'entry/src/main/ets/utils/Logger.ets',
       'entry/src/main/ets/media/TimelineMath.ets',
-      'entry/src/main/ets/model/EditRecord.ets',
-      'entry/src/main/ets/service/EditHistoryService.ets',
       'entry/src/main/ets/model/WorkMeta.ets',
       'entry/src/main/ets/model/WorkRestore.ets',
       'entry/src/main/ets/service/WorkStore.ets'
@@ -126,8 +123,6 @@ const GROUPS = {
       'entry/src/main/ets/utils/Logger.ets',
       'entry/src/main/ets/media/TimelineMath.ets',
       'entry/src/main/ets/bridge/CoreBridge.ets',
-      'entry/src/main/ets/model/EditRecord.ets',
-      'entry/src/main/ets/service/EditHistoryService.ets',
       'entry/src/main/ets/model/WorkMeta.ets',
       'entry/src/main/ets/model/WorkRestore.ets',
       'entry/src/main/ets/service/WorkStore.ets',

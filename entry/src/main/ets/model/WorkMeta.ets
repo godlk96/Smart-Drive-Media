@@ -143,7 +143,7 @@ function normalizeTracks(source: WorkTracks | undefined): WorkTracks {
  *
  * 这份数据来自磁盘，可能因版本回退、手工改文件、写到一半被杀而损坏。
  * 坏 JSON / 缺 id / 缺 playback / playback.segments 非数组 一律返回 undefined，
- * 只让这一条作品降级，不牵连整个列表（比 `parseEditRecords` 的「整表坏掉返回空列表」隔离性更好）。
+ * 只让这一条作品降级，不牵连整个列表（旧记录链是整表解析，坏一个就返回空列表，隔离性差得多）。
  * 其余字段逐字段按类型收敛，缺项/错型退回默认值 —— 页面因此不必到处判空。
  */
 export function parseWorkMeta(raw: string): WorkMeta | undefined {
@@ -238,8 +238,7 @@ function pad2(value: number): string {
 }
 
 /**
- * 以下展示格式化函数**从 EditRecord.ets 原样搬来**，行为不许变。
- * EditRecord.ets 仍保留副本，直到 Task 12 才删 —— 这份重复是有意为之。
+ * 以下展示格式化函数**从旧的记录模型原样搬来**，行为不许变 —— 卡片渲染依赖这些格式。
  */
 
 /** 「10月18日 21:04 导出」。时间戳非法时给占位串，卡片不塌。 */
