@@ -43,6 +43,9 @@ export struct AppToast {
           })
       }
       .width('100%')
+      // 必须有 height('100%')：否则这个 Column 只有内容那么高，justifyContent(End)
+      // 没有可推的空间，提示条会跑到屏幕左上角（真机上就是压在状态栏上）。
+      .height('100%')
       .justifyContent(FlexAlign.End)
       .alignItems(HorizontalAlign.Center)
       .padding({ bottom: this.bottomOffset })

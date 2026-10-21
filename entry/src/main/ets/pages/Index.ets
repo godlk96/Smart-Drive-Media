@@ -268,7 +268,7 @@ struct Index {
   /**
    * 弹提示。成功类 2.2 秒，失败类传 3.2 秒 —— 出错的话要读完，不能一晃就没。
    */
-  private showToast(message: string, durationMs: number = 2200): void {
+  private showToast(message: string, durationMs: number = 3000): void {
     this.toastText = message
     this.toastVisible = true
     if (this.toastTimer >= 0) {
@@ -395,7 +395,7 @@ struct Index {
     } catch (error) {
       // 契约上不该走到这里；真出现未预期异常也要如实告知，不静默吞掉。
       const message = error instanceof Error ? error.message : String(error)
-      this.showToast(`没存进相册：${message}`, 3200)
+      this.showToast(`没存进相册：${message}`, 3800)
     } finally {
       this.albumSaveVisible = false
     }
@@ -425,7 +425,7 @@ struct Index {
     const ok = await this.viewModel.deleteSelectedRecords()
     this.syncViewState()
     if (!ok) {
-      this.showToast('没删掉，再试一次', 3200)
+      this.showToast('没删掉，再试一次', 3800)
     }
   }
 

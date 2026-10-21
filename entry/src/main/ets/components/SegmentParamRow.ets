@@ -44,9 +44,13 @@ export struct SegmentParamRow {
       .fontWeight(FontWeight.Medium)
       .fontColor($r('app.color.text_primary'))
       .textAlign(TextAlign.Center)
-      .height(40)
+      .height(44)
       .padding({ left: 6, right: 6 })
-      .onClick(() => {
+      .stateStyles({
+      normal: { .opacity(1) },
+      pressed: { .opacity(0.45) }
+    })
+    .onClick(() => {
         if (this.onCycleSpeed) {
           this.onCycleSpeed()
         }
@@ -62,10 +66,14 @@ export struct SegmentParamRow {
         iconColor: this.segment.muted ? $r('app.color.text_disabled') : $r('app.color.text_primary')
       })
     }
-    .width(40)
-    .height(40)
+    .width(44)
+    .height(44)
     // 拆掉盒子之后热区之间没有视觉分界，补 10 的间距，免得剪一刀剪到隔壁的 ✕
     .margin({ left: 10 })
+    .stateStyles({
+      normal: { .opacity(1) },
+      pressed: { .opacity(0.45) }
+    })
     .onClick(() => {
       if (this.onToggleMute) {
         this.onToggleMute()
@@ -82,9 +90,13 @@ export struct SegmentParamRow {
         iconColor: this.canScissors ? $r('app.color.text_primary') : $r('app.color.text_disabled')
       })
     }
-    .width(40)
-    .height(40)
+    .width(44)
+    .height(44)
     .margin({ left: 10 })
+    .stateStyles({
+      normal: { .opacity(1) },
+      pressed: { .opacity(0.45) }
+    })
     .onClick(() => {
       if (this.onScissors) {
         this.onScissors()
@@ -101,9 +113,13 @@ export struct SegmentParamRow {
         iconColor: this.canToggle ? $r('app.color.text_tertiary') : $r('app.color.text_disabled')
       })
     }
-    .width(40)
-    .height(40)
+    .width(44)
+    .height(44)
     .margin({ left: 10 })
+    .stateStyles({
+      normal: { .opacity(1) },
+      pressed: { .opacity(0.45) }
+    })
     .onClick(() => {
       if (this.canToggle) {
         if (this.onDeleteSegment) {

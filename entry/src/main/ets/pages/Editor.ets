@@ -448,7 +448,7 @@ struct Editor {
    * 弹提示。`tappable=true` 时这条提示可点（见 handleToastTap），默认不可点 ——
    * 剪刀、模板、取消导出那类提示点一下不该有任何跳转，否则会莫名其妙退出剪辑页。
    */
-  private showToast(message: string, tappable: boolean = false, durationMs: number = 2200): void {
+  private showToast(message: string, tappable: boolean = false, durationMs: number = 3000): void {
     this.toastText = message
     this.toastTappable = tappable
     this.toastVisible = true
