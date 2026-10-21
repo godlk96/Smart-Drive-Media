@@ -85,7 +85,7 @@ export function workMetaCases(): Array<TimelineCase> {
     const meta = new WorkMeta()
     meta.id = 'w-rt'
     meta.exportedAt = 1759296000000
-    meta.templateId = 'T3'
+    meta.templateId = 'T5'
     const back = parseWorkMeta(serializeWorkMeta(meta))
     if (!back) {
       return '往返解析失败'
@@ -93,7 +93,7 @@ export function workMetaCases(): Array<TimelineCase> {
     return firstError([
       expectString(back.id, 'w-rt', 'id'),
       expectNumber(back.exportedAt, 1759296000000, 'exportedAt'),
-      expectString(back.templateId, 'T3', 'templateId')
+      expectString(back.templateId, 'T5', 'templateId')
     ])
   }))
 
@@ -205,8 +205,8 @@ export function workMetaCases(): Array<TimelineCase> {
       expectString(formatExportTime(0), '导出时间未知', '导出时间'),
       expectString(formatClockDuration(32000), '00:32', '时长'),
       expectString(formatRecordSummary(2, 32000), '2 段 · 00:32', '摘要'),
-      expectNumber(templateSlotCount('T5'), 1, '机位数'),
-      expectString(formatRecordSlotCount('T5'), '1 机位', '机位串'),
+      expectNumber(templateSlotCount('T1'), 1, '机位数'),
+      expectString(formatRecordSlotCount('T1'), '1 机位', '机位串'),
       expectString(formatRecordSlotCount('TX'), '', '未知模板')
     ])
   }))

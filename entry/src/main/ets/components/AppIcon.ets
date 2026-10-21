@@ -203,8 +203,13 @@ export struct AppIcon {
  * 「这一屏会切成几格、谁大谁小」。所以这里直接按 Models.ets 的 `previewSlots`
  * 逐槽画方块 —— 缩略图与进画面后看到的分屏必然一致，改比例时图标自动跟着对。
  */
-/** 槽位之间的缝隙（每边内缩一半，相邻两格之间就是 3vp）。 */
-const SLOT_GAP: number = 1.5
+/**
+ * 槽位之间的缝隙（每边内缩一半，相邻两格之间就是 1vp）。
+ *
+ * 不能再小了：0 的话相邻两格会融成一整块，2 格版式和 4 格版式看起来一模一样。
+ * 1vp 是"紧挨着、但数得清"的下限 —— 成片里机位之间也有一条这样的细缝。
+ */
+const SLOT_GAP: number = 0.5
 
 @Component
 export struct TemplateGlyph {

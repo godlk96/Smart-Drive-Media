@@ -128,22 +128,22 @@ int evenValue(int value)
 }
 
 struct NativeTemplateContract {
-    const char *templateId = "T2";
+    const char *templateId = "T3";
     int targetWidth = 1920;
     int targetHeight = 1620;
     bool needSideTrack = true;
     bool disableFrontAudio = false;
-    /** T6 四机位专用：除 front/back/side 之外还需要第 4 路（右下 = 右后）轨道。 */
+    /** T4 四机位专用：除 front/back/side 之外还需要第 4 路（右下 = 右后）轨道。 */
     bool needSide2Track = false;
 };
 
 const std::array<NativeTemplateContract, 6> kNativeTemplateContracts = {{
-    {"T1", 1920, 2160, false, false, false},
-    {"T2", 1920, 1620, true, false, false},
-    {"T3", 3840, 1080, false, true, false},
-    {"T4", 3840, 1080, true, false, false},
-    {"T5", 1920, 1080, false, false, false},
-    {"T6", 3840, 2160, true, false, true},
+    {"T1", 1920, 1080, false, false, false},  // 单视角
+    {"T2", 1920, 2160, false, false, false},  // 双录（上下）
+    {"T3", 1920, 1620, true, false, false},   // 三机位（上一下二）
+    {"T4", 3840, 2160, true, false, true},    // 四机位 2×2
+    {"T5", 3840, 1080, false, true, false},   // 左右盲区（左右）
+    {"T6", 3840, 1080, true, false, false},   // 沉浸式（三分屏）
 }};
 
 const NativeTemplateContract *findTemplateContract(const std::string &templateId)
@@ -276,21 +276,21 @@ std::string buildTemplateFilterDesc(const std::string &templateId,
     const std::string bottomRight = labelPrefix + "br";
     const std::string out = "[" + outLabel + "]";
     const std::string formatFilter = ",format=pix_fmts=" + (pixFmt.empty() ? "yuv420p" : pixFmt) + ",setsar=1";
-    if (templateId == "T1") {
+    if (templateId == "T2") {
         std::ostringstream oss;
         oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << top << "];"
             << buildMovieSourceFilter(backPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << bottom << "];"
             << "[" << top << "][" << bottom << "]vstack=inputs=2" << formatFilter << out;
         return oss.str();
     }
-    if (templateId == "T3") {
+    if (templateId == "T5") {
         std::ostringstream oss;
         oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << left << "];"
             << buildMovieSourceFilter(backPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << right << "];"
             << "[" << left << "][" << right << "]hstack=inputs=2" << formatFilter << out;
         return oss.str();
     }
-    if (templateId == "T4") {
+    if (templateId == "T6") {
         std::ostringstream oss;
         oss << buildMovieSourceFilter(sidePath, "scale=1920:1080,crop=960:1080:960:0", startSec, endSec, speed, frameRate) << "[" << left << "];"
             << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << middle << "];"
@@ -298,7 +298,7 @@ std::string buildTemplateFilterDesc(const std::string &templateId,
             << "[" << left << "][" << middle << "][" << right << "]hstack=inputs=3" << formatFilter << out;
         return oss.str();
     }
-    if (templateId == "T2") {
+    if (templateId == "T3") {
         std::ostringstream oss;
         oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << top << "];"
             << buildMovieSourceFilter(sidePath, "scale=960:540", startSec, endSec, speed, frameRate) << "[" << bottomLeft << "];"
@@ -307,13 +307,13 @@ std::string buildTemplateFilterDesc(const std::string &templateId,
             << "[" << top << "][" << bottom << "]vstack=inputs=2" << formatFilter << out;
         return oss.str();
     }
-    if (templateId == "T5") {
+    if (templateId == "T1") {
         std::ostringstream oss;
         oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec, speed, frameRate)
             << formatFilter << out;
         return oss.str();
     }
-    if (templateId == "T6") {
+    if (templateId == "T4") {
         // 四机位 2×2：左上=前、右上=后、左下=左后、右下=右后。
         // 画布 3840×2160，每格 1920×1080 正好等于各机位原生分辨率 —— 只做等比缩放 + 居中补边，
         // 不裁剪、不拉伸，源是 1920×1080 时 scale 与 pad 都是恒等变换，零重采样损失。
@@ -1579,14 +1579,14 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
 
     const NativeTemplateContract &templateContract = resolveTemplateContract(templateId);
     const std::string normalizedTemplate = templateContract.templateId;
-    const bool needBackTrack = normalizedTemplate != "T5";
+    const bool needBackTrack = normalizedTemplate != "T1";
     const std::pair<int, int> targetResolution = resolveTemplateTargetResolution(templateContract);
     logPipeline("template", "apply " + normalizedTemplate + " target=" + std::to_string(targetResolution.first) +
         "x" + std::to_string(targetResolution.second));
     const bool needSideTrack = templateContract.needSideTrack;
     const bool needSide2Track = templateContract.needSide2Track;
     const std::vector<std::string> sideSource = !sideUris.empty() ? sideUris : backUris;
-    // 第 4 路刻意**不做回退**：T6 右下格是「右后」，拿别的机位顶替只会静默产出一段机位错误的画面，
+    // 第 4 路刻意**不做回退**：T4 右下格是「右后」，拿别的机位顶替只会静默产出一段机位错误的画面，
     // 宁可让导出明确失败，也不要"看起来成功但内容是错的"。
     const std::vector<std::string> side2Source = side2Uris;
     int64_t checkedInputs = 0;

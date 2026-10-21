@@ -727,7 +727,7 @@ function checkColorReferences() {
  *   - `AppConstants.getTemplateUiNameById()` —— TemplateStrip 优先用它；
  *   - `Models.ets` 的 `TEMPLATE_DEFINITION_MAP[].title` —— 取不到时的回落，也是导出/日志里的名字。
  *
- * 两处曾经漂移过：T3 一边叫「左右盲区」一边叫「侧向防开门杀」，T5 一边叫「单视角」
+ * 两处曾经漂移过：T5 一边叫「左右盲区」一边叫「侧向防开门杀」，T1 一边叫「单视角」
  * 一边叫「单前视」。界面上看不出来（走的是前者），但日志、回落路径和导出元数据会显示另一个名字。
  * AppConstants 依赖 @kit.AbilityKit，进不了本文件的纯模块 BFS，所以这里按文本对账。
  */

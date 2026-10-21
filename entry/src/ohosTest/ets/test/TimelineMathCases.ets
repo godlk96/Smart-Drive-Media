@@ -366,9 +366,9 @@ export function timelineMathCases(): Array<TimelineCase> {
 
   // ---------- 模板几何（单一来源） ----------
   cases.push({
-    name: 'PreviewLayout: T1 上下堆叠两槽，几何铺满',
+    name: 'PreviewLayout: T2 上下堆叠两槽，几何铺满',
     run: (): string => {
-      const g = buildSlotGeometry('T1')
+      const g = buildSlotGeometry('T2')
       return firstError([
         expectNumber(g.length, 2, '槽数'),
         expectString(g[0].camera, 'Front', 'slot0 camera'),
@@ -382,9 +382,9 @@ export function timelineMathCases(): Array<TimelineCase> {
   })
 
   cases.push({
-    name: 'PreviewLayout: T2 倒品字三槽',
+    name: 'PreviewLayout: T3 倒品字三槽',
     run: (): string => {
-      const g = buildSlotGeometry('T2')
+      const g = buildSlotGeometry('T3')
       return firstError([
         expectNumber(g.length, 3, '槽数'),
         expectString(g[0].camera, 'Front', 'slot0'),
@@ -398,9 +398,9 @@ export function timelineMathCases(): Array<TimelineCase> {
   })
 
   cases.push({
-    name: 'PreviewLayout: T3 左右分屏两槽',
+    name: 'PreviewLayout: T5 左右分屏两槽',
     run: (): string => {
-      const g = buildSlotGeometry('T3')
+      const g = buildSlotGeometry('T5')
       return firstError([
         expectNumber(g.length, 2, '槽数'),
         expectString(g[0].camera, 'Left', 'slot0'),
@@ -412,9 +412,9 @@ export function timelineMathCases(): Array<TimelineCase> {
   })
 
   cases.push({
-    name: 'PreviewLayout: T4 三栏宽度 0.25/0.5/0.25 且两侧 zoomX=2（与原生 hstack 960/1920/960 一致）',
+    name: 'PreviewLayout: T6 三栏宽度 0.25/0.5/0.25 且两侧 zoomX=2（与原生 hstack 960/1920/960 一致）',
     run: (): string => {
-      const g = buildSlotGeometry('T4')
+      const g = buildSlotGeometry('T6')
       return firstError([
         expectNumber(g.length, 3, '槽数'),
         expectString(g[0].camera, 'LeftFront', 'slot0'),
@@ -434,9 +434,9 @@ export function timelineMathCases(): Array<TimelineCase> {
   })
 
   cases.push({
-    name: 'PreviewLayout: T5 单视角一槽铺满',
+    name: 'PreviewLayout: T1 单视角一槽铺满',
     run: (): string => {
-      const g = buildSlotGeometry('T5')
+      const g = buildSlotGeometry('T1')
       return firstError([
         expectNumber(g.length, 1, '槽数'),
         expectString(g[0].camera, 'Front', 'slot0'),
@@ -521,10 +521,10 @@ export function timelineMathCases(): Array<TimelineCase> {
   })
 
   cases.push({
-    name: 'PreviewLayout: 画布宽高比与原生契约一致（T1 0.8889 / T2 1.1852 / T3 3.5556 / T4 3.5556 / T5 1.7778 / T6 1.7778）',
+    name: 'PreviewLayout: 画布宽高比与原生契约一致（T2 0.8889 / T3 1.1852 / T5 3.5556 / T6 3.5556 / T1 1.7778 / T4 1.7778）',
     run: (): string => {
       const errors: Array<string> = []
-      const expected: Array<string> = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6']
+      const expected: Array<string> = ['T2', 'T3', 'T5', 'T6', 'T1', 'T4']
       const ratios: Array<number> = [1920 / 2160, 1920 / 1620, 3840 / 1080, 3840 / 1080, 1920 / 1080, 3840 / 2160]
       for (let i = 0; i < expected.length; i++) {
         const actual = templateAspectRatio(expected[i])
@@ -537,12 +537,12 @@ export function timelineMathCases(): Array<TimelineCase> {
   })
 
   cases.push({
-    name: 'PreviewLayout: 时钟轨优先 Front，T3 退化为声明顺序第一个',
+    name: 'PreviewLayout: 时钟轨优先 Front，T5 退化为声明顺序第一个',
     run: (): string => {
       return firstError([
-        expectString(resolveClockCamera('T2'), 'Front', 'T2'),
-        expectString(resolveClockCamera('T3'), 'Left', 'T3 无 Front'),
-        expectString(resolveClockCamera('T4'), 'Front', 'T4')
+        expectString(resolveClockCamera('T3'), 'Front', 'T3'),
+        expectString(resolveClockCamera('T5'), 'Left', 'T5 无 Front'),
+        expectString(resolveClockCamera('T6'), 'Front', 'T6')
       ])
     }
   })
@@ -551,10 +551,10 @@ export function timelineMathCases(): Array<TimelineCase> {
     name: 'PreviewLayout: 模板是否使用某机位可判定（用于槽位切模板时决定是否换源）',
     run: (): string => {
       return firstError([
-        expectTrue(templateUsesCamera('T2', 'Left'), 'T2 用 Left'),
-        expectTrue(!templateUsesCamera('T2', 'LeftFront'), 'T2 不用 LeftFront'),
-        expectTrue(templateUsesCamera('T4', 'LeftFront'), 'T4 用 LeftFront'),
-        expectTrue(!templateUsesCamera('T5', 'Right'), 'T5 不用 Right')
+        expectTrue(templateUsesCamera('T3', 'Left'), 'T3 用 Left'),
+        expectTrue(!templateUsesCamera('T3', 'LeftFront'), 'T3 不用 LeftFront'),
+        expectTrue(templateUsesCamera('T6', 'LeftFront'), 'T6 用 LeftFront'),
+        expectTrue(!templateUsesCamera('T1', 'Right'), 'T1 不用 Right')
       ])
     }
   })
@@ -573,7 +573,7 @@ export function timelineMathCases(): Array<TimelineCase> {
   cases.push({
     name: 'PreviewLayout: toLegacyCamera 与 DvrMeta.camera 命名空间一致',
     run: (): string => {
-      const g = buildSlotGeometry('T4')
+      const g = buildSlotGeometry('T6')
       const errors: Array<string> = []
       for (let i = 0; i < g.length; i++) {
         if (['Front', 'Back', 'Left', 'Right', 'LeftFront', 'RightFront'].indexOf(g[i].camera) < 0) {
@@ -613,7 +613,7 @@ export function timelineMathCases(): Array<TimelineCase> {
     run: (): string => {
       const def = resolveTemplateDefinition('NOPE')
       return firstError([
-        expectString(def.templateId, 'T5', '默认模板'),
+        expectString(def.templateId, 'T1', '默认模板'),
         expectNumber(def.previewSlots.length > 0 ? 1 : 0, 1, '有槽位定义')
       ])
     }
@@ -622,7 +622,7 @@ export function timelineMathCases(): Array<TimelineCase> {
   cases.push({
     name: 'Models: toLegacyCamera 映射覆盖全部 CameraPosition',
     run: (): string => {
-      const def = resolveTemplateDefinition('T4')
+      const def = resolveTemplateDefinition('T6')
       const errors: Array<string> = []
       for (let i = 0; i < def.slotBindings.length; i++) {
         const legacy = toLegacyCamera(def.slotBindings[i].camera)

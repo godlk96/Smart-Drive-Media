@@ -238,7 +238,7 @@ export class CoreBridge {
    * 按 sidecar 记下的行程起止时间，在扫描结果里找回**整趟**行程。
    *
    * 为什么需要它：sidecar 的 `tracks` 只记导出那一刻真正送进编码器的轨道。
-   * 用单视角（T5）导出时只有 front 一条（T5 的 `backTrackCandidates` 也配成 front），
+   * 用单视角（T1）导出时只有 front 一条（T1 的 `backTrackCandidates` 也配成 front），
    * 于是还原出来的"现场"只剩一路画面 —— 可用户一个视角都没删。
    *
    * 只认 `startTs` / `endTs` 精确匹配，不做"哪一趟最像"的模糊兜底：

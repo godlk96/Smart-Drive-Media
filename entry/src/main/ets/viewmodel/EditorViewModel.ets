@@ -212,13 +212,13 @@ export class EditorViewModel {
 
   getPreviewAspectRatio(templateId: string): number {
     const template = resolveTemplateDefinition(templateId)
-    if (template.templateId === TemplateId.T1) {
+    if (template.templateId === TemplateId.T2) {
       return 1920 / 2160
     }
-    if (template.templateId === TemplateId.T2) {
+    if (template.templateId === TemplateId.T3) {
       return 1920 / 1620
     }
-    if (template.templateId === TemplateId.T3 || template.templateId === TemplateId.T4) {
+    if (template.templateId === TemplateId.T5 || template.templateId === TemplateId.T6) {
       return 3840 / 1080
     }
     return 16 / 9

@@ -15,7 +15,7 @@ const THUMB_JPEG_QUALITY: number = 92
 const THUMB_TIME_US: number = 0
 // 缓存版本号：取帧尺寸/质量一变就必须递增。isUsableThumbnail 只检查文件 size > 0，
 // 不校验分辨率，否则上一版 480×270 的旧文件会被当有效缓存复用，改了参数也不生效。
-// v3：首帧改为按源画面比例取帧（v2 一律压成 16:9，T3/T4 的 32:9 成片被横向拉扁）。
+// v3：首帧改为按源画面比例取帧（v2 一律压成 16:9，T5/T6 的 32:9 成片被横向拉扁）。
 const THUMB_CACHE_VERSION: string = 'v3'
 
 /**
@@ -31,7 +31,7 @@ export const THUMB_CACHE_TAG: string = `thumb_${THUMB_CACHE_VERSION}_`
  * 按源画面比例算取帧高度，保证不被拉伸。
  *
  * `fetchFrameByTime` 的 `PixelMapParams` 是**非等比缩放**：给多少宽高就硬压成多少，
- * 3840×1080（T3 左右分屏 / T4 三分屏）塞进 1920×1080 会被横向压扁三分之一。
+ * 3840×1080（T5 左右分屏 / T6 三分屏）塞进 1920×1080 会被横向压扁三分之一。
  * 所以高度要跟着源比例走，让卡片那边用 `ImageFit.Cover` 去裁，而不是在这里压。
  *
  * @param sourceAspectRatio 源宽/源高；<=0 或不合法时退回 16:9
@@ -44,7 +44,7 @@ function resolveFrameHeight(sourceAspectRatio: number): number {
   if (natural < 1) {
     return 1
   }
-  // 极端竖片（T1 是 8:9，正常）兜个上限，避免算出天量像素把解码器打爆。
+  // 极端竖片（T2 是 8:9，正常）兜个上限，避免算出天量像素把解码器打爆。
   if (natural > THUMB_WIDTH * 2) {
     return THUMB_WIDTH * 2
   }
@@ -55,7 +55,7 @@ interface NativeExportPipelineRequest {
   frontUris: Array<string>
   backUris: Array<string>
   sideUris: Array<string>
-  /** T6 四机位专用第 4 路（右下 / 右后）；其余模板为空数组。 */
+  /** T4 四机位专用第 4 路（右下 / 右后）；其余模板为空数组。 */
   side2Uris: Array<string>
   templateId: string
   expectedDurationSec: number
@@ -343,7 +343,7 @@ export async function executeComposeByService(
   if (isolatedRequest.frontUris.length === 0 || isolatedRequest.backUris.length === 0) {
     throw new Error('导出失败：前后路素材不足')
   }
-  if (isolatedRequest.templateId === 'T6' && isolatedRequest.side2Uris.length === 0) {
+  if (isolatedRequest.templateId === 'T4' && isolatedRequest.side2Uris.length === 0) {
     throw new Error('导出失败：四机位模板需要右后（Right）素材')
   }
   if (typeof runPipelineAsync !== 'function') {

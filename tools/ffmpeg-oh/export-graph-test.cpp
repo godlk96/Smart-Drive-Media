@@ -7,7 +7,7 @@ int main(int argc, char **argv)
     if (argc != 3) return 2;
     resetNativeExportProgress();
     cancelNativeExport();
-    const std::string cancelled = runExportEnginePipeline({"missing"}, {"missing"}, {}, {}, "T5", 1, "missing.mp4", 0, 1, {});
+    const std::string cancelled = runExportEnginePipeline({"missing"}, {"missing"}, {}, {}, "T1", 1, "missing.mp4", 0, 1, {});
     if (cancelled.find("cancelled") == std::string::npos) {
         std::cerr << "queued cancellation was lost: " << cancelled << '\n';
         return 3;
@@ -32,18 +32,18 @@ int main(int argc, char **argv)
     for (const double speed : {0.75, 1.0, 1.5, 2.0}) {
         const std::vector<NativeExportSegment> segments = {{40125, 41625, speed, false}};
         const std::string name = "speed_" + std::to_string(speed);
-        emit(name, "video", buildSegmentsVideoDesc("T5", source, source, source, source, segments, {20, 1}));
+        emit(name, "video", buildSegmentsVideoDesc("T1", source, source, source, source, segments, {20, 1}));
         emit(name, "audio", buildSegmentsAudioDesc(source, segments));
     }
     const std::vector<NativeExportSegment> multi = {
         {125, 1625, 0.75, false}, {40125, 41625, 2.0, true}, {50125, 51625, 1.5, false}
     };
-    emit("multi", "video", buildSegmentsVideoDesc("T5", source, source, source, source, multi, {20, 1}));
+    emit("multi", "video", buildSegmentsVideoDesc("T1", source, source, source, source, multi, {20, 1}));
     emit("multi", "audio", buildSegmentsAudioDesc(source, multi));
     const std::vector<NativeExportSegment> crossing = {{58125, 61125, 1.5, false}};
-    emit("file_boundary", "video", buildSegmentsVideoDesc("T5", joined, joined, joined, joined, crossing, {20, 1}));
+    emit("file_boundary", "video", buildSegmentsVideoDesc("T1", joined, joined, joined, joined, crossing, {20, 1}));
     emit("file_boundary", "audio", buildSegmentsAudioDesc(joined, crossing));
-    for (const std::string &id : {"T1", "T2", "T3", "T4", "T5", "T6"}) {
+    for (const std::string &id : {"T2", "T3", "T5", "T6", "T1", "T4"}) {
         emit(id, "video", buildSegmentsVideoDesc(id, source, source, source, source,
             {{45125, 45625, 1.0, false}}, {20, 1}));
     }

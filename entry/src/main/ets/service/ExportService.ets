@@ -6,7 +6,7 @@ class TemplateTrackSelection {
   frontUris: Array<string> = []
   backUris: Array<string> = []
   sideUris: Array<string> = []
-  /** 第 4 路（T6 四机位的右下 / 右后）。 */
+  /** 第 4 路（T4 四机位的右下 / 右后）。 */
   side2Uris: Array<string> = []
 }
 
@@ -89,7 +89,7 @@ function resolveTemplateTracks(
   const selection = new TemplateTrackSelection()
   const definition = resolveTemplateDefinition(templateId)
   const ffmpegPolicy = definition.ffmpegPolicy
-  const isT2Template = definition.templateId === 'T2'
+  const isT2Template = definition.templateId === 'T3'
   const frontCandidates = ffmpegPolicy.frontTrackCandidates.map((camera) => toLegacyCamera(camera))
   const backCandidates = ffmpegPolicy.backTrackCandidates.map((camera) => toLegacyCamera(camera))
   const sideCandidates = ffmpegPolicy.sideTrackCandidates.map((camera) => toLegacyCamera(camera))

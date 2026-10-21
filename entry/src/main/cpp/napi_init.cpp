@@ -235,7 +235,7 @@ static bool parseExportPipelineRequest(napi_env env, napi_callback_info info, Na
         error = makeErrorResult(EXPORT_ERR_INVALID_ARG, "ERR_SIDE_URIS_INVALID");
         return false;
     }
-    // 第 4 路（T6 四机位的右下 / 右后）。可选：只有 T6 会带，其余模板缺省为空。
+    // 第 4 路（T4 四机位的右下 / 右后）。可选：只有 T4 会带，其余模板缺省为空。
     request.side2Uris.clear();
     napi_value side2Value = nullptr;
     if (getNamedProperty(env, args[0], "side2Uris", side2Value) &&

@@ -54,7 +54,7 @@ export struct WorkCard {
    * 直接列机位名，一眼看得出差别。
    *
    * 模板还认得才列名字：`templateSlotCount` 对未知模板返回 0，用它当判据 ——
-   * 不能直接看 `resolveTemplateDefinition` 的返回值，它对未知值会兜底成 T5，
+   * 不能直接看 `resolveTemplateDefinition` 的返回值，它对未知值会兜底成 T1，
    * 于是老作品会被显示成「前」。
    */
   private cameraText(): string {

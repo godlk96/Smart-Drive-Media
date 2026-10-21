@@ -3,7 +3,7 @@
  *
  * 这里刻意**不再保存第二套几何定义**。
  * 旧的 EditorPreviewArea.resolveLayout() 与 Models.TEMPLATE_DEFINITION_MAP[].previewSlots 是两份会漂移的副本，
- * T4 就已经漂了（预览 0.25/0.5/0.25，模型 0.3333/0.3334/0.3333），
+ * T6 就已经漂了（预览 0.25/0.5/0.25，模型 0.3333/0.3334/0.3333），
  * 而原生导出（entry/src/main/cpp/export_engine.cpp:264-270）用的是 960/1920/960 = 0.25/0.5/0.25。
  * 现在唯一来源是 TEMPLATE_DEFINITION_MAP，本文件只负责把它翻译成可渲染的槽位。
  */
@@ -19,9 +19,9 @@ import {
 /**
  * 常驻槽位数量上限。组件树里永远渲染这么多个 XComponent，模板只改属性，避免重建 Surface。
  *
- * 取 4 是因为 T6「四机位」是 2×2 四宫格。对 T1–T5 来说多出来的第 4 个槽位
+ * 取 4 是因为 T4「四机位」是 2×2 四宫格。对 T2–T1 来说多出来的第 4 个槽位
  * `visible=false` 且 `bindSegments([])`，既不显示也不解码，代价与原来第 3 个槽位在
- * T1/T5 下闲置时完全一致。
+ * T2/T1 下闲置时完全一致。
  */
 export const MAX_PREVIEW_SLOTS: number = 4
 

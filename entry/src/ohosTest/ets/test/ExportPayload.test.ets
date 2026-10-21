@@ -29,7 +29,7 @@ export default function exportPayloadTest(): void {
   describe('Export.payload', () => {
     it('导出快照携带行程全部片段（裁剪由 range 参数在 native 侧执行）', 0, () => {
       const state = createEditorStateFromSnapshot(
-        buildSnapshotWithClips(2), 'session-2', 'T2', createFullSegment(120), true, true, '待导出'
+        buildSnapshotWithClips(2), 'session-2', 'T3', createFullSegment(120), true, true, '待导出'
       )
       const snapshot: ExportSnapshot = deepCloneExportSnapshot(state)
       const frontTrack = snapshot.trip.tracks.FRONT
@@ -38,7 +38,7 @@ export default function exportPayloadTest(): void {
 
     it('导出快照默认区间为整条行程（0 ~ durationMs）', 0, () => {
       const state = createEditorStateFromSnapshot(
-        buildSnapshotWithClips(2), 'session-3', 'T2', createFullSegment(120), true, true, '待导出'
+        buildSnapshotWithClips(2), 'session-3', 'T3', createFullSegment(120), true, true, '待导出'
       )
       const snapshot = deepCloneExportSnapshot(state)
       expect(snapshot.playback.segments.length).assertEqual(1)
@@ -48,7 +48,7 @@ export default function exportPayloadTest(): void {
 
     it('区间可被赋值为非零起点，且深拷贝后保持独立（不共享引用）', 0, () => {
       const state = createEditorStateFromSnapshot(
-        buildSnapshotWithClips(2), 'session-4', 'T2', createFullSegment(120), true, true, '待导出'
+        buildSnapshotWithClips(2), 'session-4', 'T3', createFullSegment(120), true, true, '待导出'
       )
       state.playback.segments[0].startMs = 30000
       state.playback.segments[0].endMs = 90000
@@ -61,15 +61,15 @@ export default function exportPayloadTest(): void {
 
     it('导出快照携带模板与水印开关', 0, () => {
       const state = createEditorStateFromSnapshot(
-        buildSnapshotWithClips(1), 'session-5', 'T5', createFullSegment(120), true, true, '待导出'
+        buildSnapshotWithClips(1), 'session-5', 'T1', createFullSegment(120), true, true, '待导出'
       )
       const snapshot = deepCloneExportSnapshot(state)
-      expect(snapshot.selectedTemplateId).assertEqual('T5')
+      expect(snapshot.selectedTemplateId).assertEqual('T1')
       expect(snapshot.brand.watermarkEnabled).assertTrue()
     })
     it('默认整段覆盖全片', 0, () => {
       const state = createEditorStateFromSnapshot(
-        buildSnapshotWithClips(2), 'session-6', 'T2', createFullSegment(120), true, true, '待导出'
+        buildSnapshotWithClips(2), 'session-6', 'T3', createFullSegment(120), true, true, '待导出'
       )
       expect(state.segments.length).assertEqual(1)
       expect(state.segments[0].endSec).assertEqual(120)

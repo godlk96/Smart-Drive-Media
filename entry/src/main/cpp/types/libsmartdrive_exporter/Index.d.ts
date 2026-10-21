@@ -9,7 +9,7 @@ export interface NativeExportPipelineRequest {
   frontUris: Array<string>
   backUris: Array<string>
   sideUris: Array<string>
-  /** T6 四机位专用第 4 路（右下 / 右后）。其余模板为空数组。 */
+  /** T4 四机位专用第 4 路（右下 / 右后）。其余模板为空数组。 */
   side2Uris: Array<string>
   templateId: string
   expectedDurationSec: number

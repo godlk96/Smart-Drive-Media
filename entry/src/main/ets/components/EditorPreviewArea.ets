@@ -134,8 +134,8 @@ export struct EditorPreviewArea {
     for (let i = 0; i < MAX_PREVIEW_SLOTS; i++) {
       const camera = defaultCameras[i]
       // 出声轨**不再**由这里按槽位下标决定（曾经是 `i === 0`）：槽位下标与机位不是一回事，
-      // 只有 front 文件带音轨，而 T4 的槽位顺序是 LeftFront/Front/RightFront，
-      // 按 `i === 0` 会让 T4 预览没有声音（缺陷 7.2）。
+      // 只有 front 文件带音轨，而 T6 的槽位顺序是 LeftFront/Front/RightFront，
+      // 按 `i === 0` 会让 T6 预览没有声音（缺陷 7.2）。
       // 现在由 SingleTrackController 按机位（camera === 'Front'）自行判断。
       const controller = new SingleTrackController(`slot_${i}`, camera)
       // 这一格换段后出画了就报一声，遮罩靠它判断什么时候可以撤。

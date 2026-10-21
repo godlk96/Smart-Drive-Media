@@ -46,12 +46,12 @@ function makeEditedSegment(): Segment {
   return segment
 }
 
-/** 存进历史的那份快照：模板 T3、关水印、一个改过边界的段。 */
+/** 存进历史的那份快照：模板 T5、关水印、一个改过边界的段。 */
 function makeStored(): ExportSnapshot {
   const live = makeLive()
   const segment = makeEditedSegment()
   return deepCloneExportSnapshot(
-    createEditorStateFromSnapshot(live, 's1', 'T3', [segment], false, true, '待导出'))
+    createEditorStateFromSnapshot(live, 's1', 'T5', [segment], false, true, '待导出'))
 }
 
 export function editRestoreCases(): Array<TimelineCase> {
@@ -90,7 +90,7 @@ export function editRestoreCases(): Array<TimelineCase> {
     const stored = makeStored()
     const live = makeLive()
     const restored = restoreEditorStateFromSnapshot(stored, live, 's2', '待导出')
-    return expectString(restored.selectedTemplateId, TemplateId.T3, '模板取记录')
+    return expectString(restored.selectedTemplateId, TemplateId.T5, '模板取记录')
   }))
 
   cases.push(makeCase('还原用记录水印', () => {

@@ -9,41 +9,41 @@ export const REQUIRED_MEDIA_PERMISSIONS: Array<Permissions> = [
 ]
 
 export function getTemplateUiNameById(templateId: string): string {
-  if (templateId === 'T1') {
+  if (templateId === 'T2') {
     return '防追尾双录'
   }
-  if (templateId === 'T2') {
+  if (templateId === 'T3') {
     return '避险防加塞'
   }
-  if (templateId === 'T3') {
+  if (templateId === 'T5') {
     return '左右盲区'
   }
-  if (templateId === 'T4') {
+  if (templateId === 'T6') {
     return '沉浸式旅拍'
   }
-  if (templateId === 'T5') {
+  if (templateId === 'T1') {
     return '单视角'
   }
-  if (templateId === 'T6') {
+  if (templateId === 'T4') {
     return '四机位'
   }
   return ''
 }
 
 export function getTemplateResolutionById(templateId: string): string {
-  if (templateId === 'T1') {
+  if (templateId === 'T2') {
     return '1920×2160'
   }
-  if (templateId === 'T2') {
+  if (templateId === 'T3') {
     return '1920×1620'
   }
-  if (templateId === 'T3' || templateId === 'T4') {
+  if (templateId === 'T5' || templateId === 'T6') {
     return '3840×1080'
   }
-  if (templateId === 'T5') {
+  if (templateId === 'T1') {
     return '1920×1080'
   }
-  if (templateId === 'T6') {
+  if (templateId === 'T4') {
     return '3840×2160'
   }
   return ''

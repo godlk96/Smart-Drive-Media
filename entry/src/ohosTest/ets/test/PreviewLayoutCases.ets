@@ -16,7 +16,7 @@ import { TemplateDefinition, listTemplateDefinitions } from '../../../main/ets/m
  *
  * 这些断言守卫的是"预览几何与导出几何同源"这件事：
  * 旧代码里 EditorPreviewArea.resolveLayout() 与 Models.TEMPLATE_DEFINITION_MAP[].previewSlots
- * 是两份会漂移的副本，T4 已经漂了。现在只有一份，这里把它的形状钉死，
+ * 是两份会漂移的副本，T6 已经漂了。现在只有一份，这里把它的形状钉死，
  * 任何一次"顺手改一下预览布局"都会让测试红，而不是等到导出的成片里才发现。
  */
 
@@ -30,8 +30,8 @@ function makeCase(name: string, run: () => string): TimelineCase {
 export function previewLayoutCases(): Array<TimelineCase> {
   const cases: Array<TimelineCase> = []
 
-  cases.push(makeCase('buildSlotGeometry: T1 上下两格（Front/Back 各占一半高度）', (): string => {
-    const slots: Array<SlotGeometry> = buildSlotGeometry('T1')
+  cases.push(makeCase('buildSlotGeometry: T2 上下两格（Front/Back 各占一半高度）', (): string => {
+    const slots: Array<SlotGeometry> = buildSlotGeometry('T2')
     if (slots.length !== 2) {
       return `槽位数: 期望 2，实际 ${slots.length}`
     }
@@ -46,8 +46,8 @@ export function previewLayoutCases(): Array<TimelineCase> {
     ])
   }))
 
-  cases.push(makeCase('buildSlotGeometry: T2 倒品字（Front 占上 2/3，左右各占下 1/3）', (): string => {
-    const slots: Array<SlotGeometry> = buildSlotGeometry('T2')
+  cases.push(makeCase('buildSlotGeometry: T3 倒品字（Front 占上 2/3，左右各占下 1/3）', (): string => {
+    const slots: Array<SlotGeometry> = buildSlotGeometry('T3')
     if (slots.length !== 3) {
       return `槽位数: 期望 3，实际 ${slots.length}`
     }
@@ -63,8 +63,8 @@ export function previewLayoutCases(): Array<TimelineCase> {
     ])
   }))
 
-  cases.push(makeCase('buildSlotGeometry: T3 左右分屏（Left/Right 各占一半宽度）', (): string => {
-    const slots: Array<SlotGeometry> = buildSlotGeometry('T3')
+  cases.push(makeCase('buildSlotGeometry: T5 左右分屏（Left/Right 各占一半宽度）', (): string => {
+    const slots: Array<SlotGeometry> = buildSlotGeometry('T5')
     if (slots.length !== 2) {
       return `槽位数: 期望 2，实际 ${slots.length}`
     }
@@ -78,8 +78,8 @@ export function previewLayoutCases(): Array<TimelineCase> {
     ])
   }))
 
-  cases.push(makeCase('buildSlotGeometry: T4 横向三分屏与原生 crop 一致（0.25/0.5/0.25，左右 zoomX=2）', (): string => {
-    const slots: Array<SlotGeometry> = buildSlotGeometry('T4')
+  cases.push(makeCase('buildSlotGeometry: T6 横向三分屏与原生 crop 一致（0.25/0.5/0.25，左右 zoomX=2）', (): string => {
+    const slots: Array<SlotGeometry> = buildSlotGeometry('T6')
     if (slots.length !== 3) {
       return `槽位数: 期望 3，实际 ${slots.length}`
     }
@@ -100,8 +100,8 @@ export function previewLayoutCases(): Array<TimelineCase> {
     ])
   }))
 
-  cases.push(makeCase('buildSlotGeometry: T5 单视角满屏', (): string => {
-    const slots: Array<SlotGeometry> = buildSlotGeometry('T5')
+  cases.push(makeCase('buildSlotGeometry: T1 单视角满屏', (): string => {
+    const slots: Array<SlotGeometry> = buildSlotGeometry('T1')
     if (slots.length !== 1) {
       return `槽位数: 期望 1，实际 ${slots.length}`
     }
@@ -161,7 +161,7 @@ export function previewLayoutCases(): Array<TimelineCase> {
 
   cases.push(makeCase('buildSlotGeometry: 未知模板 id 回退到默认模板', (): string => {
     const fallback: Array<SlotGeometry> = buildSlotGeometry('NOT_A_TEMPLATE')
-    const defaultSlots: Array<SlotGeometry> = buildSlotGeometry('T5')
+    const defaultSlots: Array<SlotGeometry> = buildSlotGeometry('T1')
     return firstError([
       expectNumber(fallback.length, defaultSlots.length, '回退后的槽位数'),
       expectString(fallback[0].slotId, defaultSlots[0].slotId, '回退后的首个 slotId'),
@@ -180,18 +180,18 @@ export function previewLayoutCases(): Array<TimelineCase> {
         problems.push(`${definition.templateId}: 期望 ${expected}，实际 ${actual}`)
       }
     }
-    const t4 = templateAspectRatio('T4')
-    const t5 = templateAspectRatio('T5')
+    const t4 = templateAspectRatio('T6')
+    const t5 = templateAspectRatio('T1')
     return firstError([
       expectTrue(problems.length === 0, problems.join(' ')),
-      expectTrue(Math.abs(t5 - 16 / 9) < 1e-9, `T5 应为 16:9，实际 ${t5}`),
-      // T4 是 3840x1080 的超宽画布；如果这里等于 16:9，说明画布字段没接上。
-      expectTrue(Math.abs(t4 - t5) > 1, `T4(${t4}) 不应等于 T5(${t5})`)
+      expectTrue(Math.abs(t5 - 16 / 9) < 1e-9, `T1 应为 16:9，实际 ${t5}`),
+      // T6 是 3840x1080 的超宽画布；如果这里等于 16:9，说明画布字段没接上。
+      expectTrue(Math.abs(t4 - t5) > 1, `T6(${t4}) 不应等于 T1(${t5})`)
     ])
   }))
 
-  cases.push(makeCase('templateCameras / templateUsesCamera: T4 用到 LeftFront/Front/RightFront', (): string => {
-    const cameras: Array<string> = templateCameras('T4')
+  cases.push(makeCase('templateCameras / templateUsesCamera: T6 用到 LeftFront/Front/RightFront', (): string => {
+    const cameras: Array<string> = templateCameras('T6')
     if (cameras.length !== 3) {
       return `机位数: 期望 3，实际 ${cameras.length}`
     }
@@ -199,26 +199,26 @@ export function previewLayoutCases(): Array<TimelineCase> {
       expectString(cameras[0], 'LeftFront', 'cameras[0]'),
       expectString(cameras[1], 'Front', 'cameras[1]'),
       expectString(cameras[2], 'RightFront', 'cameras[2]'),
-      expectTrue(templateUsesCamera('T4', 'Front'), 'T4 应使用 Front'),
-      expectTrue(!templateUsesCamera('T3', 'Front'), 'T3 不应使用 Front')
+      expectTrue(templateUsesCamera('T6', 'Front'), 'T6 应使用 Front'),
+      expectTrue(!templateUsesCamera('T5', 'Front'), 'T5 不应使用 Front')
     ])
   }))
 
-  cases.push(makeCase('slotIndexOfCamera: T4 的 Front 在中间槽位，T3 的 Back 不存在', (): string => {
+  cases.push(makeCase('slotIndexOfCamera: T6 的 Front 在中间槽位，T5 的 Back 不存在', (): string => {
     return firstError([
-      expectNumber(slotIndexOfCamera('T4', 'Front'), 1, 'T4.Front 槽位下标'),
-      expectNumber(slotIndexOfCamera('T4', 'LeftFront'), 0, 'T4.LeftFront 槽位下标'),
-      expectNumber(slotIndexOfCamera('T3', 'Back'), -1, 'T3 没有 Back 槽位')
+      expectNumber(slotIndexOfCamera('T6', 'Front'), 1, 'T6.Front 槽位下标'),
+      expectNumber(slotIndexOfCamera('T6', 'LeftFront'), 0, 'T6.LeftFront 槽位下标'),
+      expectNumber(slotIndexOfCamera('T5', 'Back'), -1, 'T5 没有 Back 槽位')
     ])
   }))
 
   cases.push(makeCase('resolveClockCamera: 有 Front 就用 Front，否则用声明顺序第一个', (): string => {
     return firstError([
-      expectString(resolveClockCamera('T1'), 'Front', 'T1'),
       expectString(resolveClockCamera('T2'), 'Front', 'T2'),
-      expectString(resolveClockCamera('T5'), 'Front', 'T5'),
-      // T3 只有 Left/Right，没有 Front，只能退化为声明顺序第一个
-      expectString(resolveClockCamera('T3'), 'Left', 'T3')
+      expectString(resolveClockCamera('T3'), 'Front', 'T3'),
+      expectString(resolveClockCamera('T1'), 'Front', 'T1'),
+      // T5 只有 Left/Right，没有 Front，只能退化为声明顺序第一个
+      expectString(resolveClockCamera('T5'), 'Left', 'T5')
     ])
   }))
 

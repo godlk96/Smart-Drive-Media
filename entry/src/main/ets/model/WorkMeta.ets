@@ -62,7 +62,7 @@ export class WorkMeta {
    * 旧 sidecar 没有这个字段，解析成空数组；这时调用方退回用 `tracks` 判定。
    */
   sourceClips: Array<string> = []
-  /** T1..T6；存 string 以容纳未知值（见文件头注释） */
+  /** T2..T4；存 string 以容纳未知值（见文件头注释） */
   templateId: string = ''
   /**
    * 用户改的那部分参数（对应 `ExportSnapshot.playback`）。
@@ -300,28 +300,28 @@ export function formatRecordSummary(segmentCount: number, durationMs: number): s
 /**
  * 模板画出几个画面格子 = 用了几个机位。
  *
- * 与 Models.ets 的 `slotBindings` 一一对应（T1 上下双录 2、T2 倒品字 3、
- * T3 左右分屏 2、T4 三分屏 3、T5 单视角 1、T6 四宫格 4）。这里写成纯查表
+ * 与 Models.ets 的 `slotBindings` 一一对应（T2 上下双录 2、T3 倒品字 3、
+ * T5 左右分屏 2、T6 三分屏 3、T1 单视角 1、T4 四宫格 4）。这里写成纯查表
  * 而不是 import `TEMPLATE_DEFINITION_MAP`，是因为本文件要能被
  * tools/offline-test.mjs 直接跑，不能拖进 Models 的运行时依赖。
  */
 export function templateSlotCount(templateId: string): number {
-  if (templateId === 'T1') {
-    return 2
-  }
   if (templateId === 'T2') {
-    return 3
+    return 2
   }
   if (templateId === 'T3') {
-    return 2
-  }
-  if (templateId === 'T4') {
     return 3
   }
   if (templateId === 'T5') {
-    return 1
+    return 2
   }
   if (templateId === 'T6') {
+    return 3
+  }
+  if (templateId === 'T1') {
+    return 1
+  }
+  if (templateId === 'T4') {
     return 4
   }
   return 0
@@ -340,26 +340,26 @@ export function formatRecordSlotCount(templateId: string): string {
  * 模板画布的宽高比（宽/高），= 成片的真实画面比例。
  *
  * 与 Models.ets 各模板的 `canvasWidth / canvasHeight` 一致。取首帧时要拿它算
- * 目标高度，否则 `fetchFrameByTime` 会把 32:9 的 T3/T4 硬压成 16:9，卡片上看着
+ * 目标高度，否则 `fetchFrameByTime` 会把 32:9 的 T5/T6 硬压成 16:9，卡片上看着
  * 就是横向拉扁了。未知模板返回 0，调用方退回 16:9。
  */
 export function templateAspectRatio(templateId: string): number {
-  if (templateId === 'T1') {
+  if (templateId === 'T2') {
     return 1920 / 2160
   }
-  if (templateId === 'T2') {
+  if (templateId === 'T3') {
     return 1920 / 1620
   }
-  if (templateId === 'T3') {
-    return 3840 / 1080
-  }
-  if (templateId === 'T4') {
-    return 3840 / 1080
-  }
   if (templateId === 'T5') {
-    return 1920 / 1080
+    return 3840 / 1080
   }
   if (templateId === 'T6') {
+    return 3840 / 1080
+  }
+  if (templateId === 'T1') {
+    return 1920 / 1080
+  }
+  if (templateId === 'T4') {
     return 3840 / 2160
   }
   return 0

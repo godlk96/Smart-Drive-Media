@@ -174,23 +174,23 @@ foreach ($t in $tripSummaries) {
 # ----------------------------------------------------
 # 4. Preview Template Geometry & Single Track Slicing Test
 # ----------------------------------------------------
-Write-Host "`n--- [Phase 4] Preview Template Geometry (T1-T4) & Single Track Slicing Test ---" -ForegroundColor Magenta
+Write-Host "`n--- [Phase 4] Preview Template Geometry (T2-T6) & Single Track Slicing Test ---" -ForegroundColor Magenta
 
 $TEMPLATES = @{
-    "T1" = @(
+    "T2" = @(
         @{ id="top"; camera="Front"; x=0; y=0; width=1; height=0.5; zoomX=1 },
         @{ id="bottom"; camera="Back"; x=0; y=0.5; width=1; height=0.5; zoomX=1 }
     )
-    "T2" = @(
+    "T3" = @(
         @{ id="top"; camera="Front"; x=0; y=0; width=1; height=0.6667; zoomX=1 },
         @{ id="bottomLeft"; camera="Left"; x=0; y=0.6667; width=0.5; height=0.3333; zoomX=1 },
         @{ id="bottomRight"; camera="Right"; x=0.5; y=0.6667; width=0.5; height=0.3333; zoomX=1 }
     )
-    "T3" = @(
+    "T5" = @(
         @{ id="left"; camera="Left"; x=0; y=0; width=0.5; height=1; zoomX=1 },
         @{ id="right"; camera="Right"; x=0.5; y=0; width=0.5; height=1; zoomX=1 }
     )
-    "T4" = @(
+    "T6" = @(
         @{ id="left"; camera="LeftFront"; x=0; y=0; width=0.3333; height=1; zoomX=1.35 },
         @{ id="center"; camera="Front"; x=0.3333; y=0; width=0.3334; height=1; zoomX=1 },
         @{ id="right"; camera="RightFront"; x=0.6667; y=0; width=0.3333; height=1; zoomX=1.35 }
@@ -201,7 +201,7 @@ $TEMPLATES = @{
 $sampleTripClips = $trips[2]
 $sampleBaseTs = ($sampleTripClips | Measure-Object -Property timestamp -Minimum).Minimum
 
-foreach ($tmplId in @("T1", "T2", "T3", "T4")) {
+foreach ($tmplId in @("T2", "T3", "T5", "T6")) {
     $layoutDefs = $TEMPLATES[$tmplId]
     Write-Host "`nValidating Template [$tmplId] (Slots: $($layoutDefs.Count)):" -ForegroundColor Yellow
     
@@ -238,7 +238,7 @@ foreach ($tmplId in @("T1", "T2", "T3", "T4")) {
 # ----------------------------------------------------
 Write-Host "`n--- [Phase 5] Export Compose Request Validation ---" -ForegroundColor Magenta
 
-foreach ($tmplId in @("T1", "T2", "T4")) {
+foreach ($tmplId in @("T2", "T3", "T6")) {
     $frontUris = ($sampleTripClips | Where-Object { $_.camera -eq "Front" } | Select-Object -ExpandProperty fileName)
     $backUris = ($sampleTripClips | Where-Object { $_.camera -eq "Back" } | Select-Object -ExpandProperty fileName)
     $leftUris = ($sampleTripClips | Where-Object { $_.camera -eq "Left" -or $_.camera -eq "LeftFront" } | Select-Object -ExpandProperty fileName)

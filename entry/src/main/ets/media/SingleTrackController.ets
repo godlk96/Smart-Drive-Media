@@ -261,11 +261,11 @@ export class SingleTrackController {
    * 该轨是否应该出声。
    *
    * **不能再按槽位下标判断**（曾经是 `new SingleTrackController(..., i === 0)`）：
-   * 槽位下标与机位不是一回事。真实数据里**只有 front 文件带音轨**，而 T4 的槽位顺序是
+   * 槽位下标与机位不是一回事。真实数据里**只有 front 文件带音轨**，而 T6 的槽位顺序是
    * `LeftFront / Front / RightFront` —— 按 `i === 0` 就会把唯一有声音的 Front 轨静音、
-   * 给没有音轨的 LeftFront 开音量 ⇒ **T4 预览没声音**（缺陷 7.2）。
+   * 给没有音轨的 LeftFront 开音量 ⇒ **T6 预览没声音**（缺陷 7.2）。
    *
-   * 改为按机位判断：只有 Front 轨出声。T3 的槽位里没有 Front，
+   * 改为按机位判断：只有 Front 轨出声。T5 的槽位里没有 Front，
    * 而它的导出策略本来就是 `disableFrontAudio: true` ⇒ 静音与导出一致，不算缺陷。
    */
   private isAudioOutputTrack(): boolean {
@@ -322,7 +322,7 @@ export class SingleTrackController {
     }
     this.camera = camera
     // 出声与否由机位决定（见 isAudioOutputTrack）：切模板会改机位，
-    // 必须立刻重算音量，否则 T2→T4 会留下"该出声的没声、该静音的还在响"。
+    // 必须立刻重算音量，否则 T3→T6 会留下"该出声的没声、该静音的还在响"。
     void this.applyVolume()
   }
 

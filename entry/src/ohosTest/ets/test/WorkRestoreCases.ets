@@ -204,16 +204,16 @@ export function workRestoreCases(): Array<TimelineCase> {
 
   cases.push(makeCase('exportSnapshotFromWorkMeta 的模板走归一化', () => {
     const meta = makeWorkMeta('w-tpl', 1000)
-    meta.templateId = 'T3'
+    meta.templateId = 'T5'
     const snapshot = exportSnapshotFromWorkMeta(meta, new TripSnapshot())
-    return expectString(snapshot.selectedTemplateId, TemplateId.T3, 'T3')
+    return expectString(snapshot.selectedTemplateId, TemplateId.T5, 'T5')
   }))
 
   cases.push(makeCase('exportSnapshotFromWorkMeta 的未知模板回落到默认', () => {
     const meta = makeWorkMeta('w-tpl2', 1000)
     meta.templateId = 'ZZ'
     const snapshot = exportSnapshotFromWorkMeta(meta, new TripSnapshot())
-    return expectString(snapshot.selectedTemplateId, TemplateId.T5, '回落 T5')
+    return expectString(snapshot.selectedTemplateId, TemplateId.T1, '回落 T1')
   }))
 
   cases.push(makeCase('exportSnapshotFromWorkMeta 透传 playback 与水印', () => {

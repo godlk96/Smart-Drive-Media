@@ -186,7 +186,7 @@ function pipelineFixture(fs, native = {}) {
     'libsmartdrive_exporter.so': exporter, '../utils/Logger': { debugLog() {} }
   })
   const request = { frontUris: ['shared', 'shared'], backUris: ['shared', 'shared'],
-    sideUris: [], side2Uris: [], templateId: 'T5', outputPath: '/data/storage/cache/out.mp4',
+    sideUris: [], side2Uris: [], templateId: 'T1', outputPath: '/data/storage/cache/out.mp4',
     segments: [{ startMs: 0, endMs: 10000, speedLabel: '1.0X', muted: false }],
     rangeStartMs: 0, rangeEndMs: 10000, expectedDurationSec: 10 }
   return { service, request, get calls() { return calls }, get payload() { return payload } }
@@ -428,7 +428,7 @@ function libraryFixture(options = {}) {
   const newRender = Buffer.from('edit-B-render')
   const oldMeta = Buffer.from(JSON.stringify({
     schemaVersion: 1, id: 'W', createdAt: 111, exportedAt: 222, tripTitle: '旧编辑',
-    tripStartTs: 1, tripEndTs: 2, templateId: 'T5',
+    tripStartTs: 1, tripEndTs: 2, templateId: 'T1',
     tracks: { front: ['a.mp4'], back: [], side: [], side2: [] },
     playback: { playheadMs: 0, segments: [{ startMs: 0, endMs: 1000, speedLabel: '1.0X', muted: false }] },
     watermarkEnabled: true, segmentCount: 1, durationMs: 1000
@@ -490,7 +490,7 @@ function libraryFixture(options = {}) {
         LeftFront: { segments: [] }, RightFront: { segments: [] }
       }
     },
-    selectedTemplateId: 'T5',
+    selectedTemplateId: 'T1',
     playback: { playheadMs: 0, segments: [{ startMs: 0, endMs: 3000, speedLabel: '1.0X', muted: false }] },
     brand: { watermarkEnabled: false }
   }

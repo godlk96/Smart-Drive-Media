@@ -10,6 +10,11 @@ export enum CameraPosition {
   RIGHT_FRONT = 'RIGHT_FRONT'
 }
 
+/**
+ * 模版 id。**按剪辑页展示顺序编号**：T1 单视角 → T2 双录 → T3 三机位 → T4 四机位
+ * → T5 左右盲区 → T6 沉浸式。id 是 ArkTS 与原生导出引擎之间的线协议，两侧必须一致
+ * （`tools/offline-test.mjs` 有跨语言一致性用例守着）。
+ */
 export enum TemplateId {
   T1 = 'T1',
   T2 = 'T2',
@@ -64,7 +69,7 @@ export interface TemplatePreviewSlot {
   height: number
   /**
    * 仅预览用的横向放大倍数（1 / 缺省 = 不放大）。
-   * 用来近似原生导出对 T4 左右两侧做的 crop：画布只占 1/4 宽，但显示的是 2 倍宽源画面的中段。
+   * 用来近似原生导出对 T6 左右两侧做的 crop：画布只占 1/4 宽，但显示的是 2 倍宽源画面的中段。
    *
    * 已知差异（不在本次重构范围内，故意不修）：原生左槽取 LeftFront 的**右半**、右槽取 RightFront 的**左半**，
    * 而这里靠 Stack 居中把 2 倍宽画面裁成中段。要精确对齐需要再引入一个 crop 起点字段，
@@ -76,7 +81,7 @@ export interface TemplatePreviewSlot {
 export interface TemplateFfmpegPolicy {
   needSideTrack: boolean
   /**
-   * 是否需要第 4 路轨道（仅 T6 四机位为 true）。
+   * 是否需要第 4 路轨道（仅 T4 四机位为 true）。
    * 与原生 kNativeTemplateContracts 的 needSide2Track 逐条对应，由 tools/offline-test.mjs 守着。
    */
   needSide2Track: boolean
@@ -107,11 +112,11 @@ export interface TemplateDefinition {
   ffmpegPolicy: TemplateFfmpegPolicy
 }
 
-export const DEFAULT_TEMPLATE_ID: TemplateId = TemplateId.T5
+export const DEFAULT_TEMPLATE_ID: TemplateId = TemplateId.T1
 
 const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
-  [TemplateId.T1]: {
-    templateId: TemplateId.T1,
+  [TemplateId.T2]: {
+    templateId: TemplateId.T2,
     canvasWidth: 1920,
     canvasHeight: 2160,
     title: '防追尾双录',
@@ -138,8 +143,8 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
       ignoreNativeTrackSelection: false
     }
   },
-  [TemplateId.T2]: {
-    templateId: TemplateId.T2,
+  [TemplateId.T3]: {
+    templateId: TemplateId.T3,
     canvasWidth: 1920,
     canvasHeight: 1620,
     title: '避险防加塞',
@@ -168,8 +173,8 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
       ignoreNativeTrackSelection: false
     }
   },
-  [TemplateId.T3]: {
-    templateId: TemplateId.T3,
+  [TemplateId.T5]: {
+    templateId: TemplateId.T5,
     canvasWidth: 3840,
     canvasHeight: 1080,
     title: '左右盲区',
@@ -196,8 +201,8 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
       ignoreNativeTrackSelection: true
     }
   },
-  [TemplateId.T4]: {
-    templateId: TemplateId.T4,
+  [TemplateId.T6]: {
+    templateId: TemplateId.T6,
     canvasWidth: 3840,
     canvasHeight: 1080,
     title: '沉浸式旅拍',
@@ -210,7 +215,7 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
       { slotId: 'right', camera: CameraPosition.RIGHT_FRONT }
     ],
     previewSlots: [
-      // 与原生 T4 的 [left][middle][right] hstack 一致：960 / 1920 / 960 → 0.25 / 0.5 / 0.25。
+      // 与原生 T6 的 [left][middle][right] hstack 一致：960 / 1920 / 960 → 0.25 / 0.5 / 0.25。
       // 原生对两侧做 crop=960:1080（左槽取右半、右槽取左半），预览用 zoomX=2 近似同一构图。
       { slotId: 'left', x: 0, y: 0, width: 0.25, height: 1, zoomX: 2 },
       { slotId: 'center', x: 0.25, y: 0, width: 0.5, height: 1 },
@@ -228,8 +233,8 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
       ignoreNativeTrackSelection: true
     }
   },
-  [TemplateId.T5]: {
-    templateId: TemplateId.T5,
+  [TemplateId.T1]: {
+    templateId: TemplateId.T1,
     canvasWidth: 1920,
     canvasHeight: 1080,
     title: '单视角',
@@ -254,8 +259,8 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
       ignoreNativeTrackSelection: true
     }
   },
-  [TemplateId.T6]: {
-    templateId: TemplateId.T6,
+  [TemplateId.T4]: {
+    templateId: TemplateId.T4,
     canvasWidth: 3840,
     canvasHeight: 2160,
     title: '四机位',
@@ -291,8 +296,8 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
 }
 
 export function isTemplateId(value: string): boolean {
-  return value === TemplateId.T1 || value === TemplateId.T2 || value === TemplateId.T3 ||
-    value === TemplateId.T4 || value === TemplateId.T5 || value === TemplateId.T6
+  return value === TemplateId.T2 || value === TemplateId.T3 || value === TemplateId.T5 ||
+    value === TemplateId.T6 || value === TemplateId.T1 || value === TemplateId.T4
 }
 
 export function normalizeTemplateIdValue(value: string): TemplateId {
@@ -309,29 +314,29 @@ export function resolveTemplateDefinition(value: string): TemplateDefinition {
 
 export function listTemplateDefinitions(): Array<TemplateDefinition> {
   return [
-    TEMPLATE_DEFINITION_MAP[TemplateId.T1],
     TEMPLATE_DEFINITION_MAP[TemplateId.T2],
     TEMPLATE_DEFINITION_MAP[TemplateId.T3],
-    TEMPLATE_DEFINITION_MAP[TemplateId.T4],
     TEMPLATE_DEFINITION_MAP[TemplateId.T5],
-    TEMPLATE_DEFINITION_MAP[TemplateId.T6]
+    TEMPLATE_DEFINITION_MAP[TemplateId.T6],
+    TEMPLATE_DEFINITION_MAP[TemplateId.T1],
+    TEMPLATE_DEFINITION_MAP[TemplateId.T4]
   ]
 }
 
 /**
  * 剪辑页模板条的**展示顺序**，与模板定义的全量顺序解耦。
  *
- * `listTemplateDefinitions()` 保持 T1..T6 的稳定全量顺序（测试、原生契约一致性检查都依赖它），
+ * `listTemplateDefinitions()` 保持 T2..T4 的稳定全量顺序（测试、原生契约一致性检查都依赖它），
  * 这里只表达"用户在剪辑页看到什么顺序"：把常用的单视角/双录前置，四机位放在三分屏之前。
- * 需求来源：用户要求剪辑页顺序为「T5 T1 T2 四机位 T3 T4」。
+ * 需求来源：用户要求剪辑页顺序为「T1 T2 T3 四机位 T5 T6」。
  */
 export const EDITOR_TEMPLATE_DISPLAY_ORDER: Array<TemplateId> = [
-  TemplateId.T5,
   TemplateId.T1,
   TemplateId.T2,
-  TemplateId.T6,
   TemplateId.T3,
-  TemplateId.T4
+  TemplateId.T4,
+  TemplateId.T5,
+  TemplateId.T6
 ]
 
 /** 剪辑页模板条用的模板定义列表（按 EDITOR_TEMPLATE_DISPLAY_ORDER 排列）。 */

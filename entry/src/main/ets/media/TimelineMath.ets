@@ -311,7 +311,7 @@ export function segmentEndMs(span: SegmentSpan): number {
  * 该全局时刻是否被**至少一条轨**的段覆盖。
  *
  * 为什么需要它：时钟只能由"正在播放的轨"推进。若某一分钟只有模板之外的机位录到了
- * （例如 T2 用 Front/Left/Right，而这一分钟只有 RightFront 有文件），那么所有轨在该时刻
+ * （例如 T3 用 Front/Left/Right，而这一分钟只有 RightFront 有文件），那么所有轨在该时刻
  * 都只能"保持上一帧"，没有任何轨能驱动时钟 —— 播放头会永久停住。
  * 协调器用本函数识别这种"无人覆盖"的时刻并跳过它，而不是僵在那里。
  */
