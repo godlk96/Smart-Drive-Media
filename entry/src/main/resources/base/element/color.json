@@ -21,6 +21,10 @@
       "value": "#8A867D"
     },
     {
+      "name": "thumb_border",
+      "value": "#DAD4C6"
+    },
+    {
       "name": "text_primary",
       "value": "#1C1B18"
     },
@@ -123,10 +127,6 @@
     {
       "name": "ed_track",
       "value": "#F1EDE3"
-    },
-    {
-      "name": "ed_thumb_bg",
-      "value": "#F2EEE5"
     }
   ]
 }

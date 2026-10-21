@@ -123,12 +123,16 @@ export struct TemplateStrip {
     // 12 → 10：圆角小一点，四个角切掉的区域跟着小，版式图就能多留一点。
     .borderRadius(10)
     .borderWidth(this.cardBorder(card))
-    .borderColor(card.id === this.activeTemplateId ? $r('app.color.amber') : $r('app.color.ed_line'))
-    // 选中卡再压一层极淡的琥珀：除了"整块填实"，卡面本身也被托起来一点。
-    // 不引入新色相，用的还是琥珀的浅阶。
+    .borderColor(card.id === this.activeTemplateId ? $r('app.color.amber') : $r('app.color.thumb_border'))
+    // 卡面必须是**白纸**，不能是页面的暖米色。
+    //
+    // 原来卡面用 ed_thumb_bg(#F2EEE5)，和页面 ed_bg(#F3F1EC) 只差 1.03:1 ——
+    // 四张卡几乎完全融进背景，整排看起来是"几个飘着的框"。白卡落在暖米色页面上
+    // 是 1.13:1，再配一条 1.31:1 的描边，卡才有实体。
+    // 选中卡保留极淡琥珀，除了整块填实之外再托起一点。
     .backgroundColor(card.id === this.activeTemplateId
       ? $r('app.color.amber_soft')
-      : $r('app.color.ed_thumb_bg'))
+      : $r('app.color.card_bg'))
     // 版式图现在内缩了 4，本来就够不着圆角，这层裁切是双保险：
     // 万一以后有人把 glyphInset 调小，槽位的方角也不会漏到圆角外面。
     .clip(true)

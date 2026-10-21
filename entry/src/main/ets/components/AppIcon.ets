@@ -260,6 +260,8 @@ export struct TemplateGlyph {
    * 不用靠描边粗细去比。版式仍然靠几何区分：一格 / 上下两格 / 上一下二 / 四宫格。
    */
   private slotColor(): Resource {
+    // 未选中是"白纸上的线框"：格子填白（和卡面同色），形状全靠 1px 描边 ——
+    // 描边落在白卡上是 3.63:1，比任何浅色填充都清楚。
     return this.active ? $r('app.color.amber') : $r('app.color.card_bg')
   }
 
