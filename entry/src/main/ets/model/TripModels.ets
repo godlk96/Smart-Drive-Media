@@ -61,7 +61,13 @@ export class ExportComposeRequest {
   expectedDurationSec: number = 0
   rangeStartMs: number = 0
   rangeEndMs: number = 0
+  /** TS 侧的模版目录键（只用于本侧逻辑与日志，不再传给原生）。 */
   templateId: string = 'T1'
+  /** 下面四项才是原生要的：画布尺寸 + 版式原语 + 是否静掉第 1 路的声音。 */
+  canvasWidth: number = 1920
+  canvasHeight: number = 1080
+  composeLayout: string = 'single'
+  muteFrontAudio: boolean = false
   speedLabel: string = '1.0X'
   muted: boolean = false
   watermarkEnabled: boolean = true

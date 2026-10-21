@@ -15,7 +15,13 @@ export async function copyExportFileData(
     if (isCancelled()) {
       throw new Error('已取消导出')
     }
-    const readLength = await fs.read(sourceFd, buffer)
+    let readLength = 0
+    try {
+      readLength = await fs.read(sourceFd, buffer)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`读取源文件失败：${message}`)
+    }
     if (readLength <= 0) {
       break
     }
@@ -25,7 +31,13 @@ export async function copyExportFileData(
         throw new Error('已取消导出')
       }
       const data = written === 0 ? buffer : buffer.slice(written, readLength)
-      const length = await fs.write(targetFd, data, { length: readLength - written })
+      let length = 0
+      try {
+        length = await fs.write(targetFd, data, { length: readLength - written })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        throw new Error(`写入目标文件失败：${message}`)
+      }
       if (length <= 0 || length > readLength - written) {
         throw new Error('文件写入未完成')
       }

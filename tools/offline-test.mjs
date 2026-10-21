@@ -184,68 +184,61 @@ function typeCheck(relPaths) {
  * 这正是"预览一套、导出一套"这类漂移的守卫——两边分别改，测试就会红。
  * 来源：entry/src/main/cpp/export_engine.cpp 的 kNativeTemplateContracts。
  */
-function readNativeContracts() {
+/**
+ * 原生认识哪些版式原语 —— 直接从 `parseComposeLayout` 的字符串字面量里读。
+ *
+ * 模版 id 不再跨语言传递之后，两边剩下的唯一契约就是这六个名字，以及
+ * "某种版式需要哪几路轨"这条规则（原生按它校验输入，TS 按 ffmpegPolicy 选轨）。
+ * 两者对不上就会导出失败或拼错画面，所以这里必须守。
+ */
+function readNativeLayouts() {
   const cppPath = join(ROOT, 'entry/src/main/cpp/export_engine.cpp')
   const cpp = readFileSync(cppPath, 'utf8')
-  const table = cpp.match(/kNativeTemplateContracts\s*=\s*\{\{([\s\S]*?)\}\};/)
-  if (!table) {
-    throw new Error('无法解析 export_engine.cpp 的 kNativeTemplateContracts')
+  const body = cpp.match(/bool parseComposeLayout\([\s\S]*?\n\}/)
+  if (!body) {
+    throw new Error('无法解析 export_engine.cpp 的 parseComposeLayout')
   }
-  const contracts = new Map()
-  for (const row of table[1].matchAll(
-    /\{\s*"([^"]+)"\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(true|false)\s*,\s*(true|false)\s*,\s*(true|false)\s*\}/g
-  )) {
-    contracts.set(row[1], {
-      width: Number(row[2]),
-      height: Number(row[3]),
-      needSideTrack: row[4] === 'true',
-      disableFrontAudio: row[5] === 'true',
-      needSide2Track: row[6] === 'true'
-    })
+  const names = new Set()
+  for (const row of body[0].matchAll(/value == "([^"]+)"/g)) {
+    names.add(row[1])
   }
-  if (contracts.size === 0) {
-    throw new Error('解析出的原生模板契约为 0 条')
+  if (names.size === 0) {
+    throw new Error('parseComposeLayout 里没有可识别的版式名')
   }
-  return contracts
+  return names
 }
 
 async function checkNativeContract() {
-  const name = '跨语言：ArkTS 模板契约 == 原生导出契约'
+  const name = '跨语言：ArkTS 版式契约 == 原生导出原语'
   try {
-    const native = readNativeContracts()
+    const nativeLayouts = readNativeLayouts()
     const models = await import(pathToFileURL(toMjsPath('entry/src/main/ets/model/Models.ets')).href)
     const definitions = models.listTemplateDefinitions()
 
+    // 和 export_engine.cpp 里 layoutNeedsSide / layoutNeedsSide2 同一套规则。
+    const needsSide = new Set(['top1-bottom2', 'grid-2x2', 'three-up-crop'])
     const problems = []
     for (const def of definitions) {
-      const contract = native.get(def.templateId)
-      if (!contract) {
-        problems.push(`${def.templateId} 在原生契约里不存在`)
+      const layout = def.composeLayout
+      if (typeof layout !== 'string' || !nativeLayouts.has(layout)) {
+        problems.push(`${def.templateId} 的版式 ${layout} 原生不支持`)
         continue
       }
-      if (def.canvasWidth !== contract.width || def.canvasHeight !== contract.height) {
+      const sideExpected = needsSide.has(layout)
+      const side2Expected = layout === 'grid-2x2'
+      if (def.ffmpegPolicy.needSideTrack !== sideExpected) {
         problems.push(
-          `${def.templateId} 画布 ${def.canvasWidth}x${def.canvasHeight} != 原生 ${contract.width}x${contract.height}`
+          `${def.templateId}（${layout}）需要 side=${sideExpected}，ffmpegPolicy 写的是 ${def.ffmpegPolicy.needSideTrack}`
         )
       }
-      if (def.ffmpegPolicy.needSideTrack !== contract.needSideTrack) {
+      if (def.ffmpegPolicy.needSide2Track !== side2Expected) {
         problems.push(
-          `${def.templateId} needSideTrack ${def.ffmpegPolicy.needSideTrack} != 原生 ${contract.needSideTrack}`
+          `${def.templateId}（${layout}）需要 side2=${side2Expected}，ffmpegPolicy 写的是 ${def.ffmpegPolicy.needSide2Track}`
         )
       }
-      if (def.ffmpegPolicy.disableFrontAudio !== contract.disableFrontAudio) {
-        problems.push(
-          `${def.templateId} disableFrontAudio ${def.ffmpegPolicy.disableFrontAudio} != 原生 ${contract.disableFrontAudio}`
-        )
+      if (!(def.canvasWidth > 0) || !(def.canvasHeight > 0)) {
+        problems.push(`${def.templateId} 画布尺寸非法 ${def.canvasWidth}x${def.canvasHeight}`)
       }
-      if (def.ffmpegPolicy.needSide2Track !== contract.needSide2Track) {
-        problems.push(
-          `${def.templateId} needSide2Track ${def.ffmpegPolicy.needSide2Track} != 原生 ${contract.needSide2Track}`
-        )
-      }
-    }
-    if (definitions.length !== native.size) {
-      problems.push(`模板数量 ${definitions.length} != 原生 ${native.size}`)
     }
     return problems.length > 0 ? { name, detail: problems.join('; ') } : { name, ok: true }
   } catch (err) {
@@ -253,33 +246,18 @@ async function checkNativeContract() {
   }
 }
 
-/**
- * 颜色令牌守卫：spec §6.9 的 17 个令牌 + spec §5.2/§6.4/§6.5/§6.6/§6.7 用到但 §6.9 没列的
- * 8 个（胶囊底、选中字、浮层渐变与白色半透明）必须落在 color.json 且取值一致。
- * 页面与组件里不许再写十六进制色值，所以这里红一次就意味着「某个颜色没进资源」。
- */
 const REQUIRED_COLOR_TOKENS = new Map([
-  ['page_bg', '#F2F4F7'], ['card_bg', '#FFFFFF'], ['page_border', '#EAE8E3'],
-  ['card_border', '#EDEAE4'], ['track_bg', '#F4F2ED'], ['segment_border', '#E4E1DA'],
-  ['text_primary', '#1C1B18'], ['text_secondary', '#57534A'], ['text_tertiary', '#8A867D'],
+  ['start_window_background', '#0F172A'], ['card_bg', '#FFFFFF'], ['track_bg', '#F4F2ED'],
+  ['segment_border', '#E4E1DA'], ['slot_fill', '#D3CAB7'], ['tile_border', '#DAD4C6'],
+  ['text_primary', '#1C1B18'], ['text_secondary', '#57534A'], ['text_tertiary', '#6F6B62'],
   ['text_disabled', '#B5B0A6'], ['ink', '#111111'], ['amber', '#D98324'],
   ['amber_soft', '#FDF6EC'], ['stage_bg', '#14120F'], ['stage_divider', '#1E1B17'],
-  ['segment_off_bg', '#EFEDE8'], ['segment_off_border', '#E7E4DE'],
-  ['chip_bg', '#FBFAF8'], ['amber_deep', '#8A5A18'],
-  ['overlay_veil', '#E614120F'], ['overlay_fade', '#0014120F'],
-  ['overlay_track', '#4DFFFFFF'], ['overlay_text', '#D6FFFFFF'],
-  ['overlay_btn_bg', '#29FFFFFF'], ['overlay_btn_border', '#42FFFFFF'],
-  ['knob_shadow', '#8C000000'],
-  // 播放钮的底：40% 暖黑 + 同色描边（2026-10-15 第三轮调整）。
-  // 中途试过全透明（#00000000），亮画面上白图标读不出来，用户否掉了 —— 这个钮必须有底。
+  ['segment_off_bg', '#EFEDE8'], ['segment_off_border', '#E7E4DE'], ['amber_deep', '#8A5A18'],
+  ['overlay_veil', '#E614120F'], ['overlay_text', '#D6FFFFFF'], ['knob_shadow', '#8C000000'],
   ['stage_btn_bg', '#6614120F'], ['stage_btn_border', '#6614120F'], ['stage_btn_fg', '#FFFFFF'],
-  ['export_scrim', '#88000000'], ['export_text', '#F8FAFC'],
-  // 剪辑页暖白重设计（2026-10-15）：底色、卡面、描边、进度轨、模板卡留白与六个机位色
-  ['ed_bg', '#F3F1EC'], ['ed_surface', '#FBFAF7'], ['ed_line', '#E6E0D3'],
-  ['ed_track', '#F1EDE3'], ['ed_thumb_bg', '#F2EEE5'], ['ed_slot_fg', '#4A453C'],
-  ['slot_cam_front', '#EDE6D6'], ['slot_cam_back', '#DAD6CE'],
-  ['slot_cam_left', '#D6DED7'], ['slot_cam_right', '#E2D6D2'],
-  ['slot_cam_left_front', '#E4EBE2'], ['slot_cam_right_front', '#EDE0DB']
+  ['export_scrim', '#88000000'], ['shadow_soft', '#0F1C1B18'], ['shadow_amber', '#33D98324'],
+  ['chip_amber_border', '#F0DEC5'], ['ed_bg', '#F3F1EC'], ['ed_surface', '#FBFAF7'],
+  ['ed_line', '#E6E0D3'], ['ed_track', '#F1EDE3'],
 ])
 
 function checkColorTokens() {

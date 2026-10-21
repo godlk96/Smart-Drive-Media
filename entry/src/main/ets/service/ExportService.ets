@@ -140,6 +140,13 @@ export function buildComposeRequestByService(
   request.outputPath = outputPath
   request.expectedDurationSec = expectedDurationSec
   request.templateId = templateId
+  // 把模版翻译成原生认识的契约：画布 + 版式原语 + 音频策略。
+  // 原生从此不需要知道 T1..T6 是什么。
+  const definition = resolveTemplateDefinition(templateId)
+  request.canvasWidth = definition.canvasWidth
+  request.canvasHeight = definition.canvasHeight
+  request.composeLayout = definition.composeLayout
+  request.muteFrontAudio = definition.ffmpegPolicy.disableFrontAudio
   request.watermarkEnabled = watermarkEnabled
   // 过渡兼容（plan:651）：native 尚未读 segments（Task 11/12），四个旧字段先取第一段；
   // 单段时行为与旧版完全一致，多段时等价于「只导出第一段」。

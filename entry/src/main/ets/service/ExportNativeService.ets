@@ -57,7 +57,11 @@ interface NativeExportPipelineRequest {
   sideUris: Array<string>
   /** T4 四机位专用第 4 路（右下 / 右后）；其余模板为空数组。 */
   side2Uris: Array<string>
-  templateId: string
+  /** 画布尺寸 + 版式原语：原生按这两个拼 filter graph，不认识模版 id。 */
+  canvasWidth: number
+  canvasHeight: number
+  layout: string
+  muteFrontAudio: boolean
   expectedDurationSec: number
   startMs: number
   endMs: number
@@ -311,7 +315,10 @@ function buildNativeExportPayload(
     backUris: backInputUris,
     sideUris: sideInputUris,
     side2Uris: side2InputUris,
-    templateId: request.templateId,
+    canvasWidth: request.canvasWidth,
+    canvasHeight: request.canvasHeight,
+    layout: request.composeLayout,
+    muteFrontAudio: request.muteFrontAudio,
     expectedDurationSec: request.expectedDurationSec,
     startMs: request.rangeStartMs,
     endMs: request.rangeEndMs,
@@ -343,7 +350,7 @@ export async function executeComposeByService(
   if (isolatedRequest.frontUris.length === 0 || isolatedRequest.backUris.length === 0) {
     throw new Error('导出失败：前后路素材不足')
   }
-  if (isolatedRequest.templateId === 'T4' && isolatedRequest.side2Uris.length === 0) {
+  if (isolatedRequest.composeLayout === 'grid-2x2' && isolatedRequest.side2Uris.length === 0) {
     throw new Error('导出失败：四机位模板需要右后（Right）素材')
   }
   if (typeof runPipelineAsync !== 'function') {
@@ -477,7 +484,7 @@ export async function executeComposeByService(
       const item = payload.segments[index]
       segmentText += `[#${index} ${item.startMs}ms~${item.endMs}ms (${item.startMs/1000}s~${item.endMs/1000}s) @${item.speedLabel} ${item.muted ? 'MUTED' : 'UNMUTED'}] `
     }
-    onLog(`【Native入参-模板与片段】template=${payload.templateId} expectedDurationSec=${payload.expectedDurationSec} segments(${payload.segments.length})=${segmentText}`)
+    onLog(`【Native入参-版式与片段】layout=${payload.layout} canvas=${payload.canvasWidth}x${payload.canvasHeight} expectedDurationSec=${payload.expectedDurationSec} segments(${payload.segments.length})=${segmentText}`)
     onProgress({ percent: 20, stage: 'checking', detail: '正在检查视频素材' })
     onLog('Native导出阶段 启动 export_engine 渲染合成管线')
     const nativeStart = Date.now()

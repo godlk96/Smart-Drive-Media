@@ -60,7 +60,7 @@ struct NativeExportPipelineRequest {
     std::vector<std::string> backUris;
     std::vector<std::string> sideUris;
     std::vector<std::string> side2Uris;
-    std::string templateId;
+    ComposeSpec spec;
     double expectedDurationSec = 0.0;
     std::string outputPath;
     double startMs = 0.0;
@@ -78,7 +78,8 @@ static constexpr int32_t EXPORT_OK = 0;
 static constexpr int32_t EXPORT_ERR_INVALID_ARG = 1001;
 static constexpr int32_t EXPORT_ERR_FRONT_URIS_EMPTY = 1002;
 static constexpr int32_t EXPORT_ERR_BACK_URIS_EMPTY = 1003;
-static constexpr int32_t EXPORT_ERR_TEMPLATE_ID_INVALID = 1004;
+static constexpr int32_t EXPORT_ERR_LAYOUT_INVALID = 1004;
+static constexpr int32_t EXPORT_ERR_CANVAS_INVALID = 1010;
 static constexpr int32_t EXPORT_ERR_OUTPUT_PATH_EMPTY = 1005;
 static constexpr int32_t EXPORT_ERR_EXPECTED_DURATION_INVALID = 1006;
 static constexpr int32_t EXPORT_ERR_SEGMENTS_INVALID = 1007;
@@ -94,11 +95,6 @@ static NativeExportPipelineResult makeErrorResult(int32_t code, const std::strin
     result.code = code;
     result.message = message;
     return result;
-}
-
-static bool isAllowedTemplateId(const std::string &value)
-{
-    return isSupportedTemplateId(value);
 }
 
 static bool getNamedProperty(napi_env env, napi_value obj, const char *name, napi_value &out)
@@ -243,12 +239,34 @@ static bool parseExportPipelineRequest(napi_env env, napi_callback_info info, Na
         error = makeErrorResult(EXPORT_ERR_SIDE2_URIS_INVALID, "ERR_SIDE2_URIS_INVALID");
         return false;
     }
-    napi_value templateValue = nullptr;
-    if (!getNamedProperty(env, args[0], "templateId", templateValue)) {
-        error = makeErrorResult(EXPORT_ERR_INVALID_ARG, "ERR_TEMPLATE_ID_INVALID");
+    // 画布与版式由 ArkTS 侧按模版定义翻译好传进来；原生不认识模版 id。
+    napi_value canvasWidthValue = nullptr;
+    napi_value canvasHeightValue = nullptr;
+    int32_t canvasWidth = 0;
+    int32_t canvasHeight = 0;
+    if (!getNamedProperty(env, args[0], "canvasWidth", canvasWidthValue) ||
+        napi_get_value_int32(env, canvasWidthValue, &canvasWidth) != napi_ok ||
+        !getNamedProperty(env, args[0], "canvasHeight", canvasHeightValue) ||
+        napi_get_value_int32(env, canvasHeightValue, &canvasHeight) != napi_ok ||
+        canvasWidth <= 0 || canvasHeight <= 0) {
+        error = makeErrorResult(EXPORT_ERR_CANVAS_INVALID, "ERR_CANVAS_INVALID");
         return false;
     }
-    request.templateId = readUtf8Arg(env, templateValue);
+    request.spec.canvasWidth = canvasWidth;
+    request.spec.canvasHeight = canvasHeight;
+    napi_value layoutValue = nullptr;
+    if (!getNamedProperty(env, args[0], "layout", layoutValue) ||
+        !parseComposeLayout(readUtf8Arg(env, layoutValue), request.spec.layout)) {
+        error = makeErrorResult(EXPORT_ERR_LAYOUT_INVALID, "ERR_LAYOUT_INVALID");
+        return false;
+    }
+    napi_value muteValue = nullptr;
+    if (getNamedProperty(env, args[0], "muteFrontAudio", muteValue) && muteValue != nullptr) {
+        bool mute = false;
+        if (napi_get_value_bool(env, muteValue, &mute) == napi_ok) {
+            request.spec.muteFrontAudio = mute;
+        }
+    }
     napi_value durationValue = nullptr;
     if (!getNamedProperty(env, args[0], "expectedDurationSec", durationValue) ||
         napi_get_value_double(env, durationValue, &request.expectedDurationSec) != napi_ok ||
@@ -296,10 +314,6 @@ static bool parseExportPipelineRequest(napi_env env, napi_callback_info info, Na
         error = makeErrorResult(EXPORT_ERR_BACK_URIS_EMPTY, "ERR_BACK_URIS_EMPTY");
         return false;
     }
-    if (!isAllowedTemplateId(request.templateId)) {
-        error = makeErrorResult(EXPORT_ERR_TEMPLATE_ID_INVALID, "ERR_TEMPLATE_ID_INVALID");
-        return false;
-    }
     if (request.outputPath.empty()) {
         error = makeErrorResult(EXPORT_ERR_OUTPUT_PATH_EMPTY, "ERR_OUTPUT_PATH_EMPTY");
         return false;
@@ -314,7 +328,7 @@ static NativeExportPipelineResult runPipelineAndWrapResult(const NativeExportPip
         request.backUris,
         request.sideUris,
         request.side2Uris,
-        request.templateId,
+        request.spec,
         request.expectedDurationSec,
         request.outputPath,
         request.startMs,

@@ -105,6 +105,12 @@ export interface TemplateDefinition {
    */
   canvasWidth: number
   canvasHeight: number
+  /**
+   * 原生导出引擎认的**版式原语**（native 不认识模版 id）。
+   * 取值：single / stack-v / stack-h / top1-bottom2 / grid-2x2 / three-up-crop。
+   * 改这一栏就等于改导出布局，不需要动 C++。
+   */
+  composeLayout: string
   requiredCameras: Array<CameraPosition>
   optionalCameras: Array<CameraPosition>
   slotBindings: Array<TemplateSlotBinding>
@@ -117,6 +123,7 @@ export const DEFAULT_TEMPLATE_ID: TemplateId = TemplateId.T1
 const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
   [TemplateId.T2]: {
     templateId: TemplateId.T2,
+    composeLayout: 'stack-v',
     canvasWidth: 1920,
     canvasHeight: 2160,
     title: '防追尾双录',
@@ -145,6 +152,7 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
   },
   [TemplateId.T3]: {
     templateId: TemplateId.T3,
+    composeLayout: 'top1-bottom2',
     canvasWidth: 1920,
     canvasHeight: 1620,
     title: '避险防加塞',
@@ -175,6 +183,7 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
   },
   [TemplateId.T5]: {
     templateId: TemplateId.T5,
+    composeLayout: 'stack-h',
     canvasWidth: 3840,
     canvasHeight: 1080,
     title: '左右盲区',
@@ -203,6 +212,7 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
   },
   [TemplateId.T6]: {
     templateId: TemplateId.T6,
+    composeLayout: 'three-up-crop',
     canvasWidth: 3840,
     canvasHeight: 1080,
     title: '沉浸式旅拍',
@@ -235,6 +245,7 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
   },
   [TemplateId.T1]: {
     templateId: TemplateId.T1,
+    composeLayout: 'single',
     canvasWidth: 1920,
     canvasHeight: 1080,
     title: '单视角',
@@ -261,6 +272,7 @@ const TEMPLATE_DEFINITION_MAP: Record<TemplateId, TemplateDefinition> = {
   },
   [TemplateId.T4]: {
     templateId: TemplateId.T4,
+    composeLayout: 'grid-2x2',
     canvasWidth: 3840,
     canvasHeight: 2160,
     title: '四机位',

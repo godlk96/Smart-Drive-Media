@@ -386,6 +386,10 @@ export class WorkStore {
       const file = await fs.open(path, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC)
       fd = file.fd
       await fs.write(fd, content)
+    } catch (error) {
+      // 带上路径：sidecar / 封面写失败时要能一眼看出是哪个文件。
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`写入 ${path} 失败：${message}`)
     } finally {
       if (fd >= 0) {
         try {

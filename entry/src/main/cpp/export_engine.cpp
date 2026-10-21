@@ -127,47 +127,21 @@ int evenValue(int value)
     return normalized > 0 ? normalized : 1280;
 }
 
-struct NativeTemplateContract {
-    const char *templateId = "T3";
-    int targetWidth = 1920;
-    int targetHeight = 1620;
-    bool needSideTrack = true;
-    bool disableFrontAudio = false;
-    /** T4 四机位专用：除 front/back/side 之外还需要第 4 路（右下 = 右后）轨道。 */
-    bool needSide2Track = false;
-};
-
-const std::array<NativeTemplateContract, 6> kNativeTemplateContracts = {{
-    {"T1", 1920, 1080, false, false, false},  // 单视角
-    {"T2", 1920, 2160, false, false, false},  // 双录（上下）
-    {"T3", 1920, 1620, true, false, false},   // 三机位（上一下二）
-    {"T4", 3840, 2160, true, false, true},    // 四机位 2×2
-    {"T5", 3840, 1080, false, true, false},   // 左右盲区（左右）
-    {"T6", 3840, 1080, true, false, false},   // 沉浸式（三分屏）
-}};
-
-const NativeTemplateContract *findTemplateContract(const std::string &templateId)
+/** 哪几路轨由**版式本身**决定，和是哪个模版无关。 */
+bool layoutNeedsBack(const ComposeLayout layout)
 {
-    for (const auto &contract : kNativeTemplateContracts) {
-        if (templateId == contract.templateId) {
-            return &contract;
-        }
-    }
-    return nullptr;
+    return layout != ComposeLayout::Single;
 }
 
-const NativeTemplateContract &resolveTemplateContract(const std::string &templateId)
+bool layoutNeedsSide(const ComposeLayout layout)
 {
-    const NativeTemplateContract *matched = findTemplateContract(templateId);
-    if (matched != nullptr) {
-        return *matched;
-    }
-    return kNativeTemplateContracts[1];
+    return layout == ComposeLayout::Top1Bottom2 || layout == ComposeLayout::Grid2x2 ||
+           layout == ComposeLayout::ThreeUpCrop;
 }
 
-std::pair<int, int> resolveTemplateTargetResolution(const NativeTemplateContract &contract)
+bool layoutNeedsSide2(const ComposeLayout layout)
 {
-    return {contract.targetWidth, contract.targetHeight};
+    return layout == ComposeLayout::Grid2x2;
 }
 
 void applyPacketTimestampFallback(int64_t &pts,
@@ -253,7 +227,7 @@ std::string buildMovieSourceFilter(const std::string &path,
     return oss.str();
 }
 
-std::string buildTemplateFilterDesc(const std::string &templateId,
+std::string buildTemplateFilterDesc(const ComposeLayout layout,
                                     const std::string &frontPath,
                                     const std::string &backPath,
                                     const std::string &sidePath,
@@ -276,21 +250,21 @@ std::string buildTemplateFilterDesc(const std::string &templateId,
     const std::string bottomRight = labelPrefix + "br";
     const std::string out = "[" + outLabel + "]";
     const std::string formatFilter = ",format=pix_fmts=" + (pixFmt.empty() ? "yuv420p" : pixFmt) + ",setsar=1";
-    if (templateId == "T2") {
+    if (layout == ComposeLayout::StackV) {
         std::ostringstream oss;
         oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << top << "];"
             << buildMovieSourceFilter(backPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << bottom << "];"
             << "[" << top << "][" << bottom << "]vstack=inputs=2" << formatFilter << out;
         return oss.str();
     }
-    if (templateId == "T5") {
+    if (layout == ComposeLayout::StackH) {
         std::ostringstream oss;
         oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << left << "];"
             << buildMovieSourceFilter(backPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << right << "];"
             << "[" << left << "][" << right << "]hstack=inputs=2" << formatFilter << out;
         return oss.str();
     }
-    if (templateId == "T6") {
+    if (layout == ComposeLayout::ThreeUpCrop) {
         std::ostringstream oss;
         oss << buildMovieSourceFilter(sidePath, "scale=1920:1080,crop=960:1080:960:0", startSec, endSec, speed, frameRate) << "[" << left << "];"
             << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << middle << "];"
@@ -298,7 +272,7 @@ std::string buildTemplateFilterDesc(const std::string &templateId,
             << "[" << left << "][" << middle << "][" << right << "]hstack=inputs=3" << formatFilter << out;
         return oss.str();
     }
-    if (templateId == "T3") {
+    if (layout == ComposeLayout::Top1Bottom2) {
         std::ostringstream oss;
         oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec, speed, frameRate) << "[" << top << "];"
             << buildMovieSourceFilter(sidePath, "scale=960:540", startSec, endSec, speed, frameRate) << "[" << bottomLeft << "];"
@@ -307,13 +281,13 @@ std::string buildTemplateFilterDesc(const std::string &templateId,
             << "[" << top << "][" << bottom << "]vstack=inputs=2" << formatFilter << out;
         return oss.str();
     }
-    if (templateId == "T1") {
+    if (layout == ComposeLayout::Single) {
         std::ostringstream oss;
         oss << buildMovieSourceFilter(frontPath, "scale=1920:1080", startSec, endSec, speed, frameRate)
             << formatFilter << out;
         return oss.str();
     }
-    if (templateId == "T4") {
+    if (layout == ComposeLayout::Grid2x2) {
         // 四机位 2×2：左上=前、右上=后、左下=左后、右下=右后。
         // 画布 3840×2160，每格 1920×1080 正好等于各机位原生分辨率 —— 只做等比缩放 + 居中补边，
         // 不裁剪、不拉伸，源是 1920×1080 时 scale 与 pad 都是恒等变换，零重采样损失。
@@ -335,7 +309,7 @@ std::string buildTemplateFilterDesc(const std::string &templateId,
 }
 
 // 多段视频链：每段各自 trim/倍速抽帧，再 concat 拼接。单段时直接产出 outLabel。
-std::string buildSegmentsVideoDesc(const std::string &templateId,
+std::string buildSegmentsVideoDesc(const ComposeLayout layout,
                                    const std::string &frontPath,
                                    const std::string &backPath,
                                    const std::string &sidePath,
@@ -347,7 +321,7 @@ std::string buildSegmentsVideoDesc(const std::string &templateId,
     std::ostringstream oss;
     for (size_t i = 0; i < segments.size(); i++) {
         const std::string label = (segments.size() == 1) ? std::string("outv") : ("seg" + std::to_string(i));
-        const std::string one = buildTemplateFilterDesc(templateId,
+        const std::string one = buildTemplateFilterDesc(layout,
                                                         frontPath,
                                                         backPath,
                                                         sidePath,
@@ -416,7 +390,7 @@ std::string buildSegmentsAudioDesc(const std::string &audioPath,
     return oss.str();
 }
 
-bool composeTemplateToMp4(const std::string &templateId,
+bool composeTemplateToMp4(const ComposeSpec &spec,
                           const std::string &frontPath,
                           const std::string &backPath,
                           const std::string &sidePath,
@@ -431,10 +405,8 @@ bool composeTemplateToMp4(const std::string &templateId,
                           const std::string &outputPath,
                           std::string &error)
 {
-    const NativeTemplateContract &templateContract = resolveTemplateContract(templateId);
-    const std::pair<int, int> targetResolution = resolveTemplateTargetResolution(templateContract);
-    const int width = evenValue(targetResolution.first);
-    const int height = evenValue(targetResolution.second);
+    const int width = evenValue(spec.canvasWidth);
+    const int height = evenValue(spec.canvasHeight);
     AVRational frameRate = probe.frameRate.num > 0 && probe.frameRate.den > 0 ? probe.frameRate : AVRational{30, 1};
     AVFormatContext *outputFmt = nullptr;
     if (avformat_alloc_output_context2(&outputFmt, nullptr, "mp4", outputPath.c_str()) < 0 || outputFmt == nullptr) {
@@ -776,11 +748,11 @@ bool composeTemplateToMp4(const std::string &templateId,
     inputs->next = nullptr;
     const char *outPixFmt = av_get_pix_fmt_name(encoderCtx->pix_fmt);
     const std::string filterDesc = buildSegmentsVideoDesc(
-        templateId, frontPath, backPath, sidePath, side2Path, segments, frameRate,
+        spec.layout, frontPath, backPath, sidePath, side2Path, segments, frameRate,
         outPixFmt != nullptr ? outPixFmt : "yuv420p");
     {
         std::ostringstream filterInfo;
-        filterInfo << "template=" << templateId << " " << width << "x" << height
+        filterInfo << "layout=" << composeLayoutName(spec.layout) << " " << width << "x" << height
                    << " startSec=" << startSec << " endSec=" << endSec << " desc=" << filterDesc;
         logPipeline("filter", filterInfo.str());
     }
@@ -1491,21 +1463,36 @@ bool detectFrontAacAudio(const std::string &uri,
 
 } // namespace
 
-bool isSupportedTemplateId(const std::string &templateId)
+bool parseComposeLayout(const std::string &value, ComposeLayout &out)
 {
-    return findTemplateContract(templateId) != nullptr;
+    if (value == "single") { out = ComposeLayout::Single; return true; }
+    if (value == "stack-v") { out = ComposeLayout::StackV; return true; }
+    if (value == "stack-h") { out = ComposeLayout::StackH; return true; }
+    if (value == "top1-bottom2") { out = ComposeLayout::Top1Bottom2; return true; }
+    if (value == "grid-2x2") { out = ComposeLayout::Grid2x2; return true; }
+    if (value == "three-up-crop") { out = ComposeLayout::ThreeUpCrop; return true; }
+    return false;
 }
 
-std::string normalizeTemplateId(const std::string &templateId)
+std::string composeLayoutName(const ComposeLayout layout)
 {
-    return resolveTemplateContract(templateId).templateId;
+    switch (layout) {
+        case ComposeLayout::Single: return "single";
+        case ComposeLayout::StackV: return "stack-v";
+        case ComposeLayout::StackH: return "stack-h";
+        case ComposeLayout::Top1Bottom2: return "top1-bottom2";
+        case ComposeLayout::Grid2x2: return "grid-2x2";
+        case ComposeLayout::ThreeUpCrop: return "three-up-crop";
+    }
+    return "single";
 }
+
 
 std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
                                     const std::vector<std::string> &backUris,
                                     const std::vector<std::string> &sideUris,
                                     const std::vector<std::string> &side2Uris,
-                                    const std::string &templateId,
+                                    const ComposeSpec &spec,
                                     double expectedDurationSec,
                                     const std::string &outputPath,
                                     double startMs,
@@ -1516,7 +1503,8 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
         std::ostringstream requestInfo;
         requestInfo << "front=" << frontUris.size() << " back=" << backUris.size()
                     << " side=" << sideUris.size() << " side2=" << side2Uris.size()
-                    << " template=" << templateId
+                    << " layout=" << composeLayoutName(spec.layout)
+                    << " canvas=" << spec.canvasWidth << "x" << spec.canvasHeight
                     << " expectedDurationSec=" << expectedDurationSec
                     << " startMs=" << startMs << " endMs=" << endMs
                     << " segments=" << segments.size() << " output=" << outputPath;
@@ -1577,14 +1565,11 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
               << " pixFmt=" << probe.pixFmt << " fps=" << probe.frameRate.num << "/" << probe.frameRate.den;
     logPipeline("probe", probeInfo.str());
 
-    const NativeTemplateContract &templateContract = resolveTemplateContract(templateId);
-    const std::string normalizedTemplate = templateContract.templateId;
-    const bool needBackTrack = normalizedTemplate != "T1";
-    const std::pair<int, int> targetResolution = resolveTemplateTargetResolution(templateContract);
-    logPipeline("template", "apply " + normalizedTemplate + " target=" + std::to_string(targetResolution.first) +
-        "x" + std::to_string(targetResolution.second));
-    const bool needSideTrack = templateContract.needSideTrack;
-    const bool needSide2Track = templateContract.needSide2Track;
+    const bool needBackTrack = layoutNeedsBack(spec.layout);
+    logPipeline("layout", "apply " + composeLayoutName(spec.layout) + " target=" +
+        std::to_string(spec.canvasWidth) + "x" + std::to_string(spec.canvasHeight));
+    const bool needSideTrack = layoutNeedsSide(spec.layout);
+    const bool needSide2Track = layoutNeedsSide2(spec.layout);
     const std::vector<std::string> sideSource = !sideUris.empty() ? sideUris : backUris;
     // 第 4 路刻意**不做回退**：T4 右下格是「右后」，拿别的机位顶替只会静默产出一段机位错误的画面，
     // 宁可让导出明确失败，也不要"看起来成功但内容是错的"。
@@ -1735,7 +1720,7 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
     }
 
     bool includeFrontAudio = false;
-    if (!templateContract.disableFrontAudio) {
+    if (!spec.muteFrontAudio) {
         std::string audioError;
         bool hasFrontAacAudio = false;
         if (!detectFrontAacAudio(frontTrackPath, hasFrontAacAudio, audioError)) {
@@ -1746,7 +1731,7 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
             logPipeline("audio", "front audio missing aac stream, fallback to mute");
         }
     } else {
-        logPipeline("audio", "template " + normalizedTemplate + " disables front audio");
+        logPipeline("audio", "layout " + composeLayoutName(spec.layout) + " disables front audio");
     }
 
     {
@@ -1756,7 +1741,7 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
                   << " includeFrontAudio=" << (includeFrontAudio ? 1 : 0);
         logPipeline("track", trackInfo.str());
     }
-    logPipeline("mux", "emit mp4 by ffmpeg template compose, template=" + normalizedTemplate);
+    logPipeline("mux", "emit mp4 by ffmpeg compose, layout=" + composeLayoutName(spec.layout));
     setNativeExportProgress(25, 0, 0, 2);
     std::vector<NativeExportSegment> effectiveSegments = segments;
     if (effectiveSegments.empty()) {
@@ -1768,7 +1753,7 @@ std::string runExportEnginePipeline(const std::vector<std::string> &frontUris,
         effectiveSegments.push_back(singleSegment);
         logPipeline("mux", "no segments from caller, fallback to single range segment");
     }
-    if (!composeTemplateToMp4(normalizedTemplate,
+    if (!composeTemplateToMp4(spec,
                               frontTrackPath,
                               backTrackPath,
                               sideTrackPath,

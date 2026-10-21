@@ -158,7 +158,9 @@ test('native frame progress keeps fractional precision and reserves finalization
     completedUnits: 0, totalUnits: 0 })
   assert.equal(update.percent, 25.6)
   assert.equal(update.stage, 'encoding')
-  assert.match(update.detail, /1.*100/)
+  // 这一档不再给帧数明细：浮层上的进度环已经给出百分比，帧数是渲染管线的内部刻度，
+  // 摆给用户看只多一串没人读的数字（见 ExportProgress.ets 的注释）。
+  assert.equal(update.detail, '')
   assert.equal(nativeExportProgress({ percent: 85, stage: 2, currentFrame: 120, totalFrames: 100 }).percent, 84.9)
 })
 test('native concat progress uses real work and never reaches save completion', () => {
@@ -186,7 +188,9 @@ function pipelineFixture(fs, native = {}) {
     'libsmartdrive_exporter.so': exporter, '../utils/Logger': { debugLog() {} }
   })
   const request = { frontUris: ['shared', 'shared'], backUris: ['shared', 'shared'],
-    sideUris: [], side2Uris: [], templateId: 'T1', outputPath: '/data/storage/cache/out.mp4',
+    sideUris: [], side2Uris: [], templateId: 'T1',
+    canvasWidth: 1920, canvasHeight: 1080, composeLayout: 'single', muteFrontAudio: false,
+    outputPath: '/data/storage/cache/out.mp4',
     segments: [{ startMs: 0, endMs: 10000, speedLabel: '1.0X', muted: false }],
     rangeStartMs: 0, rangeEndMs: 10000, expectedDurationSec: 10 }
   return { service, request, get calls() { return calls }, get payload() { return payload } }
@@ -466,7 +470,8 @@ function libraryFixture(options = {}) {
     './ExportService': {
       buildComposeRequestByService: (clips, fileName, outputPath, expectedDurationSec, templateId) => ({
         frontUris: clips.map(clip => clip.uri), backUris: [], sideUris: [], side2Uris: [],
-        templateId, outputPath, segments: [], rangeStartMs: 0, rangeEndMs: 0, expectedDurationSec
+        templateId, canvasWidth: 1920, canvasHeight: 1080, composeLayout: 'single',
+        muteFrontAudio: false, outputPath, segments: [], rangeStartMs: 0, rangeEndMs: 0, expectedDurationSec
       })
     },
     '../model/SegmentModel': { exportDurationSec: () => 3 },

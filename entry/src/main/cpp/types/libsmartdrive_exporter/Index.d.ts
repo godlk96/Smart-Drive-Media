@@ -11,7 +11,12 @@ export interface NativeExportPipelineRequest {
   sideUris: Array<string>
   /** T4 四机位专用第 4 路（右下 / 右后）。其余模板为空数组。 */
   side2Uris: Array<string>
-  templateId: string
+  /** 画布尺寸 + 版式原语：原生按这两个拼 filter graph，不认识模版 id。 */
+  canvasWidth: number
+  canvasHeight: number
+  /** single / stack-v / stack-h / top1-bottom2 / grid-2x2 / three-up-crop */
+  layout: string
+  muteFrontAudio: boolean
   expectedDurationSec: number
   startMs: number
   endMs: number
