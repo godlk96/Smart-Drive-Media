@@ -1,6 +1,7 @@
 import common from '@ohos.app.ability.common'
 import abilityAccessCtrl from '@ohos.abilityAccessCtrl'
 import wantConstant from '@ohos.app.ability.wantConstant'
+import fileUri from '@ohos.file.fileuri'
 import { BusinessError } from '@ohos.base'
 import { sharedCoreBridge } from '../bridge/CoreBridge'
 import { PAGE_ROUTE_EDITOR, REQUIRED_MEDIA_PERMISSIONS } from '../constants/AppConstants'
@@ -404,17 +405,33 @@ export class HomeViewModel {
 
   /**
    * 点 ▶ 看成片：用隐式 Want 交给系统播放。返回空串表示已拉起，否则是给用户看的失败文案。
-   * 作品本体在 App 私有空间，用 `file://` 形式把沙盒路径交给系统（能不能播需真机确认，spec 风险 1）。
    * 注意：stage model 没有 ACTION_VIEW_DATA 常量，action 只能写字面量（spec 4.10）。
+   *
+   * **URI 必须由 `fileUri.getUriFromPath()` 生成，不能手工拼 `file://` + 沙箱路径。**
+   * 成片住在 App 私有沙箱（`${filesDir}/exports/<id>.mp4`），手工拼出来的
+   * `file:///data/storage/...` 没有 bundle 授权段，别的应用按普通绝对路径去开、必然打不开，
+   * `startAbility` 直接抛错。`getUriFromPath` 给出的 `file://<bundleName>/<沙箱路径>`
+   * 配上 FLAG_AUTH_READ_URI_PERMISSION 才是跨应用可读的那个 URI。
+   *
+   * 改动前这里传的是图库的 `albumUri`（`file://media/Photo/...`），那条路径天然可读，
+   * 所以成片搬进私有空间后这一处必须跟着改 —— 真机上表现为「点 ▶ 没反应 / 提示找不到播放器」。
    */
   async playWork(entry: WorkEntry, context: common.UIAbilityContext): Promise<string> {
     if (entry.videoPath.length === 0) {
       return '没有找到这条视频'
     }
+    let shareUri = ''
+    try {
+      shareUri = fileUri.getUriFromPath(entry.videoPath)
+    } catch (error) {
+      const code = (error as BusinessError).code
+      debugLog('首页VM', `成片 URI 生成失败 code=${code}`)
+      return '没有找到这条视频'
+    }
     try {
       await context.startAbility({
         action: 'ohos.want.action.viewData',
-        uri: `file://${entry.videoPath}`,
+        uri: shareUri,
         type: 'video/mp4',
         flags: wantConstant.Flags.FLAG_AUTH_READ_URI_PERMISSION
       })
