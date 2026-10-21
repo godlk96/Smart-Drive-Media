@@ -1,5 +1,6 @@
 import { EditorPreviewArea } from '../components/EditorPreviewArea'
 import { AppIcon, AppIconName } from '../components/AppIcon'
+import { AppToast } from '../components/AppToast'
 import { SegmentParamRow } from '../components/SegmentParamRow'
 import { PreviewOverlay, SegmentTrack } from '../components/SegmentTrack'
 import { TemplateStrip } from '../components/TemplateStrip'
@@ -294,7 +295,7 @@ struct Editor {
     const workId = this.pendingRestoreWorkId
     const host = this.getUIContext().getHostContext()
     if (!host) {
-      this.showToast('无法获取页面上下文')
+      this.showToast('出了点问题，重试一下')
       return
     }
     const context = host as common.UIAbilityContext
@@ -304,7 +305,7 @@ struct Editor {
       const allGranted = result.authResults.every((item: number) => item === 0)
       if (!allGranted) {
         debugLog('剪辑页', '还原授权未通过')
-        this.showToast('未获得相册权限')
+        this.showToast('没有相册权限，读不到行车记录')
         return
       }
       // 整个还原期间（含这次授权后的重跑）保持 restorePending=true：此刻页面还是空白的，
@@ -323,7 +324,7 @@ struct Editor {
       this.restorePending = false
       const message = error instanceof Error ? error.message : String(error)
       debugLog('剪辑页', `还原授权链路失败：${message}`)
-      this.showToast('未获得相册权限')
+      this.showToast('没有相册权限，读不到行车记录')
     }
   }
 
@@ -447,7 +448,7 @@ struct Editor {
    * 弹提示。`tappable=true` 时这条提示可点（见 handleToastTap），默认不可点 ——
    * 剪刀、模板、取消导出那类提示点一下不该有任何跳转，否则会莫名其妙退出剪辑页。
    */
-  private showToast(message: string, tappable: boolean = false): void {
+  private showToast(message: string, tappable: boolean = false, durationMs: number = 2200): void {
     this.toastText = message
     this.toastTappable = tappable
     this.toastVisible = true
@@ -457,7 +458,7 @@ struct Editor {
     this.toastTimer = setTimeout(() => {
       this.toastVisible = false
       this.toastTimer = -1
-    }, 2000)
+    }, durationMs)
   }
 
   /**
@@ -517,7 +518,7 @@ struct Editor {
     }
     if (this.isTemplateDisabled(card)) {
       const missing = this.getTemplateMissingViews(card)
-      this.showToast(`缺少${missing}视角，无法使用该模板`)
+      this.showToast(`这趟行程没有${missing}的画面`)
       return
     }
     this.selectTemplate(card)
@@ -530,23 +531,22 @@ struct Editor {
     const wasRawFull = this.state.isRawFull
     if (wasRawFull) {
       if (!this.viewModel.canSplitAtPlayhead()) {
-        this.showToast('距离片尾不足10秒，无法截取')
+        this.showToast('片尾太近了，往后挪一点再剪')
         return
       }
     } else {
       if (this.state.segments.length >= MAX_SEGMENTS) {
-        this.showToast('最多只能添加3个剪辑点')
+        this.showToast('最多切 3 刀，先删掉一段再切')
         return
       }
       if (!this.viewModel.canSplitAtPlayhead()) {
-        this.showToast('片段需至少20秒可切分，或空档需至少10秒')
+        this.showToast('这段太短：一段至少 20 秒，空档至少 10 秒')
         return
       }
     }
     this.pauseAllPreview()
     this.applyState(this.viewModel.splitAtPlayhead())
     this.markUnsaved()
-    this.showToast(wasRawFull ? '已生成高光片段' : '已添加剪辑点')
     this.showControlsTemporarily()
   }
 
@@ -647,12 +647,8 @@ struct Editor {
   }
 
   private handleDeleteSegment(id: number): void {
-    const wasSegmented = !this.state.isRawFull
     this.applyState(this.viewModel.deleteSegment(id))
     this.markUnsaved()
-    if (wasSegmented && this.state.isRawFull) {
-      this.showToast('已恢复为完整视频')
-    }
     this.showControlsTemporarily()
   }
 
@@ -869,15 +865,14 @@ struct Editor {
       // 绝不假装元数据也在 —— 否则用户下次打开看到降级卡片却不知道原因。
       // 提示可点（第二参 true）：点了回首页看新作品。
       if (outcome.metaSaved) {
-        this.showToast('已保存 · 查看作品', true)
+        this.showToast('已保存 · 查看', true)
       } else {
-        this.showToast('已保存 · 查看作品（元数据未写入）', true)
+        this.showToast('已保存 · 查看（重剪信息没存下）', true)
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (message.indexOf('已取消') >= 0 || message.indexOf('cancel') >= 0) {
         this.updateExportStatus('已取消导出')
-        this.showToast('已取消导出')
         debugLog('导出', '导出已被用户取消')
       } else {
         this.updateExportStatus(`导出失败：${message}`)
@@ -898,16 +893,15 @@ struct Editor {
 
   private overwritePromptText(): string {
     if (this.workId.length > 0) {
-      return '这条作品已经导出过，要覆盖它吗？'
+      return '这条作品导出过了，覆盖它？'
     }
-    return `这趟行程已经导出过 ${this.overwriteCount} 条，要覆盖最近那一条吗？`
+    return `这趟行程导出过 ${this.overwriteCount} 条，覆盖最近那条？`
   }
 
   private cancelExportTask(): void {
     cancelNativeExport()
     this.exportLoadingVisible = false
     this.updateExportStatus('已取消导出')
-    this.showToast('已取消导出')
     debugLog('导出', '用户点击浮层关闭按钮，已中断后台导出')
   }
 
@@ -1327,54 +1321,41 @@ struct Editor {
       .width('100%')
       .height('100%')
 
-      if (this.toastVisible) {
-        // 原来是 .position({ x: '22%', y: '86%' }) —— 位置写死，文案一长就从右边溢出去，
-        // 而且 86% 正好落在控件组上。改成和首页 toastBubble 同一套：铺满整屏、
-        // 内容贴底、往上留出控件组的高度。
-        Column() {
-          Text(this.toastText)
-            .fontSize(13)
-            .fontColor($r('app.color.card_bg'))
-            .backgroundColor($r('app.color.overlay_veil'))
-            .padding({ left: 20, right: 20, top: 10, bottom: 10 })
-            .borderRadius(8)
-            // 默认即可命中：外层 Column 是 HitTestMode.None（自己不吃、子节点照吃），
-            // 显示期间也没有全屏 scrim 盖住它，所以无需改命中行为，挂上 onClick 就能点到
-            // （见 handleToastTap）。
-            .onClick(() => this.handleToastTap())
-        }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.End)
-        .alignItems(HorizontalAlign.Center)
-        .padding({ bottom: 92 })
-        .hitTestBehavior(HitTestMode.None)
-      }
+      // 提示条和首页共用同一个组件；bottomOffset 抬到 92，避让底部的导出按钮。
+      AppToast({
+        message: this.toastText,
+        visible: this.toastVisible,
+        tappable: this.toastTappable,
+        bottomOffset: 92,
+        onTap: () => this.handleToastTap()
+      })
 
       if (this.backConfirmVisible) {
         Column({ space: 0 }) {
           Column({ space: 12 }) {
-            Text('确认放弃修改？')
+            Text('放弃这次修改？')
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
-            Text('返回将丢失未保存的修改')
+            Text('没保存的分段和参数会回到上一次导出的样子。')
               .fontSize(13)
               .fontColor($r('app.color.text_tertiary'))
             Row({ space: 12 }) {
               Button('继续编辑')
                 .layoutWeight(1)
-                .type(ButtonType.Capsule)
-                .fontSize(14)
-                .fontColor($r('app.color.text_primary'))
-                .backgroundColor($r('app.color.track_bg'))
+                .type(ButtonType.Normal)
+                .fontSize(15)
+                .fontColor($r('app.color.text_secondary'))
+                .backgroundColor(Color.Transparent)
                 .onClick(() => this.cancelBack())
               Button('放弃')
                 .layoutWeight(1)
-                .type(ButtonType.Capsule)
-                .fontSize(14)
+                .type(ButtonType.Normal)
+                .fontSize(15)
+                .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.card_bg'))
                 .backgroundColor($r('app.color.ink'))
+                .borderRadius(10)
                 .onClick(() => this.confirmBack())
             }
             .width('100%')
@@ -1476,10 +1457,11 @@ struct Editor {
             // 规则定成"少一个就不让继续"，就只留返回，不给这个模糊地带。
             Button('返回')
               .width('100%')
-              .type(ButtonType.Capsule)
-              .fontSize(14)
+              .type(ButtonType.Normal)
+              .fontSize(15)
               .fontColor($r('app.color.text_primary'))
               .backgroundColor($r('app.color.track_bg'))
+              .borderRadius(10)
               .onClick(() => {
                 this.driftVisible = false
                 this.getUIContext().getRouter().back()
@@ -1501,31 +1483,33 @@ struct Editor {
       if (this.paramsLostVisible) {
         Column({ space: 0 }) {
           Column({ space: 12 }) {
-            Text('剪辑参数已丢失')
+            Text('没法还原这次剪辑')
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
-            Text('这条作品的剪辑参数已丢失，无法重新剪辑。作品元数据里缺少可用的源片段记录，还原不出原来的模板、分段与水印，可以当作一次新的剪辑重来。')
+            Text('作品记录里缺了源片段信息，还原不出当时的模板和分段。可以当作一次新剪辑重来。')
               .fontSize(13)
               .fontColor($r('app.color.text_tertiary'))
               .lineHeight(19)
             Row({ space: 12 }) {
               Button('返回')
                 .layoutWeight(1)
-                .type(ButtonType.Capsule)
-                .fontSize(14)
-                .fontColor($r('app.color.text_primary'))
-                .backgroundColor($r('app.color.track_bg'))
+                .type(ButtonType.Normal)
+                .fontSize(15)
+                .fontColor($r('app.color.text_secondary'))
+                .backgroundColor(Color.Transparent)
                 .onClick(() => {
                   this.paramsLostVisible = false
                   this.getUIContext().getRouter().back()
                 })
               Button('当作新剪辑打开')
                 .layoutWeight(1)
-                .type(ButtonType.Capsule)
-                .fontSize(14)
+                .type(ButtonType.Normal)
+                .fontSize(15)
+                .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.card_bg'))
                 .backgroundColor($r('app.color.ink'))
+                .borderRadius(10)
                 .onClick(() => {
                   this.paramsLostVisible = false
                 })
@@ -1552,27 +1536,29 @@ struct Editor {
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
-            Text('需要相册权限才能重新剪辑。授权后会自动接着还原这条作品。')
+            Text('这项权限用来读取行车记录。授权后会自动接着打开这条作品。')
               .fontSize(13)
               .fontColor($r('app.color.text_tertiary'))
               .lineHeight(19)
             Row({ space: 12 }) {
               Button('返回')
                 .layoutWeight(1)
-                .type(ButtonType.Capsule)
-                .fontSize(14)
-                .fontColor($r('app.color.text_primary'))
-                .backgroundColor($r('app.color.track_bg'))
+                .type(ButtonType.Normal)
+                .fontSize(15)
+                .fontColor($r('app.color.text_secondary'))
+                .backgroundColor(Color.Transparent)
                 .onClick(() => {
                   this.permissionPromptVisible = false
                   this.getUIContext().getRouter().back()
                 })
               Button('去授权')
                 .layoutWeight(1)
-                .type(ButtonType.Capsule)
-                .fontSize(14)
+                .type(ButtonType.Normal)
+                .fontSize(15)
+                .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.card_bg'))
                 .backgroundColor($r('app.color.ink'))
+                .borderRadius(10)
                 .onClick(() => {
                   void this.requestRestorePermission()
                 })
@@ -1599,24 +1585,26 @@ struct Editor {
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
-            Text('覆盖会直接替换作品库里这条作品的成片，并更新「我的剪辑」里的这一条；存成新的则保留旧的、多出一条。相册里已有的那份不受影响。')
+            Text('覆盖会替换作品库里这条的成片，并更新「我的剪辑」。存成新的会多出一条；相册里已有的不受影响。')
               .fontSize(13)
               .fontColor($r('app.color.text_tertiary'))
               .lineHeight(19)
             Row({ space: 12 }) {
               Button('存成新的')
                 .layoutWeight(1)
-                .type(ButtonType.Capsule)
-                .fontSize(14)
-                .fontColor($r('app.color.text_primary'))
-                .backgroundColor($r('app.color.track_bg'))
+                .type(ButtonType.Normal)
+                .fontSize(15)
+                .fontColor($r('app.color.text_secondary'))
+                .backgroundColor(Color.Transparent)
                 .onClick(() => this.chooseOverwrite(false))
               Button('覆盖那一条')
                 .layoutWeight(1)
-                .type(ButtonType.Capsule)
-                .fontSize(14)
+                .type(ButtonType.Normal)
+                .fontSize(15)
+                .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.card_bg'))
                 .backgroundColor($r('app.color.amber'))
+                .borderRadius(10)
                 .onClick(() => this.chooseOverwrite(true))
             }
             .width('100%')

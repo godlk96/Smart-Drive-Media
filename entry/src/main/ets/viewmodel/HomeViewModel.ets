@@ -320,7 +320,7 @@ export class HomeViewModel {
         const message = error instanceof Error ? error.message : String(error)
         debugLog('首页VM', `读取作品库失败：${message}`)
         this.myEdits.entries = []
-        this.myEdits.errorText = '作品库暂时不可用'
+        this.myEdits.errorText = '作品库读取失败'
         return
       }
       this.myEdits.entries = loaded
@@ -409,7 +409,7 @@ export class HomeViewModel {
     }
     if (failedIds.length > 0) {
       // 错误文案留着（列表上方那一行），但不再用它顶掉整个列表。
-      this.myEdits.errorText = '作品库暂时不可用'
+      this.myEdits.errorText = '作品库读取失败'
       this.myEdits.selectedEntryIds = failedIds
       this.notifyStateChanged()
       return false

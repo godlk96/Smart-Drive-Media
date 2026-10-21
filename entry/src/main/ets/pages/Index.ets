@@ -1,6 +1,7 @@
 import common from '@ohos.app.ability.common'
 import window from '@ohos.window'
 import { AppIcon, AppIconName } from '../components/AppIcon'
+import { AppToast } from '../components/AppToast'
 import { WorkCard } from '../components/WorkCard'
 import { LibraryStateModel, TripCardModel } from '../model/AppState'
 import { WorkEntry } from '../service/WorkStore'
@@ -264,7 +265,10 @@ struct Index {
 
   // ---------------- 我的剪辑 ----------------
 
-  private showToast(message: string): void {
+  /**
+   * 弹提示。成功类 2.2 秒，失败类传 3.2 秒 —— 出错的话要读完，不能一晃就没。
+   */
+  private showToast(message: string, durationMs: number = 2200): void {
     this.toastText = message
     this.toastVisible = true
     if (this.toastTimer >= 0) {
@@ -273,7 +277,7 @@ struct Index {
     this.toastTimer = setTimeout(() => {
       this.toastVisible = false
       this.toastTimer = -1
-    }, 2000)
+    }, durationMs)
   }
 
   /**
@@ -387,11 +391,11 @@ struct Index {
       const message = await saveWorkToAlbum(context, entry, (_percent: number, detail: string) => {
         this.albumSaveDetail = detail
       })
-      this.showToast(message.length > 0 ? message : '已保存到相册')
+      this.showToast(message.length > 0 ? message : '已存到相册')
     } catch (error) {
       // 契约上不该走到这里；真出现未预期异常也要如实告知，不静默吞掉。
       const message = error instanceof Error ? error.message : String(error)
-      this.showToast(`保存到相册失败：${message}`)
+      this.showToast(`没存进相册：${message}`, 3200)
     } finally {
       this.albumSaveVisible = false
     }
@@ -421,7 +425,7 @@ struct Index {
     const ok = await this.viewModel.deleteSelectedRecords()
     this.syncViewState()
     if (!ok) {
-      this.showToast('移除失败，请重试')
+      this.showToast('没删掉，再试一次', 3200)
     }
   }
 
@@ -667,7 +671,7 @@ struct Index {
   @Builder
   permissionBlock() {
     Column({ space: 12 }) {
-      Text('需要访问相册权限')
+      Text('需要相册权限')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
@@ -675,7 +679,7 @@ struct Index {
         .fontSize(13)
         .fontColor($r('app.color.text_tertiary'))
         .textAlign(TextAlign.Center)
-      Button('授权并刷新')
+      Button('去授权')
         .height(40)
         .padding({ left: 18, right: 18 })
         .fontSize(14)
@@ -698,7 +702,7 @@ struct Index {
         .width(36)
         .height(36)
         .color($r('app.color.amber'))
-      Text('正在扫描行车记录视频...')
+      Text('正在读取行车记录')
         .fontSize(14)
         .fontColor($r('app.color.text_secondary'))
     }
@@ -712,7 +716,7 @@ struct Index {
   @Builder
   emptyBlock() {
     Column() {
-      Text(this.state.emptyText.length > 0 ? this.state.emptyText : '未发现行车记录仪视频')
+      Text(this.state.emptyText.length > 0 ? this.state.emptyText : '相册里没有行车记录仪视频')
         .fontSize(13)
         .fontColor($r('app.color.text_tertiary'))
         .textAlign(TextAlign.Center)
@@ -783,11 +787,11 @@ struct Index {
   @Builder
   myEditsEmptyBlock() {
     Column({ space: 12 }) {
-      Text('还没有剪辑过的视频')
+      Text('还没有作品')
         .fontSize(16)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
-      Text('在「行程库」里挑一趟行程剪辑并导出，这里就会留下记录。')
+      Text('在「行程库」里选一趟行程，剪完导出就会出现在这里。')
         .fontSize(13)
         .fontColor($r('app.color.text_tertiary'))
         .textAlign(TextAlign.Center)
@@ -844,7 +848,7 @@ struct Index {
         .width(32)
         .height(32)
         .color($r('app.color.amber'))
-      Text('正在读取剪辑记录...')
+      Text('正在读取作品')
         .fontSize(13)
         .fontColor($r('app.color.text_secondary'))
     }
@@ -908,11 +912,11 @@ struct Index {
         })
 
       Column({ space: 10 }) {
-        Text(`移除 ${this.deleteCount} 条记录？`)
+        Text(`移除这 ${this.deleteCount} 条？`)
           .fontSize(17)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
-        Text('只会从「我的剪辑」移除，相册里的副本不会被删掉')
+        Text('只删作品库里的成片和剪辑参数，相册里的副本不受影响。')
           .fontSize(13)
           .fontColor($r('app.color.text_secondary'))
           .textAlign(TextAlign.Center)
@@ -954,24 +958,6 @@ struct Index {
     .height('100%')
   }
 
-  @Builder
-  toastBubble() {
-    Column() {
-      Text(this.toastText)
-        .fontSize(13)
-        .fontColor($r('app.color.overlay_text'))
-        .padding({ left: 16, right: 16, top: 10, bottom: 10 })
-        .backgroundColor($r('app.color.overlay_veil'))
-        .borderRadius(10)
-    }
-    .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.End)
-    .alignItems(HorizontalAlign.Center)
-    .padding({ bottom: 90 })
-    .hitTestBehavior(HitTestMode.None)
-  }
-
   /**
    * 「保存到相册」进度浮层。
    *
@@ -987,11 +973,11 @@ struct Index {
           .width(34)
           .height(34)
           .color($r('app.color.amber'))
-        Text('正在保存到相册')
+        Text('正在存到相册')
           .fontSize(15)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
-        Text(this.albumSaveDetail.length > 0 ? this.albumSaveDetail : '正在写入视频文件...')
+        Text(this.albumSaveDetail.length > 0 ? this.albumSaveDetail : '正在写入视频')
           .fontSize(13)
           .fontColor($r('app.color.text_tertiary'))
           .textAlign(TextAlign.Center)
@@ -1069,9 +1055,11 @@ struct Index {
         this.albumSaveOverlay()
       }
 
-      if (this.toastVisible) {
-        this.toastBubble()
-      }
+      AppToast({
+        message: this.toastText,
+        visible: this.toastVisible,
+        bottomOffset: 40
+      })
     }
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .width('100%')
