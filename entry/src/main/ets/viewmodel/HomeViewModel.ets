@@ -84,6 +84,14 @@ export class HomeViewModel {
   private onStateChangedListener?: () => void
   private myEdits: MyEditsViewState = createEmptyMyEditsState()
   private isRefreshingMyEdits: boolean = false
+  /**
+   * 作品库**至少成功读过一次**。
+   *
+   * 不能拿 `entries.length === 0` 当判据：一件作品都没有的时候它是真，
+   * 于是每次切 tab 都会闪一下「正在读取剪辑记录…」。这个标志只在首读之后翻真，
+   * 之后的重读一律静默 —— 空列表也照样直接显示空态。
+   */
+  private myEditsLoadedOnce: boolean = false
 
   constructor() {
     this.bridge.setOnCoverReadyListener((tripId: string, coverPath: string) => {
@@ -290,9 +298,17 @@ export class HomeViewModel {
       return
     }
     this.isRefreshingMyEdits = true
-    this.myEdits.isLoading = true
     this.myEdits.errorText = ''
-    this.notifyStateChanged()
+    // 只有"首读"才切到整页加载态。
+    //
+    // 切 tab 会重读一次作品库（见 Index.switchTab —— 用户可能刚在行程库导出，
+    // 缓存会缺最新那条），如果每次都把 isLoading 置真，列表会先消失、转个圈、
+    // 再回来 —— 那就是切「我的剪辑」时看到的那道闪。
+    // 读过一次之后一律静默刷新：列表照常显示，读完原地替换，看不到任何中间态。
+    if (!this.myEditsLoadedOnce) {
+      this.myEdits.isLoading = true
+      this.notifyStateChanged()
+    }
     try {
       // 与旧链路同一个注入点，依赖换成 WorkStore ——
       // 少了这一句，WorkStore 拿不到 context，exportsDir() 返回空串，列表永远空。
@@ -313,6 +329,8 @@ export class HomeViewModel {
       this.myEdits.errorText = ''
     } finally {
       this.isRefreshingMyEdits = false
+      // 首读失败也算"读过"：错误页有自己的「重试」，不该再退回转圈态。
+      this.myEditsLoadedOnce = true
       this.myEdits.isLoading = false
       this.notifyStateChanged()
     }

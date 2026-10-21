@@ -1,4 +1,4 @@
-import { Segment, formatSegmentDuration } from '../model/SegmentModel'
+import { Segment, formatSegmentDuration, segmentDisplayName } from '../model/SegmentModel'
 import { AppIcon, AppIconName } from './AppIcon'
 
 /**
@@ -30,19 +30,22 @@ export struct SegmentParamRow {
   onToggleEnabled?: () => void
   onDeleteSegment?: () => void
 
+  // 下面四个控件原来各是一个 34×34、圆角 10 的"胶囊"：倍速=琥珀底、声音=鼠尾草绿底、
+  // 剪刀=琥珀底、关闭=玫瑰红底，每个都带 1px 同色描边。四种颜色编码四个动作，
+  // 用户记不住，读起来只剩装饰；一屏里还多出四个盒子。
+  //
+  // 现在全部拆成裸图标：颜色只表达**能不能用**（可用=近黑，不可用=浅灰），
+  // 表达"这是什么"交给图标形状本身。热区从 34 放到 40，没有盒子之后放大是免费的。
+
   @Builder
   speedChip() {
     Text(this.segment.speedLabel.replace('X', 'x'))
-      .fontSize(14)
+      .fontSize(15)
       .fontWeight(FontWeight.Medium)
-      .fontColor($r('app.color.amber'))
+      .fontColor($r('app.color.text_primary'))
       .textAlign(TextAlign.Center)
-      .height(34)
-      .padding({ left: 12, right: 12 })
-      .borderRadius(10)
-      .borderWidth(1)
-      .borderColor($r('app.color.chip_amber_border'))
-      .backgroundColor($r('app.color.amber_soft'))
+      .height(40)
+      .padding({ left: 6, right: 6 })
       .onClick(() => {
         if (this.onCycleSpeed) {
           this.onCycleSpeed()
@@ -56,16 +59,13 @@ export struct SegmentParamRow {
       AppIcon({
         name: this.segment.muted ? AppIconName.Muted : AppIconName.Speaker,
         iconSize: 20,
-        iconColor: this.segment.muted ? $r('app.color.chip_neutral_fg') : $r('app.color.chip_sage_fg')
+        iconColor: this.segment.muted ? $r('app.color.text_disabled') : $r('app.color.text_primary')
       })
     }
-    .width(34)
-    .height(34)
-    .borderRadius(10)
-    .borderWidth(1)
-    .borderColor(this.segment.muted ? $r('app.color.chip_neutral_border') : $r('app.color.chip_sage_border'))
-    .backgroundColor(this.segment.muted ? $r('app.color.chip_neutral_bg') : $r('app.color.chip_sage_bg'))
-    .margin({ left: 6 })
+    .width(40)
+    .height(40)
+    // 拆掉盒子之后热区之间没有视觉分界，补 10 的间距，免得剪一刀剪到隔壁的 ✕
+    .margin({ left: 10 })
     .onClick(() => {
       if (this.onToggleMute) {
         this.onToggleMute()
@@ -79,17 +79,12 @@ export struct SegmentParamRow {
       AppIcon({
         name: AppIconName.Scissors,
         iconSize: 19,
-        iconColor: this.canScissors ? $r('app.color.amber') : $r('app.color.chip_disabled_fg')
+        iconColor: this.canScissors ? $r('app.color.text_primary') : $r('app.color.text_disabled')
       })
     }
-    .width(34)
-    .height(34)
-    .borderRadius(10)
-    .borderWidth(1)
-    .borderColor(this.canScissors ? $r('app.color.chip_amber_border') : $r('app.color.chip_disabled_border'))
-    .backgroundColor(this.canScissors ? $r('app.color.amber_soft') : $r('app.color.chip_disabled_bg'))
-    .opacity(this.canScissors ? 1 : 0.4)
-    .margin({ left: 6 })
+    .width(40)
+    .height(40)
+    .margin({ left: 10 })
     .onClick(() => {
       if (this.onScissors) {
         this.onScissors()
@@ -103,17 +98,12 @@ export struct SegmentParamRow {
       AppIcon({
         name: AppIconName.Close,
         iconSize: 18,
-        iconColor: this.canToggle ? $r('app.color.chip_rose_fg') : $r('app.color.chip_disabled_fg')
+        iconColor: this.canToggle ? $r('app.color.text_tertiary') : $r('app.color.text_disabled')
       })
     }
-    .width(34)
-    .height(34)
-    .borderRadius(10)
-    .borderWidth(1)
-    .borderColor(this.canToggle ? $r('app.color.chip_rose_border') : $r('app.color.chip_disabled_border'))
-    .backgroundColor(this.canToggle ? $r('app.color.chip_rose_bg') : $r('app.color.chip_disabled_bg'))
-    .opacity(this.canToggle ? 1 : 0.35)
-    .margin({ left: 6 })
+    .width(40)
+    .height(40)
+    .margin({ left: 10 })
     .onClick(() => {
       if (this.canToggle) {
         if (this.onDeleteSegment) {
@@ -147,7 +137,7 @@ export struct SegmentParamRow {
         this.soundIcon()
         this.scissorsButton()
       } else {
-        Text('片段 ' + this.ordinal)
+        Text(segmentDisplayName(this.ordinal))
           .fontSize(12)
           .fontColor($r('app.color.text_tertiary'))
         Text(formatSegmentDuration(this.segment))

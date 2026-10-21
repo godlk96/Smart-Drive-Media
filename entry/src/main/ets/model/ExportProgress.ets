@@ -26,7 +26,10 @@ export function nativeExportProgress(work: NativeExportWork): ExportProgressUpda
     return {
       percent: work.totalFrames > 0 ? exportPercent(25 + fraction * 59.9) : Math.max(25, Math.min(84.9, work.percent)),
       stage: 'encoding',
-      detail: work.totalFrames > 0 ? `已合成 ${work.currentFrame} / ${work.totalFrames} 帧` : '正在合成画面'
+      // 原来这里是「已合成 78 / 1200 帧」——帧数是渲染管线的内部刻度，
+      // 用户拿到的是"还要多久"。这一档进度环已经给出了百分比，
+      // 再报一个帧数只会在屏幕上多一串没人读的数字，所以这一档不再给明细。
+      detail: ''
     }
   }
   if (work.stage === 3) {

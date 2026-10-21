@@ -208,6 +208,8 @@ export struct TemplateGlyph {
   @Prop templateId: string = ''
   @Prop boxWidth: number = 72
   @Prop boxHeight: number = 46
+  /** 选中态：整块版式图由暖黑翻成琥珀，与卡片的琥珀描边同色 */
+  @Prop active: boolean = false
 
   private definition(): TemplateDefinition {
     return resolveTemplateDefinition(this.templateId)
@@ -247,30 +249,26 @@ export struct TemplateGlyph {
   }
 
   /**
-   * 机位色。六个机位一套暖灰微色差（远看是灰、近看分得开），
-   * 与卡面暖白、琥珀强调色同族 —— 早先那套黄/绿/粉糖果色太跳，读起来不像工具。
+   * 槽位底色 / 描边 / 字色。
+   *
+   * 三个版本走过：最早六个机位六种暖灰微色差（70vp 高的缩略图上根本分不出来，
+   * 四张版式长得一样）；改成 ink 实心块（对比度太硬，四张卡像四块黑板）；
+   * 再改成 stage_slot 暖灰（还是"一排在比谁更黑"）。
+   *
+   * 现在反过来做：**未选中只画线框**（白底 + 细描边 + 深字），选中的填实琥珀。
+   * 于是整排缩略图平时是一组安静的示意图，只有被选中的那一张是实心的，
+   * 不用靠描边粗细去比。版式仍然靠几何区分：一格 / 上下两格 / 上一下二 / 四宫格。
    */
-  private slotColor(camera: string): Resource {
-    const name: string = normalizeCameraNameById(camera)
-    if (name === 'Front') {
-      return $r('app.color.slot_cam_front')
-    }
-    if (name === 'Back') {
-      return $r('app.color.slot_cam_back')
-    }
-    if (name === 'Left') {
-      return $r('app.color.slot_cam_left')
-    }
-    if (name === 'Right') {
-      return $r('app.color.slot_cam_right')
-    }
-    if (name === 'LeftFront') {
-      return $r('app.color.slot_cam_left_front')
-    }
-    if (name === 'RightFront') {
-      return $r('app.color.slot_cam_right_front')
-    }
-    return $r('app.color.ed_thumb_bg')
+  private slotColor(): Resource {
+    return this.active ? $r('app.color.amber') : $r('app.color.card_bg')
+  }
+
+  private slotBorderColor(): Resource {
+    return this.active ? $r('app.color.amber') : $r('app.color.segment_border')
+  }
+
+  private slotLabelColor(): Resource {
+    return this.active ? $r('app.color.card_bg') : $r('app.color.text_secondary')
   }
 
   /** 槽位窄到 40vp 以下降一档字号，否则「左前」会顶到格子边。 */
@@ -286,7 +284,7 @@ export struct TemplateGlyph {
             Text(getCameraZhNameById(normalizeCameraNameById(this.cameraOfSlot(slot.slotId))))
               .fontSize(this.labelSize(slot.width))
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.ed_slot_fg'))
+              .fontColor(this.slotLabelColor())
               .maxLines(1)
           }
           .justifyContent(FlexAlign.Center)
@@ -294,11 +292,10 @@ export struct TemplateGlyph {
           .width(this.toPercent(slot.width))
           .height(this.toPercent(slot.height))
           .position({ x: this.toPercent(slot.x), y: this.toPercent(slot.y) })
-          .backgroundColor(this.slotColor(this.cameraOfSlot(slot.slotId)))
+          .backgroundColor(this.slotColor())
           .borderRadius(2)
-          // 0.5px 描边同时充当槽位之间的分隔线：底色已经不再是整块 stage_bg，
-          // 靠这层细线把相邻两格分开。
-          .border({ width: 0.5, color: $r('app.color.stage_bg') })
+          // 1px 描边：未选中时它是格子的全部 —— 线框示意图就靠这层线读出版式。
+          .border({ width: 1, color: this.slotBorderColor() })
         }, (slot: TemplatePreviewSlot) => slot.slotId)
       }
       .width(this.fittedWidth())

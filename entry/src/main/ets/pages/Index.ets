@@ -6,7 +6,7 @@ import { LibraryStateModel, TripCardModel } from '../model/AppState'
 import { WorkEntry } from '../service/WorkStore'
 import { saveWorkToAlbum } from '../service/AlbumExport'
 import { debugLog } from '../utils/Logger'
-import { formatTripDay, formatTripDuration, getTripStartTime, isTripComplete } from '../utils/TripFormat'
+import { formatTripDay, getTripStartTime, isTripComplete } from '../utils/TripFormat'
 import { HomeViewModel, MyEditsViewState } from '../viewmodel/HomeViewModel'
 import { consumeOpenMyEdits } from '../constants/PendingNavigation'
 
@@ -216,16 +216,19 @@ struct Index {
     return { radius: 8, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 2 }
   }
 
+  /**
+   * 顶栏右侧那行摘要：「22 组」。
+   *
+   * 原来是「22 段 · 29:00」。两个问题：编辑页刚把切出来的剪辑叫「第一段 / 第二段」，
+   * 这里的「22 段」会被读成"22 个剪辑片段"，撞词；总时长在这个位置也没什么用
+   * —— 用户看的是列表里每一趟的时长，不是总和。改成「组」，只说有几组。
+   */
   private getSummaryText(): string {
     const count: number = this.displayCards.length
     if (count === 0) {
       return ''
     }
-    let totalSec: number = 0
-    this.displayCards.forEach((card: TripCardModel) => {
-      totalSec += card.durationSec
-    })
-    return `${count} 段 · ${formatTripDuration(totalSec)}`
+    return `${count} 组`
   }
 
   private handleCardClick(card: TripCardModel): void {
@@ -314,15 +317,19 @@ struct Index {
   }
 
   /**
-   * ForEach 的 key 必须把「选中态 / 多选态 / 可否重剪」也编进去：
-   * 这些变化不会改变作品本身，key 不变 ForEach 就不会重建子组件，
-   * 卡片上的勾选与重剪置灰就永远不更新。
+   * ForEach 的 key 只编「这件作品是谁」，不编它的渲染状态。
+   *
+   * 原来这里把「选中态 / 多选态 / 可否重剪」也拼进去了，理由是"key 不变 ForEach
+   * 就不会重建子组件"。代价是：一按「选择」，每张卡的 key 都变了，整个列表被销毁重建，
+   * 封面 `Image` 跟着重新加载，而它挂着 `.alt($r('app.media.app_icon'))` ——
+   * 那一帧闪过的就是 App 图标。
+   *
+   * 这些状态本来就有 `@Prop` 通道：`syncViewState()` 每次都把 `myEdits` 换成
+   * `getMyEditsState()` 新建的对象，@State 一变，WorkCard 的 `@Prop selected /
+   * selectionMode / canReedit` 就地更新，不需要靠 key 变化去逼重建。
    */
   private workCardKey(entry: WorkEntry): string {
-    const selected = this.isWorkSelected(entry.id) ? '1' : '0'
-    const mode = this.myEdits.selectionMode ? '1' : '0'
-    const canReedit = this.canReeditEntry(entry) ? '1' : '0'
-    return `${entry.id}_${entry.coverPath}_${selected}${mode}${canReedit}`
+    return `${entry.id}_${entry.coverPath}`
   }
 
   private handleWorkClick(entry: WorkEntry): void {
@@ -421,11 +428,15 @@ struct Index {
   @Builder
   pageHeader() {
     Row({ space: 10 }) {
-      Text(this.activeTab === 0 ? this.state.title : '我的剪辑')
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-        .layoutWeight(1)
+      // tab 自己就是标题：屏幕上只出现一次「行程库」/「我的剪辑」。
+      // （原来是两行 —— 一行 20px 的页面标题、一行 15px 的 tab，同一个词出现两次。）
+      Row({ space: 22 }) {
+        this.tabItem(0, '行程库')
+        this.tabItem(1, '我的剪辑')
+      }
+      .alignItems(VerticalAlign.Center)
+
+      Blank()
 
       if (this.activeTab === 0) {
         Text(this.getSummaryText())
@@ -495,33 +506,26 @@ struct Index {
     })
   }
 
+  /**
+   * 一个 tab。现在它承担的是**标题**的活：字号跟原来的页面标题一样大，
+   * 选中的近黑、未选中的浅灰，下面一条短的琥珀下划线。
+   */
   @Builder
   tabItem(index: number, label: string) {
     Column({ space: 0 }) {
       Text(label)
-        .fontSize(15)
-        .fontWeight(this.activeTab === index ? FontWeight.Bold : FontWeight.Normal)
+        .fontSize(20)
+        .fontWeight(this.activeTab === index ? FontWeight.Bold : FontWeight.Medium)
         .fontColor(this.activeTab === index ? $r('app.color.text_primary') : $r('app.color.text_tertiary'))
       Row()
-        .width(18)
-        .height(2)
-        .borderRadius(1)
+        .width(20)
+        .height(2.5)
+        .borderRadius(1.5)
         .backgroundColor(this.activeTab === index ? $r('app.color.amber') : Color.Transparent)
-        .margin({ top: 6 })
+        .margin({ top: 4 })
     }
-    .padding({ right: 22, top: 2 })
     .alignItems(HorizontalAlign.Start)
     .onClick(() => this.switchTab(index))
-  }
-
-  @Builder
-  tabBar() {
-    Row({ space: 0 }) {
-      this.tabItem(0, '行程库')
-      this.tabItem(1, '我的剪辑')
-    }
-    .width('100%')
-    .padding({ left: 16, right: 16, bottom: 10 })
   }
 
   @Builder
@@ -590,7 +594,9 @@ struct Index {
                   .width('100%')
                   .height('100%')
                   .objectFit(ImageFit.Cover)
-                  .alt($r('app.media.app_icon'))
+                  // 同上：不挂 .alt()。挂 app_icon 的话，切 tab 回来时整列封面
+                  // 重新加载，每一张都先闪一帧 App 图标。深色底（见下面 Stack 的
+                  // backgroundColor）本身就是"画面还没到"的样子。
               } else {
                 Column() {
                   Text('无封面')
@@ -1011,9 +1017,13 @@ struct Index {
   pageContent() {
     Column({ space: 0 }) {
       this.pageHeader()
-      this.tabBar()
 
-      if (this.activeTab === 0) {
+      // 两个 tab 的内容都常驻，用 Visibility 切显示。
+      //
+      // 原来这里是 if/else：切 tab 会把整个列表销毁重建，二十多张封面跟着重新解码，
+      // 那一瞬间图上画的是占位 —— 屏幕上就是一道闪。Visibility.None 只是不参与布局，
+      // 组件实例和已经加载好的图都还在，切回来不用再解一遍。
+      Column({ space: 0 }) {
         if (this.state.permissionTip.length > 0) {
           Text(this.state.permissionTip)
             .fontSize(12)
@@ -1031,9 +1041,17 @@ struct Index {
         } else {
           this.tripList()
         }
-      } else {
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .visibility(this.activeTab === 0 ? Visibility.Visible : Visibility.None)
+
+      Column({ space: 0 }) {
         this.myEditsBlock()
       }
+      .width('100%')
+      .layoutWeight(1)
+      .visibility(this.activeTab === 1 ? Visibility.Visible : Visibility.None)
     }
     .width('100%')
     .height('100%')

@@ -9,7 +9,7 @@ import { Segment, MAX_SEGMENTS, createFullSegment, segmentIndexAtSec, segmentOrd
 import { TripSnapshot } from '../model/TripModels'
 import { DEFAULT_TEMPLATE_ID } from '../model/Models'
 import { WorkMeta, findWorkByTrip } from '../model/WorkMeta'
-import { buildRestoredTripSnapshot, collectLiveFileNames, collectTrackClipNames, findMissingClipNames } from '../model/WorkRestore'
+import { buildRestoredTripSnapshot, collectLiveFileNames, collectTrackClipNames, findMissingClipNames, findMissingSourceClips } from '../model/WorkRestore'
 import { WorkStore } from '../service/WorkStore'
 import { parseDvrFileName } from '../service/DvrScannerService'
 import { REQUIRED_MEDIA_PERMISSIONS } from '../constants/AppConstants'
@@ -218,7 +218,16 @@ struct Editor {
       // `collectHitClips`（真正决定还原出哪些片段的那一个）会判它「找不到」——
       // 同一份数据两处结论相反，就会漏报缺失，把一段黑屏送进编码器。
       // 所以两个判定必须走同一个定义。
-      const missing = findMissingClipNames(meta.tracks, collectLiveFileNames(liveClips))
+      // 规则：这件作品**绑定的原素材少一个就不让进**，简单粗暴、不会出错误。
+      //
+      // 判定优先看 `sourceClips`（整趟 / 这几趟行程的**所有视角**）——
+      // 只看 `tracks` 是不够的：单视角导出时它只记了 front，后视角被删了看不出来，
+      // 而还原会把整趟行程都带回来，缺的那一路会在模板行里露馅。
+      // 旧 sidecar 没有 `sourceClips`，退回四条轨道逐位比对（那时只能看用到的那几路）。
+      const liveNames: Array<string> = collectLiveFileNames(liveClips)
+      const missing: Array<string> = meta.sourceClips.length > 0
+        ? findMissingSourceClips(meta.sourceClips, liveNames)
+        : findMissingClipNames(meta.tracks, liveNames)
       if (missing.length > 0) {
         debugLog('剪辑页', `还原不可用：缺 ${missing.length} 个源片段 workId=${workId}`)
         // 先把页面铺成白纸再弹窗：关掉弹窗后用户看到的是可编辑的正常页面，而不是空壳。
@@ -1018,14 +1027,13 @@ struct Editor {
   @Builder
   TopBar() {
     Row() {
+      // 返回键原来是个 38 的圆底 + 1px 描边。一屏里已经有「导出」这一块琥珀，
+      // 再给返回键一个描边圆圈，两个都是"盒子"，主次就没了。留图标、留热区，去掉盒子。
       Stack({ alignContent: Alignment.Center }) {
-        AppIcon({ name: AppIconName.Back, iconSize: 22, iconColor: $r('app.color.text_secondary') })
+        AppIcon({ name: AppIconName.Back, iconSize: 22, iconColor: $r('app.color.text_primary') })
       }
       .width(38)
       .height(38)
-      .borderRadius(19)
-      .backgroundColor($r('app.color.ed_surface'))
-      .border({ width: 1, color: $r('app.color.ed_line') })
       .onClick(() => this.handleBack())
       Column({ space: 0 }) {
         Text(this.tripIdentityTitle())
@@ -1047,20 +1055,6 @@ struct Editor {
       }
       .layoutWeight(1)
       .margin({ left: 12, right: 12 })
-      Button('导出')
-        .type(ButtonType.Normal)
-        .fontSize(14)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.card_bg'))
-        .backgroundColor($r('app.color.amber'))
-        .height(38)
-        .borderRadius(10)
-        .padding({ left: 17, right: 17 })
-        .onClick(() => {
-          // 丢掉返回的 Promise 会让内部异常变成未处理的 rejection；
-          // 这里显式 void，异常由 startNativeExportTask 自己的 try/catch 兜住。
-          void this.startNativeExportTask()
-        })
     }
     .width('100%')
     // 52 → 64，并且上下留出不对称的内边距（上 12 / 下 8）。
@@ -1078,8 +1072,13 @@ struct Editor {
     })
   }
 
+  /**
+   * 画面。原来它和下面的控件一起装在一张白卡里（圆角 18 + 描边 + 投影），
+   * 卡里再套圆角 14 的画面、圆角 10 的胶囊、圆角 8 的轨道框 —— 一屏四层圆角四层描边，
+   * 谁也不突出。现在白卡拆掉，画面自己就是这一页的主体，直接坐在页面底色上。
+   */
   @Builder
-  PlayerCard() {
+  PlayerStage() {
     Column({ space: 0 }) {
       Stack({ alignContent: Alignment.Bottom }) {
         if (this.hasPreviewSource()) {
@@ -1164,9 +1163,23 @@ struct Editor {
       .width('100%')
       .aspectRatio(STAGE_ASPECT_RATIO)
       .backgroundColor($r('app.color.stage_bg'))
-      .borderRadius(14)
+      // 圆角回来了：画面左右各留 12，四个直角会怼在页面边上。
+      .borderRadius(12)
       .clip(true)
+    }
+    .width('100%')
+  }
 
+  /**
+   * 画面下方的控件组。单独拆出来是为了让它能贴在屏幕底部。
+   *
+   * 原来控件紧跟在画面下面，而画面又贴着版式行，于是整组控件浮在屏幕中段 ——
+   * 拇指够不到，底下还空一大片底色。现在画面吃掉中间的剩余空间、自己在里面居中，
+   * 控件钉在底部，空出来的那部分变成画面周围的留白，而不是页面底部的断口。
+   */
+  @Builder
+  PlayerControls() {
+    Column({ space: 0 }) {
       // 进度条从画面里搬出来，单独占画面下方一行。
       // 以前它压在画面上、并且跟播放键同生共死（同一个 showPlayerControls 条件）：
       // 控件条收起来了它还杵在画面中央，而只有封面图、没有可播源时它又挂在那里拖不动。
@@ -1191,44 +1204,44 @@ struct Editor {
         onToggleEnabled: () => this.handleDeleteSegment(this.selectedSegmentId())
       })
 
-      SegmentTrack({
-        segments: this.state.segments,
-        totalDurationSec: this.state.totalDurationSec,
-        selectedSegmentId: this.selectedSegmentId(),
-        isRawFull: this.state.isRawFull,
-        onSelectSegment: (id: number) => this.handleSelectSegment(id),
-        onSelectGap: (startSec: number) => this.handleSelectGap(startSec),
-        onAdjustStart: () => this.pauseAllPreview(),
-        onAdjustPreview: (sec: number) => this.handleAdjustPreview(sec),
-        onAdjustBoundary: (id: number, edge: 'start' | 'end', sec: number) => this.handleAdjustBoundary(id, edge, sec)
-      })
+      // 判据是 `isRawFull`，不是 `segments.length > 1`。
+      //
+      // 只有未动过的整片（isRawFull）才没有可做的动作：轨道上是一整条 0→片尾，
+      // 拖两端就是拖全片（进度条已经能拖），剪刀在参数行里。原来它照画不误，
+      // 于是屏幕上出现一个巨大的空框、里面写着「全片」—— 和参数行左边的「全片」
+      // 重复，而且看起来像个没填的表单。
+      //
+      // 写成 `segments.length > 1` 是错的：第一刀落在 isRawFull 上时，
+      // splitOrInsertAt 返回的是**一个** 15 秒的高光片段（不是两段），
+      // 于是切完仍然是 1 段，轨道被这条判断藏掉了 —— 用户点完剪刀，下方什么都没出现。
+      if (!this.state.isRawFull) {
+        SegmentTrack({
+          segments: this.state.segments,
+          totalDurationSec: this.state.totalDurationSec,
+          selectedSegmentId: this.selectedSegmentId(),
+          isRawFull: this.state.isRawFull,
+          onSelectSegment: (id: number) => this.handleSelectSegment(id),
+          onSelectGap: (startSec: number) => this.handleSelectGap(startSec),
+          onAdjustStart: () => this.pauseAllPreview(),
+          onAdjustPreview: (sec: number) => this.handleAdjustPreview(sec),
+          onAdjustBoundary: (id: number, edge: 'start' | 'end', sec: number) => this.handleAdjustBoundary(id, edge, sec)
+        })
+      }
     }
     .width('100%')
-    .padding(12)
-    .backgroundColor($r('app.color.ed_surface'))
-    .borderRadius(18)
-    .border({ width: 1, color: $r('app.color.ed_line') })
-    // 之前整张卡只有一层 1px 描边，落在同为浅色的底色上几乎看不出边界，
-    // 这就是「像原型图」的直接来源。加一层极轻的暖色投影把卡从底色上抬起来。
-    .shadow({ radius: 10, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 2 })
-    .margin({ top: 12, bottom: 24 })
   }
 
   @Builder
   TemplateCard() {
     Column({ space: 0 }) {
-      Row() {
-        Text('模版')
-          .fontSize(13)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-        Blank()
-        Text('横滑选择版式')
-          .fontSize(11)
-          .fontColor($r('app.color.text_tertiary'))
-      }
-      .width('100%')
-      .padding({ left: 14, right: 14, top: 14, bottom: 2 })
+      // 原来是「模版」标题 + 右侧「横滑选择版式」提示，装在一张白卡里。
+      // 提示是多余的（四张版式一眼能看出是能选的），标题也降级成一个小标签 ——
+      // 白卡一拆，这排缩略图自己就是这一块的主角，不需要再给它一个头。
+      Text('模版')
+        .fontSize(12)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_tertiary'))
+        .margin({ top: 16, bottom: 2 })
 
       TemplateStrip({
         cards: this.state.templateCards,
@@ -1239,11 +1252,8 @@ struct Editor {
       })
     }
     .width('100%')
-    .backgroundColor($r('app.color.ed_surface'))
-    .borderRadius(18)
-    .border({ width: 1, color: $r('app.color.ed_line') })
-    .shadow({ radius: 10, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 2 })
-    .margin({ top: 12, bottom: 0 })
+    .alignItems(HorizontalAlign.Start)
+    .margin({ bottom: 4 })
   }
 
   build() {
@@ -1251,37 +1261,94 @@ struct Editor {
       Column({ space: 0 }) {
         this.TopBar()
 
-        Scroll() {
-          Column({ space: 0 }) {
-            // 模版在播放器上方：选版式是这一页的第一个决定，先选版式再看画面。
-            // （原来播放器在前、模版在最下面，滑到版式行要先划过大半屏。）
-            this.TemplateCard()
-            this.PlayerCard()
+        // 版式行钉在顶部：选版式是这一页的第一个决定，先选版式再看画面。
+        // （原来播放器在前、模版在最下面，滑到版式行要先划过大半屏。）
+        Column() {
+          this.TemplateCard()
+        }
+        .width('100%')
+        .padding({ left: 10, right: 10 })
+
+        // 画面区。16:9 的画面放在这块屏上只占四分之一高度，怎么排都会剩下一大片底色。
+        //
+        // 试过三条路：把画面居中，上下各挖一个坑（"空洞"）；把整条中间铺成深色舞台，
+        // 黑色吃掉整页，空洞只是换了个颜色；把画面通栏、控件钉底，画面和控件之间
+        // 又空出八百多像素。最后这条：画面贴着版式行往下排，剩下的空白**全部沉到
+        // 底下的工作台里** —— 一块留白，而不是两个坑。
+        //
+        // 通栏试过，观感不好：画面顶到屏幕左右两条边、四个直角怼在弧形的屏幕边上，
+        // 而且深色画面直接切到浅色页面，边界太硬。退回 12 的边距 + 圆角。
+        Column() {
+          this.PlayerStage()
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 2, bottom: 10 })
+
+        // 画面以下的整块做成一片连通的"工作台"面（scrubber → 参数行 → 空白 → 导出）。
+        //
+        // 中段那六百多像素的空白是这一页真正的"空洞"来源：底色和页面同色，
+        // 于是空的地方和"这一页没内容"看起来是一回事。给它一个面之后，
+        // 空的地方变成"工作台里的留白"，上深下浅两块也把这一页切成了两段：
+        // 上面是舞台（看），下面是工作台（改和导出）。
+        Column() {
+          Column() {
+            this.PlayerControls()
           }
           .width('100%')
-          .padding({ left: 10, right: 10 })
-          .constraintSize({ minHeight: '100%' })
-          .justifyContent(FlexAlign.Start)
+          .padding({ left: 10, right: 10, top: 10 })
+
+          // 全部剩余空白沉在工作台里。
+          Blank()
+
+          Column() {
+            Button('导出')
+              .width('100%')
+              .height(50)
+              .type(ButtonType.Normal)
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.card_bg'))
+              .backgroundColor($r('app.color.amber'))
+              .borderRadius(12)
+              .onClick(() => {
+                // 丢掉返回的 Promise 会让内部异常变成未处理的 rejection；
+                // 这里显式 void，异常由 startNativeExportTask 自己的 try/catch 兜住。
+                void this.startNativeExportTask()
+              })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, bottom: 20, top: 12 })
         }
+        .width('100%')
         .layoutWeight(1)
-        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-        .scrollBar(BarState.Off)
+        .backgroundColor($r('app.color.ed_surface'))
+        .border({ width: { top: 1 }, color: $r('app.color.ed_line') })
       }
       .width('100%')
       .height('100%')
 
       if (this.toastVisible) {
-        Text(this.toastText)
-          .fontSize(13)
-          .fontColor($r('app.color.card_bg'))
-          .backgroundColor($r('app.color.overlay_veil'))
-          .padding({ left: 20, right: 20, top: 10, bottom: 10 })
-          .borderRadius(8)
-          .position({ x: '22%', y: '86%' })
-          // 默认即可命中：这条提示是 Stack 的直接子节点、压在内容层之上，没有
-          // hitTestBehavior(HitTestMode.None)、显示期间也没有全屏 scrim 盖住它，
-          // 所以无需改命中行为，挂上 onClick 就能点到（见 handleToastTap）。
-          .onClick(() => this.handleToastTap())
+        // 原来是 .position({ x: '22%', y: '86%' }) —— 位置写死，文案一长就从右边溢出去，
+        // 而且 86% 正好落在控件组上。改成和首页 toastBubble 同一套：铺满整屏、
+        // 内容贴底、往上留出控件组的高度。
+        Column() {
+          Text(this.toastText)
+            .fontSize(13)
+            .fontColor($r('app.color.card_bg'))
+            .backgroundColor($r('app.color.overlay_veil'))
+            .padding({ left: 20, right: 20, top: 10, bottom: 10 })
+            .borderRadius(8)
+            // 默认即可命中：外层 Column 是 HitTestMode.None（自己不吃、子节点照吃），
+            // 显示期间也没有全屏 scrim 盖住它，所以无需改命中行为，挂上 onClick 就能点到
+            // （见 handleToastTap）。
+            .onClick(() => this.handleToastTap())
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.End)
+        .alignItems(HorizontalAlign.Center)
+        .padding({ bottom: 92 })
+        .hitTestBehavior(HitTestMode.None)
       }
 
       if (this.backConfirmVisible) {
@@ -1327,27 +1394,40 @@ struct Editor {
 
       if (this.exportLoadingVisible) {
         Column({ space: 0 }) {
-          Stack({ alignContent: Alignment.TopEnd }) {
-            Column({ space: 14 }) {
+          Column({ space: 18 }) {
+            // 关闭键原来浮在卡片右上角，和标题不在一条线上（标题居中、X 贴角，
+            // 两个元素的视觉基线差着一截）。改成标题占满左侧、X 跟在行尾。
+            Row() {
               Text('正在导出视频')
                 .fontSize(16)
                 .fontWeight(FontWeight.Bold)
                 .fontColor($r('app.color.text_primary'))
-                .margin({ top: 4 })
+                .layoutWeight(1)
 
               Stack({ alignContent: Alignment.Center }) {
-                Progress({ value: Math.max(1, this.exportProgress), total: 100, type: ProgressType.Ring })
-                  .width(68)
-                  .height(68)
-                  .color($r('app.color.amber'))
-                  .style({ strokeWidth: 5, enableScanEffect: true, enableSmoothEffect: true })
-                Text(`${Math.max(0, this.exportProgress).toFixed(1)}%`)
-                  .fontSize(13)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor($r('app.color.text_primary'))
+                AppIcon({ name: AppIconName.Close, iconSize: 15, iconColor: $r('app.color.text_secondary') })
               }
-              .margin({ top: 4, bottom: 4 })
+              .width(32)
+              .height(32)
+              .onClick(() => this.cancelExportTask())
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
 
+            // 进度环是这一屏唯一的读数，所以放大：68 → 92，百分比 13 → 19。
+            Stack({ alignContent: Alignment.Center }) {
+              Progress({ value: Math.max(1, this.exportProgress), total: 100, type: ProgressType.Ring })
+                .width(92)
+                .height(92)
+                .color($r('app.color.amber'))
+                .style({ strokeWidth: 6, enableScanEffect: true, enableSmoothEffect: true })
+              Text(`${Math.max(0, this.exportProgress).toFixed(1)}%`)
+                .fontSize(19)
+                .fontWeight(FontWeight.Bold)
+                .fontColor($r('app.color.text_primary'))
+            }
+
+            if (this.exportLoadingText.length > 0) {
               Text(this.exportLoadingText)
                 .fontSize(13)
                 .fontColor($r('app.color.text_tertiary'))
@@ -1355,28 +1435,10 @@ struct Editor {
                 .maxLines(2)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
             }
-            .width('100%')
-            .alignItems(HorizontalAlign.Center)
-
-            // 右上角关闭 X 按钮
-            Button() {
-              Stack({ alignContent: Alignment.Center }) {
-                AppIcon({ name: AppIconName.Close, iconSize: 13, iconColor: $r('app.color.text_secondary') })
-              }
-              .width(28)
-              .height(28)
-              .borderRadius(14)
-              .backgroundColor($r('app.color.track_bg'))
-              .border({ width: 1, color: $r('app.color.ed_line') })
-            }
-            .type(ButtonType.Circle)
-            .width(36)
-            .height(36)
-            .backgroundColor(Color.Transparent)
-            .onClick(() => this.cancelExportTask())
           }
-          .width('84%')
-          .padding({ left: 20, right: 20, top: 18, bottom: 24 })
+          .width('82%')
+          .alignItems(HorizontalAlign.Center)
+          .padding({ left: 20, right: 16, top: 14, bottom: 26 })
           .backgroundColor($r('app.color.ed_surface'))
           .borderRadius(18)
           .border({ width: 1, color: $r('app.color.ed_line') })
@@ -1396,7 +1458,7 @@ struct Editor {
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
-            Text('这次剪辑无法还原。源素材可能被删除或被移动了。')
+            Text('这条剪辑依赖的源素材少了一个或几个。只要有任意一个源视频被删除或移走，就不能继续这条剪辑。把原视频放回相册后可以再试。')
               .fontSize(13)
               .fontColor($r('app.color.text_tertiary'))
               .lineHeight(19)
@@ -1406,30 +1468,23 @@ struct Editor {
                 .fontColor($r('app.color.text_tertiary'))
                 .lineHeight(19)
             }
-            Row({ space: 12 }) {
-              Button('返回')
-                .layoutWeight(1)
-                .type(ButtonType.Capsule)
-                .fontSize(14)
-                .fontColor($r('app.color.text_primary'))
-                .backgroundColor($r('app.color.track_bg'))
-                .onClick(() => {
-                  this.driftVisible = false
-                  this.getUIContext().getRouter().back()
-                })
-              Button('当作新剪辑打开')
-                .layoutWeight(1)
-                .type(ButtonType.Capsule)
-                .fontSize(14)
-                .fontColor($r('app.color.card_bg'))
-                .backgroundColor($r('app.color.ink'))
-                .onClick(() => {
-                  // 页面在弹窗打开前已经铺成白纸，这里只需收起弹窗。
-                  this.driftVisible = false
-                })
-            }
-            .width('100%')
-            .margin({ top: 4 })
+            // 只有一个出口。
+            //
+            // 原来这里是「返回 / 当作新剪辑打开」两个按钮：后者用剩下的素材从头来。
+            // 那等于把"原素材少了一个"这件事半推半就地放过去了 —— 用户按下去，
+            // 得到的是一版和当初不一样的剪辑，而屏幕上看不出差别。
+            // 规则定成"少一个就不让继续"，就只留返回，不给这个模糊地带。
+            Button('返回')
+              .width('100%')
+              .type(ButtonType.Capsule)
+              .fontSize(14)
+              .fontColor($r('app.color.text_primary'))
+              .backgroundColor($r('app.color.track_bg'))
+              .onClick(() => {
+                this.driftVisible = false
+                this.getUIContext().getRouter().back()
+              })
+              .margin({ top: 4 })
           }
           .width('84%')
           .padding(24)

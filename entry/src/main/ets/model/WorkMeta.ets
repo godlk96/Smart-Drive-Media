@@ -49,6 +49,17 @@ export class WorkMeta {
   tripStartTs: number = 0
   tripEndTs: number = 0
   tracks: WorkTracks = new WorkTracks()
+  /**
+   * 这件作品**绑定的全部源片段**：它所在那一趟（或那几趟）行程里**所有视角**的文件名，
+   * 不只是导出时真正用到的那几条。
+   *
+   * 存在的理由是一个很粗暴、但不会出错的问题：「原素材是不是少了一个？」
+   * `tracks` 回答不了 —— 单视角导出时它只记了 front，后视角被删了也看不出来，
+   * 而还原会把整趟行程都带回来，缺了就会在模板行里露馅。
+   *
+   * 旧 sidecar 没有这个字段，解析成空数组；这时调用方退回用 `tracks` 判定。
+   */
+  sourceClips: Array<string> = []
   /** T1..T6；存 string 以容纳未知值（见文件头注释） */
   templateId: string = ''
   /**
@@ -181,6 +192,15 @@ export function parseWorkMeta(raw: string): WorkMeta | undefined {
   meta.tripStartTs = typeof source.tripStartTs === 'number' ? source.tripStartTs : 0
   meta.tripEndTs = typeof source.tripEndTs === 'number' ? source.tripEndTs : 0
   meta.tracks = normalizeTracks(source.tracks)
+  const rawSourceClips = source.sourceClips
+  if (Array.isArray(rawSourceClips)) {
+    for (let i = 0; i < rawSourceClips.length; i++) {
+      const item = rawSourceClips[i]
+      if (typeof item === 'string' && item.length > 0 && meta.sourceClips.indexOf(item) < 0) {
+        meta.sourceClips.push(item)
+      }
+    }
+  }
   meta.templateId = typeof source.templateId === 'string' ? source.templateId : ''
   meta.playback = {
     playheadMs: typeof sourcePlayback.playheadMs === 'number' ? sourcePlayback.playheadMs : 0,
@@ -241,13 +261,19 @@ function pad2(value: number): string {
  * 以下展示格式化函数**从旧的记录模型原样搬来**，行为不许变 —— 卡片渲染依赖这些格式。
  */
 
-/** 「10月18日 21:04 导出」。时间戳非法时给占位串，卡片不塌。 */
+/**
+ * 「10月18日 21:04」。时间戳非法时给占位串，卡片不塌。
+ *
+ * 原来尾巴上还挂着一个「导出」（`10月18日 21:04 导出`）—— 那是个没有主语的动词，
+ * 念着像机器写的。而且这张卡就长在「我的剪辑」里，本来就只可能是导出时间，
+ * 不需要再用一个字去说明。
+ */
 export function formatExportTime(exportedAt: number): string {
   if (exportedAt <= 0) {
     return '导出时间未知'
   }
   const date = new Date(exportedAt)
-  return `${date.getMonth() + 1}月${date.getDate()}日 ${pad2(date.getHours())}:${pad2(date.getMinutes())} 导出`
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${pad2(date.getHours())}:${pad2(date.getMinutes())}`
 }
 
 /** `00:32` / `1:02:03`。负数兜底 0。 */

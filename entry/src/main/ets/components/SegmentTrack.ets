@@ -1,4 +1,4 @@
-import { Segment, segmentDurationSec, segmentOrdinal, MIN_SEGMENT_SEC } from '../model/SegmentModel'
+import { Segment, segmentDurationSec, segmentOrdinal, segmentDisplayName, MIN_SEGMENT_SEC } from '../model/SegmentModel'
 
 /**
  * 手柄拖动期间向页面补发预览寻道的节流间隔（spec §3.6.1：80ms）。
@@ -632,10 +632,38 @@ export struct SegmentTrack {
     .hitTestBehavior(HitTestMode.None)
   }
 
+  /** 这一段有没有紧挨着别的段（首尾相接，中间没有空档）。 */
+  private hasAdjacentSegment(segment: Segment): boolean {
+    for (let i = 0; i < this.segments.length; i++) {
+      const other: Segment = this.segments[i]
+      if (other.id === segment.id) {
+        continue
+      }
+      if (Math.abs(other.endSec - segment.startSec) < 1e-4 || Math.abs(other.startSec - segment.endSec) < 1e-4) {
+        return true
+      }
+    }
+    return false
+  }
+
+  /**
+   * 段块圆角。
+   *
+   * 固定 3 的来由：段与段紧贴时，两块各留大圆角会在接缝上下各凹进一个四分之一圆，
+   * 看着像「中间被剪掉了一截」—— 那正是当初要修掉的错觉。
+   *
+   * 但孤立的一段（前后都是空档、或者整条轨道上只有它）根本没有接缝可破坏。
+   * 这时候还压成 3 的方角，就是白白方着 —— 它是轨道上一个单独的东西，
+   * 就该长得像单独的东西。所以按邻接情况给：挨着别的段才收小。
+   */
+  private blockRadius(segment: Segment): number {
+    return this.hasAdjacentSegment(segment) ? 4 : 16
+  }
+
   @Builder
   segmentBlock(segment: Segment) {
     Stack({ alignContent: Alignment.Center }) {
-      Text(this.isRawFull ? '全片' : `片段 ${segmentOrdinal(this.segments, segment.id)}`)
+      Text(this.isRawFull ? '全片' : segmentDisplayName(segmentOrdinal(this.segments, segment.id)))
         .fontSize(12)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -653,14 +681,17 @@ export struct SegmentTrack {
     // 用绝对宽度而不是 layoutWeight：见 liveGapWeight 注释。
     .width(this.widthForSec(this.liveBlockWeight(segment)))
     .height('100%')
-    // 段与段紧贴，圆角必须收小：两块各留 7vp 圆角的话，接缝上下会各凹进一个
-    // 四分之一圆，看着又是一道「缺了一截」的缝 —— 正是要修掉的那个错觉。
-    .borderRadius(3)
+    .borderRadius(this.blockRadius(segment))
     .borderWidth(this.isSelected(segment) ? 1.5 : 1)
     .borderColor(segment.enabled
       ? (this.isSelected(segment) ? $r('app.color.amber') : $r('app.color.segment_border'))
       : $r('app.color.segment_off_border'))
-    .backgroundColor(segment.enabled ? $r('app.color.card_bg') : $r('app.color.segment_off_bg'))
+    // 选中态用 amber_soft 填底，而不是白底 + 琥珀描边：
+    // 描边是"画了一个框把它圈起来"，填色才是"这一块被选中了"。轨道上本来就是
+    // 浅底 + 白块的组合，再叠一层描边框，选中看起来像多了一个容器。
+    .backgroundColor(segment.enabled
+      ? (this.isSelected(segment) ? $r('app.color.amber_soft') : $r('app.color.card_bg'))
+      : $r('app.color.segment_off_bg'))
     .onClick(() => {
       if (this.onSelectSegment) {
         this.onSelectSegment(segment.id)

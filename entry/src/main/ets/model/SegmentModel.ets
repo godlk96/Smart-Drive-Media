@@ -108,6 +108,25 @@ export function segmentOrdinal(segments: Array<Segment>, id: number): number {
   return 0
 }
 
+/** 轨道块和参数行共用的中文序数表。段数上限是 MAX_SEGMENTS(3)，
+ *  但被关掉的段不占名额、仍留在数组里，序号有可能往上走，所以备到 9。 */
+const ORDINAL_CN: Array<string> = ['一', '二', '三', '四', '五', '六', '七', '八', '九']
+
+/**
+ * 段的展示名：「第一段 / 第二段 / 第三段」。
+ *
+ * 原来轨道块和参数行都写「片段 N」—— 念着像机器编号。而且顶栏那行 meta 已经在说
+ * 「1:00 · 1 段 · 6 视角」，同一个东西两个词。改成中文序数之后和顶栏同一套词，
+ * 也和「空白区间」配得上（段 ↔ 区间）。
+ */
+export function segmentDisplayName(ordinal: number): string {
+  const index: number = Math.max(1, Math.floor(ordinal)) - 1
+  if (index < ORDINAL_CN.length) {
+    return `第${ORDINAL_CN[index]}段`
+  }
+  return `第 ${ordinal} 段`
+}
+
 /** 解析倍速标签为因子。非法或超出 0.75–2.0 一律回落 1.0。 */
 export function speedFactor(speedLabel: string): number {
   const parsed = Number.parseFloat(speedLabel)

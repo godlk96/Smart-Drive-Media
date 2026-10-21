@@ -1,5 +1,7 @@
 import { WorkEntry } from '../service/WorkStore'
-import { formatExportTime, formatRecordSlotCount } from '../model/WorkMeta'
+import { formatExportTime, templateSlotCount } from '../model/WorkMeta'
+import { CameraPosition, resolveTemplateDefinition } from '../model/Models'
+import { getCameraZhNameById, normalizeCameraNameById } from '../constants/AppConstants'
 import { AppIcon, AppIconName } from './AppIcon'
 
 /**
@@ -44,12 +46,28 @@ export struct WorkCard {
     return ''
   }
 
-  /** 「4 机位」；无 sidecar 或模板取不到时返回空串，由 build() 决定整行不画。 */
-  private slotText(): string {
-    if (this.entry.meta) {
-      return formatRecordSlotCount(this.entry.meta.templateId)
+  /**
+   * 机位列表：「前 / 后 / 左后 / 右后」。
+   *
+   * 原来这里是一句「4 机位」。用户得先知道 4 机位是哪四个，才知道这条作品拍全了
+   * 没有；不同模板之间也比不了（双录的 2 机位和左右盲区的 2 机位完全不是一回事）。
+   * 直接列机位名，一眼看得出差别。
+   *
+   * 模板还认得才列名字：`templateSlotCount` 对未知模板返回 0，用它当判据 ——
+   * 不能直接看 `resolveTemplateDefinition` 的返回值，它对未知值会兜底成 T5，
+   * 于是老作品会被显示成「前」。
+   */
+  private cameraText(): string {
+    if (!this.entry.meta) {
+      return ''
     }
-    return ''
+    const templateId: string = this.entry.meta.templateId
+    if (templateSlotCount(templateId) <= 0) {
+      return ''
+    }
+    const names: Array<string> = resolveTemplateDefinition(templateId).requiredCameras
+      .map((camera: CameraPosition) => getCameraZhNameById(normalizeCameraNameById(String(camera))))
+    return names.join(' / ')
   }
 
   /** 导出时间：有 sidecar 用 exportedAt，无则退回文件名时间戳（= sortKey）。 */
@@ -72,7 +90,10 @@ export struct WorkCard {
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Cover)
-          .alt($r('app.media.app_icon'))
+          // 不要 .alt()：这里原来挂的是 app_icon，于是每次封面重新加载（切 tab、
+          // 进出多选）都会先画一帧 App 图标，看起来就是"闪了一下 App 图标"。
+          // 封面没加载出来时露出下面 Stack 的 stage_bg 就够了 —— 深色底和视频区同色，
+          // 是"画面还没到"，而不是"这里放了张 app 图标"。
       } else {
         Text('无封面')
           .fontSize(12)
@@ -100,7 +121,7 @@ export struct WorkCard {
         .hitTestBehavior(HitTestMode.None)
       }
 
-      this.playButton()
+      // 播放键不在这里了：见 playButton 的注释。封面现在是一个单一目标。
     }
     .width('100%')
     .aspectRatio(16 / 9)
@@ -110,21 +131,30 @@ export struct WorkCard {
     .border({ width: 1, color: $r('app.color.stage_divider') })
   }
 
+  /**
+   * 播放键（卡片右下角的动作组里）。
+   *
+   * 原来它压在封面右下角：白底 92% 不透明圆盘 + 近黑三角，压在大片亮画面上
+   * （雪地、天空）像贴了张贴纸。挪出视频区之后还有两个好处：封面重新变成一个
+   * 单一目标（点封面 = 重新剪辑），不用再在"点画面"和"点画面里的钮"之间猜。
+   *
+   * 底色跟着换成 track_bg 的实心暖灰片，不带描边 —— 卡片本身是白底，
+   * 白圆盘放上去会消失，而描边小方块在这个 App 里是**角标**的语言（「最近」
+   * 「无法重新剪辑」都长那样）。实心片才是"控件"。
+   */
   @Builder
   playButton() {
     Stack({ alignContent: Alignment.Center }) {
       AppIcon({
         name: AppIconName.Play,
-        iconSize: 13,
-        iconColor: $r('app.color.ink')
+        iconSize: 14,
+        iconColor: $r('app.color.text_primary')
       })
     }
-    .width(30)
-    .height(30)
-    .borderRadius(15)
-    .backgroundColor($r('app.color.card_bg'))
-    .opacity(0.92)
-    .margin({ right: 8, bottom: 8 })
+    .width(34)
+    .height(34)
+    .borderRadius(17)
+    .backgroundColor($r('app.color.track_bg'))
     .onClick(() => {
       if (this.onPlay) {
         this.onPlay()
@@ -132,6 +162,37 @@ export struct WorkCard {
     })
   }
 
+  /**
+   * 「保存到相册」。和播放键同一组、同一套外观（实心暖灰片、无描边）。
+   *
+   * 它单独在元信息下面左对齐时读起来是个标签 —— 那个带描边的小圆角块在这个 App 里
+   * 是角标（见 Index 的 tripRow 的「最近」）。现在和播放键并排放在卡片右下角，
+   * 两个控件互为语境，读起来才是"这里能按"。
+   */
+  @Builder
+  saveToAlbumButton() {
+    Text('保存到相册')
+      .fontSize(12)
+      .fontColor($r('app.color.text_primary'))
+      .height(34)
+      .padding({ left: 12, right: 12 })
+      .borderRadius(10)
+      .backgroundColor($r('app.color.track_bg'))
+      .onClick(() => {
+        if (this.onSaveToAlbum) {
+          this.onSaveToAlbum()
+        }
+      })
+  }
+
+  /**
+   * 多选态的勾选圆点。
+   *
+   * 原来用 `.position({ x: '88%', y: '5%' })`：百分比按**父容器宽度**算，
+   * 22 宽的圆点从 88% 起画，右边还空着一百多像素 —— 看着离角很远，
+   * 而且卡片宽度一变就得重调。现在交给外层 Stack 的 alignContent 对角放
+   * （见 build 里的 Alignment.TopEnd），圆点自己只留 6 的边距。
+   */
   @Builder
   selectBadge() {
     Stack({ alignContent: Alignment.Center }) {
@@ -144,7 +205,7 @@ export struct WorkCard {
     .borderRadius(11)
     .backgroundColor(this.selected ? $r('app.color.amber') : $r('app.color.card_bg'))
     .border({ width: 1.5, color: this.selected ? $r('app.color.amber') : $r('app.color.ed_line') })
-    .position({ x: '88%', y: '5%' })
+    .margin({ top: 6, right: 6 })
     .onClick(() => {
       if (this.onToggleSelect) {
         this.onToggleSelect()
@@ -152,31 +213,11 @@ export struct WorkCard {
     })
   }
 
-  /**
-   * 「保存到相册」小按钮。放在元信息下方，而不是封面角上：封面右下角已被 ▶ 占用、
-   * 卡片主体点击是重新剪辑，这里独立成一个 pill，既不压 ▶ 也不误触重剪。
-   * 降级卡片（`canReedit` 为假）同样可用 —— 只能看/存/删的作品也要能存。
-   */
-  @Builder
-  saveToAlbumButton() {
-    Text('保存到相册')
-      .fontSize(12)
-      .fontColor($r('app.color.text_secondary'))
-      .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-      .backgroundColor($r('app.color.ed_surface'))
-      .border({ width: 1, color: $r('app.color.ed_line') })
-      .borderRadius(7)
-      .margin({ top: 6 })
-      .onClick(() => {
-        if (this.onSaveToAlbum) {
-          this.onSaveToAlbum()
-        }
-      })
-  }
-
   build() {
     Column({ space: 0 }) {
-      Stack({ alignContent: Alignment.TopStart }) {
+      // TopEnd：只有 22×22 的勾选圆点会受它影响（封面是 100% 宽，对齐到一个角
+      // 跟对齐到另一个角没区别），于是圆点天然贴着右上角，卡片多宽都不用手算百分比。
+      Stack({ alignContent: Alignment.TopEnd }) {
         this.coverBlock()
         if (this.selectionMode) {
           this.selectBadge()
@@ -184,24 +225,36 @@ export struct WorkCard {
       }
       .width('100%')
 
-      Column({ space: 3 }) {
-        Text(this.exportTimeText())
-          .fontSize(14)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        if (this.slotText().length > 0) {
-          Text(this.slotText())
-            .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
+      Row() {
+        Column({ space: 3 }) {
+          Text(this.exportTimeText())
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
+          if (this.cameraText().length > 0) {
+            Text(this.cameraText())
+              .fontSize(12)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+          }
         }
-        this.saveToAlbumButton()
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        // 两个动作并排放在卡片右下角，都不压在视频上。
+        // 视频区因此重新变成一个单一目标（点封面 = 重新剪辑），
+        // 不用再在"点画面"和"点画面里的钮"之间猜。
+        Row({ space: 8 }) {
+          this.playButton()
+          this.saveToAlbumButton()
+        }
+        .alignItems(VerticalAlign.Center)
       }
       .width('100%')
-      .alignItems(HorizontalAlign.Start)
+      .alignItems(VerticalAlign.Center)
       .padding({ left: 10, right: 10, top: 10, bottom: 12 })
     }
     .width('100%')

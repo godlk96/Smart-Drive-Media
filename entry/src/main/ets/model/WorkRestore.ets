@@ -140,6 +140,34 @@ export function findMissingClipNames(tracks: WorkTracks, liveFileNames: Array<st
 }
 
 /**
+ * 作品**绑定的全部源片段**（`WorkMeta.sourceClips`）里，现场已经不在的那些。
+ * 按首次出现顺序，同名只报一次。
+ *
+ * 与 `findMissingClipNames` 的分工：那个看的是四条轨道（导出时**用到**的），
+ * 这个看的是这件作品依赖的全部源文件（整趟行程的所有视角）。
+ * 「少一个就不让继续剪辑」要的是后者 —— 不是"用到的那几个还在就行"。
+ */
+export function findMissingSourceClips(source: Array<string>, liveFileNames: Array<string>): Array<string> {
+  const present = new Set<string>()
+  for (let i = 0; i < liveFileNames.length; i++) {
+    if (liveFileNames[i].length > 0) {
+      present.add(liveFileNames[i])
+    }
+  }
+  const missing: Array<string> = []
+  for (let i = 0; i < source.length; i++) {
+    const name = source[i]
+    if (name.length > 0 && present.has(name)) {
+      continue
+    }
+    if (missing.indexOf(name) < 0) {
+      missing.push(name)
+    }
+  }
+  return missing
+}
+
+/**
  * 同名多份的取舍：`timestamp` 升序、再 `uri` 字典序。
  *
  * 必须给出一条**全序**（而不是「谁先遇到用谁」）：现场片段数组的顺序由扫描决定，

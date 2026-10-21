@@ -234,6 +234,35 @@ export class CoreBridge {
     return undefined
   }
 
+  /**
+   * 按 sidecar 记下的行程起止时间，在扫描结果里找回**整趟**行程。
+   *
+   * 为什么需要它：sidecar 的 `tracks` 只记导出那一刻真正送进编码器的轨道。
+   * 用单视角（T5）导出时只有 front 一条（T5 的 `backTrackCandidates` 也配成 front），
+   * 于是还原出来的"现场"只剩一路画面 —— 可用户一个视角都没删。
+   *
+   * 只认 `startTs` / `endTs` 精确匹配，不做"哪一趟最像"的模糊兜底：
+   * 进到这里之前 `resolveRestore` 已经用 `findMissingClipNames` 逐位比对过 sidecar 里的
+   * 每个源片段，**少一个就直接拦在门外**（「素材已不在」弹窗）。所以走到这一步素材一定齐全，
+   * 不需要猜；猜错会把用户别的行程的素材换进来，比不换更糟。
+   *
+   * 匹配不上就返回 undefined，调用方沿用 sidecar 拼出来的窄快照。两种正当情形：
+   * 跨行程的合并作品重启后已不在 `trips` 里（它的"现场"本来就只是选中的那几个片段），
+   * 以及 sidecar 没记行程时间的老数据。
+   */
+  private findScannedTripFor(meta: WorkMeta): TripSnapshot | undefined {
+    if (meta.tripStartTs <= 0 && meta.tripEndTs <= 0) {
+      return undefined
+    }
+    let found: TripSnapshot | undefined = undefined
+    this.trips.forEach((trip: TripSnapshot) => {
+      if (found === undefined && trip.startTs === meta.tripStartTs && trip.endTs === meta.tripEndTs) {
+        found = trip
+      }
+    })
+    return found
+  }
+
   private async collectDvrMetas(fetchResult: photoAccessHelper.FetchResult<photoAccessHelper.PhotoAsset>): Promise<Array<DvrMeta>> {
     let assets: Array<photoAccessHelper.PhotoAsset> = []
     try {
@@ -889,6 +918,34 @@ export class CoreBridge {
    * 合成快照**不注册进 `this.trips`**，只记在 `this.restoredTrip`（见其注释）。
    */
   restoreEditorStateFromLive(live: TripSnapshot, meta: WorkMeta): EditorStateModel {
+    // 把素材换成**整趟行程**。
+    //
+    // 入口传进来的 `live` 是 `buildRestoredTripSnapshot` 按 sidecar 的 `tracks` 拼的，
+    // 只有导出时真正用到的那几路画面 —— 单视角作品还原出来就是"这趟行程只有 1 个视角"。
+    // 还原要还原现场，所以这里按 sidecar 记的行程起止时间把扫描结果里的那一趟找回来，
+    // 用它的完整片段列表和时长替换掉；剪辑参数（模板 / 分段 / 倍速静音 / 播放头 / 水印）
+    // 仍然来自 sidecar，一个字不改 —— 那才是"当初怎么剪的"。
+    //
+    // 分段记的是源时间轴上的绝对毫秒，源时间轴不随视角多少变化，所以换回整趟不会错位。
+    const full: TripSnapshot | undefined = this.findScannedTripFor(meta)
+    if (full !== undefined) {
+      live.clips = full.clips
+      live.durationSec = full.durationSec
+      live.startTs = full.startTs
+      live.endTs = full.endTs
+      live.tripTitle = full.tripTitle
+      live.tripRange = full.tripRange
+      if (full.previewUri.length > 0) {
+        live.previewUri = full.previewUri
+      }
+      if (full.previewCamera.length > 0) {
+        live.previewCamera = full.previewCamera
+      }
+      if (full.previewFrameUri.length > 0) {
+        live.previewFrameUri = full.previewFrameUri
+      }
+      debugLog('剪辑', `还原换成整趟行程 trip=${full.id} 片段=${full.clips.length} 时长=${full.durationSec}s`)
+    }
     // 必须补时间轴：buildEditorState 把 activeSnapshot.timeline 直接赋给 this.tripTimeline，
     // 而 Task 3 的 buildRestoredTripSnapshot 刻意把 timeline 留空（TimelineService 引了
     // native 的 .so，纯模块引不了）。不填的话剪辑页时间轴是空的，模板选择与机位切换全废。

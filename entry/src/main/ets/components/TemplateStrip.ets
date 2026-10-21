@@ -64,11 +64,15 @@ export struct TemplateStrip {
   }
 
   /**
-   * 卡片描边宽度：选中 3，未选中 2（原来是 2 / 1）。
-   * 用户反馈"边框可以再粗一点"—— 70 高的卡上 1px 描边几乎看不出是个框。
+   * 卡片描边宽度：选中 2，未选中 1。
+   *
+   * 用户早先反馈"边框可以再粗一点"时，卡里是六种暖灰微色差的槽位 ——
+   * 整张卡几乎没有对比度，只能靠描边撑出形状。现在槽位是线框示意图、
+   * 选中那张整块填琥珀，选中与否已经由**填充**说清楚了，
+   * 描边退回去当边框用就行，不必再靠 3px 去喊。
    */
   private cardBorder(card: TemplateCardModel): number {
-    return card.id === this.activeTemplateId ? 3 : 2
+    return card.id === this.activeTemplateId ? 2 : 1
   }
 
   /**
@@ -98,7 +102,8 @@ export struct TemplateStrip {
       TemplateGlyph({
         templateId: card.id,
         boxWidth: this.thumbWidth(card.id) - this.glyphInset() * 2,
-        boxHeight: THUMB_HEIGHT - this.glyphInset() * 2
+        boxHeight: THUMB_HEIGHT - this.glyphInset() * 2,
+        active: card.id === this.activeTemplateId
       })
     }
     .width(this.thumbWidth(card.id))
@@ -125,7 +130,9 @@ export struct TemplateStrip {
         }, (card: TemplateCardModel) => `${card.id}-${card.id === this.activeTemplateId}-${this.missingViews(card).length > 0}`)
       }
       .alignItems(VerticalAlign.Top)
-      .padding({ left: 14, right: 14 })
+      // 14 → 0：模版行原来缩在白卡里，白卡自己有 14 的内边距。白卡拆掉之后
+      // 这条内边距会把整行推得比视频还窄，左右对不齐。现在交给页面统一的 10。
+      .padding({ left: 0, right: 0 })
     }
     .scrollable(ScrollDirection.Horizontal)
     .scrollBar(BarState.Off)

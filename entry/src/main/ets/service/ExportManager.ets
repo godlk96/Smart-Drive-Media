@@ -14,6 +14,24 @@ import { ExportProgressUpdate, exportPercent, exportStageText } from '../model/E
 
 export type ExportJobId = string
 
+/**
+ * 作品绑定的**全部**源片段名（这一趟 / 这几趟行程里所有视角），去重保序。
+ *
+ * 与 `collectWorkTracks` 的区别：那个记的是"导出时真正送进编码器的四条轨道"，
+ * 单视角导出只有 front 一条；这个记的是"这件作品依赖哪些源文件"，用来回答
+ * 「原素材是不是少了一个」。详见 `WorkMeta.sourceClips` 的注释。
+ */
+function collectSourceClipNames(clips: Array<DvrMeta>): Array<string> {
+  const out: Array<string> = []
+  for (let i = 0; i < clips.length; i++) {
+    const name: string = clips[i].fileName
+    if (name.length > 0 && out.indexOf(name) < 0) {
+      out.push(name)
+    }
+  }
+  return out
+}
+
 export interface ExportJobEvent {
   jobId: ExportJobId
   status: string
@@ -259,7 +277,13 @@ export class ExportManager {
         },
         (update: ExportProgressUpdate) => {
           if (!record.cancelled) {
-            this.notify(record, `${exportStageText(update.stage)} · ${update.percent.toFixed(1)}% · ${update.detail}`, update.percent)
+            // 百分比只由浮层中间那个进度环来表达。原来这行文案里也塞了一个
+            // 「· 28.9% ·」，于是同一个数字在同一个弹窗里出现两次。
+            // detail 为空时不再拖一个光秃秃的分隔符在尾巴上。
+            const label: string = update.detail.length > 0
+              ? `${exportStageText(update.stage)} · ${update.detail}`
+              : exportStageText(update.stage)
+            this.notify(record, label, update.percent)
           }
         },
         (): boolean => record.cancelled
@@ -403,6 +427,8 @@ export class ExportManager {
     meta.tripStartTs = snapshot.trip.startTs
     meta.tripEndTs = snapshot.trip.endTs
     meta.tracks = collectWorkTracks(clips, request)
+    // 记下**全部**源片段，而不只是导出用到的那几路 —— 还原时"少一个就不让进"靠它判定。
+    meta.sourceClips = collectSourceClipNames(clips)
     meta.templateId = snapshot.selectedTemplateId
     meta.playback = snapshot.playback
     meta.watermarkEnabled = snapshot.brand.watermarkEnabled
