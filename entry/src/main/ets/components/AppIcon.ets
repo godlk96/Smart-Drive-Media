@@ -203,6 +203,9 @@ export struct AppIcon {
  * 「这一屏会切成几格、谁大谁小」。所以这里直接按 Models.ets 的 `previewSlots`
  * 逐槽画方块 —— 缩略图与进画面后看到的分屏必然一致，改比例时图标自动跟着对。
  */
+/** 槽位之间的缝隙（每边内缩一半，相邻两格之间就是 3vp）。 */
+const SLOT_GAP: number = 1.5
+
 @Component
 export struct TemplateGlyph {
   @Prop templateId: string = ''
@@ -249,20 +252,17 @@ export struct TemplateGlyph {
   }
 
   /**
-   * 槽位底色 / 描边 / 字色。
+   * 槽位底色：实心色块，**不描边、不圆角**。
    *
-   * 这里是「白纸 + 墨线」的一层：未选中的版式是一张**线稿**（白格 + 墨色 1px 描边），
-   * 选中的那张直接填成**墨块**。两种状态是同一种材料（墨）的两个形态，不是在比谁更黑。
+   * 这里连着踩过三次：先是六种机位微色差（70vp 上分不出）、再是近黑实心块（太硬）、
+   * 再是"白纸上的线框"（一层卡片边 + 一层格子边 + 9px 字，三层矩形套着，看起来像表格单元格）。
    *
-   * 为什么选中不用琥珀：琥珀在这个 App 里是**动作色**（导出、进度）。选中模版如果也填琥珀，
-   * 它看起来就像一个能按的按钮，而不是"当前选中的那一个"。
+   * 现在是第四版：**只留色块**。没有卡片面、没有描边，形状全部由实心区域承担 ——
+   * 这样一排看过去是四个版式示意，而不是四张表格。选中态只是把同样的色块
+   * 从暖沙色换成正墨色：同一种材料，不是另一套装饰。
    */
   private slotColor(): Resource {
-    return this.active ? $r('app.color.text_primary') : $r('app.color.card_bg')
-  }
-
-  private slotBorderColor(): Resource {
-    return $r('app.color.text_primary')
+    return this.active ? $r('app.color.text_primary') : $r('app.color.slot_fill')
   }
 
   private slotLabelColor(): Resource {
@@ -287,12 +287,16 @@ export struct TemplateGlyph {
           }
           .justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Center)
-          .width(this.toPercent(slot.width))
-          .height(this.toPercent(slot.height))
-          .position({ x: this.toPercent(slot.x), y: this.toPercent(slot.y) })
+          // 用绝对尺寸而不是百分比：槽位要每边内缩 SLOT_GAP 才能露出缝隙。
+          // 没有描边之后，相邻两格的边界只剩这道缝 —— 不留缝的话 2 格版式和
+          // 4 格版式都会融成一整块，只剩里面的字在区分。
+          .width(Math.max(1, slot.width * this.fittedWidth() - SLOT_GAP * 2))
+          .height(Math.max(1, slot.height * this.fittedHeight() - SLOT_GAP * 2))
+          .position({
+            x: slot.x * this.fittedWidth() + SLOT_GAP,
+            y: slot.y * this.fittedHeight() + SLOT_GAP
+          })
           .backgroundColor(this.slotColor())
-          // 1px 描边：未选中时它是格子的全部 —— 线框示意图就靠这层线读出版式。
-          .border({ width: 1, color: this.slotBorderColor() })
         }, (slot: TemplatePreviewSlot) => slot.slotId)
       }
       .width(this.fittedWidth())
