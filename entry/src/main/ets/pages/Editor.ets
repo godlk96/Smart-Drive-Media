@@ -1301,7 +1301,9 @@ struct Editor {
               .type(ButtonType.Normal)
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.card_bg'))
+              // 琥珀底 + 白字只有 2.91:1，全 App 唯一的主操作反而不合格；
+              // 换成近黑字（5.92:1）。琥珀本身不动。
+              .fontColor($r('app.color.text_primary'))
               .backgroundColor($r('app.color.amber'))
               .borderRadius(12)
               .onClick(() => {
@@ -1602,7 +1604,7 @@ struct Editor {
                 .type(ButtonType.Normal)
                 .fontSize(15)
                 .fontWeight(FontWeight.Medium)
-                .fontColor($r('app.color.card_bg'))
+                .fontColor($r('app.color.text_primary'))
                 .backgroundColor($r('app.color.amber'))
                 .borderRadius(10)
                 .onClick(() => this.chooseOverwrite(true))

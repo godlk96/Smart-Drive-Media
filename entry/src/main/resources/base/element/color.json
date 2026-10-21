@@ -5,20 +5,8 @@
       "value": "#0F172A"
     },
     {
-      "name": "page_bg",
-      "value": "#F2F4F7"
-    },
-    {
       "name": "card_bg",
       "value": "#FFFFFF"
-    },
-    {
-      "name": "page_border",
-      "value": "#EAE8E3"
-    },
-    {
-      "name": "card_border",
-      "value": "#EDEAE4"
     },
     {
       "name": "track_bg",
@@ -65,20 +53,12 @@
       "value": "#1E1B17"
     },
     {
-      "name": "stage_slot",
-      "value": "#5A554C"
-    },
-    {
       "name": "segment_off_bg",
       "value": "#EFEDE8"
     },
     {
       "name": "segment_off_border",
       "value": "#E7E4DE"
-    },
-    {
-      "name": "chip_bg",
-      "value": "#FBFAF8"
     },
     {
       "name": "amber_deep",
@@ -89,24 +69,8 @@
       "value": "#E614120F"
     },
     {
-      "name": "overlay_fade",
-      "value": "#0014120F"
-    },
-    {
-      "name": "overlay_track",
-      "value": "#4DFFFFFF"
-    },
-    {
       "name": "overlay_text",
       "value": "#D6FFFFFF"
-    },
-    {
-      "name": "overlay_btn_bg",
-      "value": "#29FFFFFF"
-    },
-    {
-      "name": "overlay_btn_border",
-      "value": "#42FFFFFF"
     },
     {
       "name": "knob_shadow",
@@ -129,14 +93,6 @@
       "value": "#88000000"
     },
     {
-      "name": "export_text",
-      "value": "#F8FAFC"
-    },
-    {
-      "name": "amber_light",
-      "value": "#F0A94A"
-    },
-    {
       "name": "shadow_soft",
       "value": "#0F1C1B18"
     },
@@ -147,62 +103,6 @@
     {
       "name": "chip_amber_border",
       "value": "#F0DEC5"
-    },
-    {
-      "name": "chip_sage_bg",
-      "value": "#F0F5F1"
-    },
-    {
-      "name": "chip_sage_border",
-      "value": "#DAE7DC"
-    },
-    {
-      "name": "chip_sage_fg",
-      "value": "#2D6A4F"
-    },
-    {
-      "name": "chip_neutral_bg",
-      "value": "#F4F2ED"
-    },
-    {
-      "name": "chip_neutral_border",
-      "value": "#E4E1DA"
-    },
-    {
-      "name": "chip_neutral_fg",
-      "value": "#8A867D"
-    },
-    {
-      "name": "chip_rose_bg",
-      "value": "#FDF2F2"
-    },
-    {
-      "name": "chip_rose_border",
-      "value": "#F6D8D8"
-    },
-    {
-      "name": "chip_rose_fg",
-      "value": "#C53030"
-    },
-    {
-      "name": "chip_disabled_bg",
-      "value": "#F7F6F3"
-    },
-    {
-      "name": "chip_disabled_border",
-      "value": "#EAE8E3"
-    },
-    {
-      "name": "chip_disabled_fg",
-      "value": "#B5B0A6"
-    },
-    {
-      "name": "topbar_btn_bg",
-      "value": "#FFFFFF"
-    },
-    {
-      "name": "topbar_btn_border",
-      "value": "#E1E6ED"
     },
     {
       "name": "ed_bg",
@@ -223,34 +123,6 @@
     {
       "name": "ed_thumb_bg",
       "value": "#F2EEE5"
-    },
-    {
-      "name": "ed_slot_fg",
-      "value": "#4A453C"
-    },
-    {
-      "name": "slot_cam_front",
-      "value": "#EDE6D6"
-    },
-    {
-      "name": "slot_cam_back",
-      "value": "#DAD6CE"
-    },
-    {
-      "name": "slot_cam_left",
-      "value": "#D6DED7"
-    },
-    {
-      "name": "slot_cam_right",
-      "value": "#E2D6D2"
-    },
-    {
-      "name": "slot_cam_left_front",
-      "value": "#E4EBE2"
-    },
-    {
-      "name": "slot_cam_right_front",
-      "value": "#EDE0DB"
     }
   ]
 }
