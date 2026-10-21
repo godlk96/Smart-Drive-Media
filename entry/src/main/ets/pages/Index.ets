@@ -443,12 +443,6 @@ struct Index {
       Blank()
 
       if (this.activeTab === 0) {
-        Text(this.getSummaryText())
-          .fontSize(12)
-          .fontColor($r('app.color.text_tertiary'))
-      }
-
-      if (this.activeTab === 0) {
         if (this.canShowMergeButton()) {
           Button('合并剪辑')
             .height(38)
@@ -514,6 +508,24 @@ struct Index {
    * 一个 tab。现在它承担的是**标题**的活：字号跟原来的页面标题一样大，
    * 选中的近黑、未选中的浅灰，下面一条短的琥珀下划线。
    */
+  /**
+   * 「找到 22 组行程」—— 扫描结果，一句话，放在列表第一行上方。
+   *
+   * 原来这串数字挤在标题栏里，和两个 tab、一个动作并排。它是那一行里唯一不可操作的
+   * 信息：既不是待处理的队列，也不驱动任何决定，只回答"扫到了没有、扫到多少"。
+   * 挪下来之后，标题栏只剩"去哪儿"和"能做什么"。
+   */
+  @Builder
+  tripSummaryCaption() {
+    if (this.getSummaryText().length > 0) {
+      Text(`找到 ${this.getSummaryText()}行程`)
+        .fontSize(12)
+        .fontColor($r('app.color.text_tertiary'))
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 6 })
+    }
+  }
+
   @Builder
   tabItem(index: number, label: string) {
     Column({ space: 0 }) {
@@ -1025,6 +1037,7 @@ struct Index {
         } else if (this.state.empty) {
           this.emptyBlock()
         } else {
+          this.tripSummaryCaption()
           this.tripList()
         }
       }

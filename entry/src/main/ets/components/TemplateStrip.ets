@@ -6,11 +6,15 @@ import { TemplateGlyph } from './AppIcon'
 /**
  * 模板行（spec §5.8 / §6.7）。
  *
- * 尺寸不再写死成一排同宽的卡：
- *   - 高度恒定 `THUMB_HEIGHT`，五张卡一样高，行是齐的；
- *   - 宽度按版式比例算，封顶 `MAX_THUMB_WIDTH`。
- * 于是槽位**横向永远铺满卡片**（左右不留白），比例不够高时上下留白 ——
- * 32:9 的「左右盲区」在 118×70 的卡里是 118×33 的一条，上下各留 18.5。
+ * 宽度按版式比例算，但**上下都设了限**：
+ *   - 高度恒定 `THUMB_HEIGHT`，几张卡一样高，行是齐的；
+ *   - 宽度 = 高度 × 画布比例，夹在 [MIN_THUMB_WIDTH, MAX_THUMB_WIDTH] 之间。
+ *
+ * 为什么不干脆完全等宽：这些卡片承载的是**几何形状本身**，形状就是信息，
+ * 全等宽会把 32:9 的「左右盲区」压成一条细带、格子里「左后/右后」的字也跟着变小。
+ * 但也正因为如此，早先"只封顶不封底"的做法会让一排卡差到两倍（118 / 62 / 83 / 118），
+ * 行读起来是参差的。抬一个下限之后参差从 56 收到 30，肉眼基本齐，
+ * 同时每张版式图仍然按真实比例、仍然尽量大。
  *
  * 卡片下面那行模板名（防追尾双录 / 避险防加塞 …）已经删掉：一张卡就是一个版式图，
  * 机位靠槽位里的字和槽位底色区分，不再靠名字。
@@ -21,6 +25,14 @@ import { TemplateGlyph } from './AppIcon'
  */
 const THUMB_HEIGHT: number = 70
 const MAX_THUMB_WIDTH: number = 118
+/**
+ * 卡片最小宽度。
+ *
+ * 不设下限时，8:9 的「双录」只有 62 宽、16:9 的「四机位」有 118 宽，一排差近两倍。
+ * 抬到 88 之后：双录/三机位落在 88，其余仍在 118，参差收敛到 30 —— 排是齐的，
+ * 版式图也还是按真实比例画的。
+ */
+const MIN_THUMB_WIDTH: number = 88
 const CARD_GAP: number = 12
 
 @Component
@@ -38,7 +50,7 @@ export struct TemplateStrip {
   private thumbWidth(templateId: string): number {
     const definition = resolveTemplateDefinition(templateId)
     const natural: number = THUMB_HEIGHT * (definition.canvasWidth / definition.canvasHeight)
-    return Math.min(MAX_THUMB_WIDTH, Math.round(natural))
+    return Math.max(MIN_THUMB_WIDTH, Math.min(MAX_THUMB_WIDTH, Math.round(natural)))
   }
 
   private missingViews(card: TemplateCardModel): string {

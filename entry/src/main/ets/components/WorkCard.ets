@@ -132,34 +132,26 @@ export struct WorkCard {
   }
 
   /**
-   * 播放键（卡片右下角的动作组里）。
+   * 「播放」。和「保存到相册」同一套外观、同一份量。
    *
-   * 原来它压在封面右下角：白底 92% 不透明圆盘 + 近黑三角，压在大片亮画面上
-   * （雪地、天空）像贴了张贴纸。挪出视频区之后还有两个好处：封面重新变成一个
-   * 单一目标（点封面 = 重新剪辑），不用再在"点画面"和"点画面里的钮"之间猜。
-   *
-   * 底色跟着换成 track_bg 的实心暖灰片，不带描边 —— 卡片本身是白底，
-   * 白圆盘放上去会消失，而描边小方块在这个 App 里是**角标**的语言（「最近」
-   * 「无法重新剪辑」都长那样）。实心片才是"控件"。
+   * 这里原来是一个只有 ▶ 的图标片，和旁边的文字按钮并排 —— 两个动作两套语言，
+   * 而孤零零的 ▶ 还得让用户猜是"看成片"还是"预览一下"。移动端规范里，
+   * 独立图标只留给标准导航（返回箭头那种），其余控制要么配文字、要么就别用图标。
    */
   @Builder
   playButton() {
-    Stack({ alignContent: Alignment.Center }) {
-      AppIcon({
-        name: AppIconName.Play,
-        iconSize: 14,
-        iconColor: $r('app.color.text_primary')
+    Text('播放')
+      .fontSize(12)
+      .fontColor($r('app.color.text_primary'))
+      .height(34)
+      .padding({ left: 14, right: 14 })
+      .borderRadius(10)
+      .backgroundColor($r('app.color.track_bg'))
+      .onClick(() => {
+        if (this.onPlay) {
+          this.onPlay()
+        }
       })
-    }
-    .width(34)
-    .height(34)
-    .borderRadius(17)
-    .backgroundColor($r('app.color.track_bg'))
-    .onClick(() => {
-      if (this.onPlay) {
-        this.onPlay()
-      }
-    })
   }
 
   /**
