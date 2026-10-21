@@ -262,11 +262,12 @@ export struct TemplateGlyph {
    * 从暖沙色换成正墨色：同一种材料，不是另一套装饰。
    */
   private slotColor(): Resource {
-    return this.active ? $r('app.color.text_primary') : $r('app.color.slot_fill')
+    // 两种状态同色：选中由外层卡片的描边颜色表达，块本身不动。
+    return $r('app.color.slot_fill')
   }
 
   private slotLabelColor(): Resource {
-    return this.active ? $r('app.color.card_bg') : $r('app.color.text_primary')
+    return $r('app.color.text_primary')
   }
 
   /** 槽位窄到 40vp 以下降一档字号，否则「左前」会顶到格子边。 */

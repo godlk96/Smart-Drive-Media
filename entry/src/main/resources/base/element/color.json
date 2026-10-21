@@ -18,7 +18,11 @@
     },
     {
       "name": "slot_fill",
-      "value": "#DCD5C6"
+      "value": "#D3CAB7"
+    },
+    {
+      "name": "tile_border",
+      "value": "#DAD4C6"
     },
     {
       "name": "text_primary",

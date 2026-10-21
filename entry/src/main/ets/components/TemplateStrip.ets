@@ -25,6 +25,8 @@ import { TemplateGlyph } from './AppIcon'
  */
 const SLOT_WIDTH: number = 86
 const THUMB_HEIGHT: number = 72
+/** 版式图与外框之间的留白（也保证圆角不会切到色块）。 */
+const TILE_INSET: number = 4
 const CARD_GAP: number = 12
 
 @Component
@@ -68,8 +70,16 @@ export struct TemplateStrip {
         active: card.id === this.activeTemplateId
       })
     }
-    .width(SLOT_WIDTH)
-    .height(THUMB_HEIGHT)
+    .width(SLOT_WIDTH + TILE_INSET * 2)
+    .height(THUMB_HEIGHT + TILE_INSET * 2)
+    .padding(TILE_INSET)
+    .borderRadius(8)
+    // 只做一个框：选中不填色、不换块色，只把框从浅灰换成正墨。
+    // 粗细两态保持一致，切换时内容不会位移。
+    .borderWidth(1.5)
+    .borderColor(card.id === this.activeTemplateId
+      ? $r('app.color.text_primary')
+      : $r('app.color.tile_border'))
     .opacity(this.missingViews(card).length > 0 ? 0.4 : 1)
     .stateStyles({
       normal: { .opacity(this.missingViews(card).length > 0 ? 0.4 : 1) },
