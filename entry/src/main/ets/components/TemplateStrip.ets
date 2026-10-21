@@ -124,7 +124,11 @@ export struct TemplateStrip {
     .borderRadius(10)
     .borderWidth(this.cardBorder(card))
     .borderColor(card.id === this.activeTemplateId ? $r('app.color.amber') : $r('app.color.ed_line'))
-    .backgroundColor($r('app.color.ed_thumb_bg'))
+    // 选中卡再压一层极淡的琥珀：除了"整块填实"，卡面本身也被托起来一点。
+    // 不引入新色相，用的还是琥珀的浅阶。
+    .backgroundColor(card.id === this.activeTemplateId
+      ? $r('app.color.amber_soft')
+      : $r('app.color.ed_thumb_bg'))
     // 版式图现在内缩了 4，本来就够不着圆角，这层裁切是双保险：
     // 万一以后有人把 glyphInset 调小，槽位的方角也不会漏到圆角外面。
     .clip(true)

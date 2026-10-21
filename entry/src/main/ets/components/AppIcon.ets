@@ -264,7 +264,10 @@ export struct TemplateGlyph {
   }
 
   private slotBorderColor(): Resource {
-    return this.active ? $r('app.color.amber') : $r('app.color.segment_border')
+    // 未选中用 glyph_stroke（#8A867D，落在卡面上 3.05:1）而不是更浅的 segment_border：
+    // 后者只有 1.13:1，线几乎融进卡面，四张缩略图看上去就是三个空框。
+    // 界面里的图形按 WCAG 要 3:1 才读得出来。
+    return this.active ? $r('app.color.amber') : $r('app.color.glyph_stroke')
   }
 
   private slotLabelColor(): Resource {

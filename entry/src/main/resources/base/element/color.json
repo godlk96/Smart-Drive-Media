@@ -17,6 +17,10 @@
       "value": "#E4E1DA"
     },
     {
+      "name": "glyph_stroke",
+      "value": "#8A867D"
+    },
+    {
       "name": "text_primary",
       "value": "#1C1B18"
     },

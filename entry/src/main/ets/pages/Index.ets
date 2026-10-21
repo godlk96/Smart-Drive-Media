@@ -217,21 +217,6 @@ struct Index {
     return { radius: 8, color: $r('app.color.shadow_soft'), offsetX: 0, offsetY: 2 }
   }
 
-  /**
-   * 顶栏右侧那行摘要：「22 组」。
-   *
-   * 原来是「22 段 · 29:00」。两个问题：编辑页刚把切出来的剪辑叫「第一段 / 第二段」，
-   * 这里的「22 段」会被读成"22 个剪辑片段"，撞词；总时长在这个位置也没什么用
-   * —— 用户看的是列表里每一趟的时长，不是总和。改成「组」，只说有几组。
-   */
-  private getSummaryText(): string {
-    const count: number = this.displayCards.length
-    if (count === 0) {
-      return ''
-    }
-    return `${count} 组`
-  }
-
   private handleCardClick(card: TripCardModel): void {
     if (this.selectionMode) {
       this.toggleTripSelection(card)
@@ -508,24 +493,6 @@ struct Index {
    * 一个 tab。现在它承担的是**标题**的活：字号跟原来的页面标题一样大，
    * 选中的近黑、未选中的浅灰，下面一条短的琥珀下划线。
    */
-  /**
-   * 「找到 22 组行程」—— 扫描结果，一句话，放在列表第一行上方。
-   *
-   * 原来这串数字挤在标题栏里，和两个 tab、一个动作并排。它是那一行里唯一不可操作的
-   * 信息：既不是待处理的队列，也不驱动任何决定，只回答"扫到了没有、扫到多少"。
-   * 挪下来之后，标题栏只剩"去哪儿"和"能做什么"。
-   */
-  @Builder
-  tripSummaryCaption() {
-    if (this.getSummaryText().length > 0) {
-      Text(`找到 ${this.getSummaryText()}行程`)
-        .fontSize(12)
-        .fontColor($r('app.color.text_tertiary'))
-        .width('100%')
-        .padding({ left: 16, right: 16, bottom: 6 })
-    }
-  }
-
   @Builder
   tabItem(index: number, label: string) {
     Column({ space: 0 }) {
@@ -1037,7 +1004,6 @@ struct Index {
         } else if (this.state.empty) {
           this.emptyBlock()
         } else {
-          this.tripSummaryCaption()
           this.tripList()
         }
       }
