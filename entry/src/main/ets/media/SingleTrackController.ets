@@ -139,6 +139,14 @@ export class SingleTrackController {
 
   private disposed: boolean = false
   private prepared: boolean = false
+  /**
+   * 换段后正在等那次"强制定位"的 seekDone —— 等到才算这一格真的出画了。
+   *
+   * 为什么不在 prepared 时就报：prepared 只说明源就绪，紧接着还要强制 seek 到当前播放头
+   * （见 prepared 分支里的 reconcile(desired, true)），首帧是在 seek 落地后才解码出来的。
+   * 早报会让预览区撤掉遮罩时露出一帧错位置的画面。
+   */
+  private awaitingReloadReady: boolean = false
   /** 播放器里当前**已就绪**的 uri；'' 表示没有。 */
   private loadedUri: string = ''
   /** 正在载入的 uri；'' 表示没有载入在进行。 */
@@ -237,6 +245,8 @@ export class SingleTrackController {
   private onProgress?: (globalMs: number) => void
   /** 段播完时上报该段的**全局结束毫秒**，由协调器决定下一步（本类不做任何决定）。 */
   private onBoundary?: (segmentEndMs: number) => void
+  /** 换段进入 `prepared` 时上报，给预览区做切模板时的对齐（见 setOnReloaded）。 */
+  private onReloaded?: () => void
 
   constructor(trackId: string, camera: string) {
     this.trackId = trackId
@@ -324,8 +334,24 @@ export class SingleTrackController {
     this.onBoundary = onBoundary
   }
 
-  /** 绑定该机位的段序列（全局时间网格对齐）。空数组表示该槽位无源。 */
-  bindSegments(segments: Array<SegmentSpan>): void {
+  /**
+   * 「这一格重新载入完了」回调 —— 每次换段进入 `prepared` 时触发。
+   *
+   * 给预览区做切模板/换机位时的对齐用：新机位的 prepare 是异步的，各格完成时间不同，
+   * 于是四格会一个一个换脸。预览区在换模板时盖一层底色，收到**所有待载入槽位**的这个
+   * 回调后再撤掉，画面就是整块一起变的。
+   */
+  setOnReloaded(callback?: () => void): void {
+    this.onReloaded = callback
+  }
+
+  /**
+   * 绑定该机位的段序列（全局时间网格对齐）。空数组表示该槽位无源。
+   *
+   * 返回**是否触发了换段**。切模板时每格都会调到这里，但只有真的换了机位/段的那些
+   * 才需要重新 prepare；预览区靠这个返回值决定"哪些格要等"，没换的格不必被遮住。
+   */
+  bindSegments(segments: Array<SegmentSpan>): boolean {
     const next: Array<SegmentSpan> = []
     for (let i = 0; i < segments.length; i++) {
       const source = segments[i]
@@ -342,7 +368,7 @@ export class SingleTrackController {
 
     if (this.sameSpans(next)) {
       // 段序列没变：保留当前播放状态，避免模板切换时无谓地重载。
-      return
+      return false
     }
     this.spans = next
     if (USE_PLAYLIST_PROBE) {
@@ -368,6 +394,7 @@ export class SingleTrackController {
     // 不依赖调用方随后恰好调用了 setDuration / updateClockMaster —— 旧架构正是靠这种隐式调用顺序，
     // 一旦某个调用点漏掉就表现为"切了模板但画面不动"。
     void this.reconcile(this.desired, false)
+    return true
   }
 
   getSegments(): Array<SegmentSpan> {
@@ -1201,6 +1228,8 @@ export class SingleTrackController {
         } catch (_) {}
         void this.applyVolume()
         void this.applyPlaybackRate()
+        // 下一件事一定是"强制 seek 到当前播放头"，等那次 seekDone 再报就绪。
+        this.awaitingReloadReady = true
         // 就绪后重新对账：强制 seek 定位到当前播放头（确保即使在 0ms 也能强制解码首帧出画，避免黑屏）
         void this.reconcile(this.desired, true)
         return
@@ -1241,6 +1270,13 @@ export class SingleTrackController {
         return
       }
       this.seekInFlight = false
+      // 换段后的那次强制定位落地了 → 这一格可以出画了，报给预览区。
+      if (this.awaitingReloadReady) {
+        this.awaitingReloadReady = false
+        if (this.onReloaded) {
+          this.onReloaded()
+        }
+      }
       // seek 完成后再对账一次：此时才会真正 play（避免"seek 未完成就开始播"导致画面回跳）。
       void this.reconcile(this.desired, false)
     })

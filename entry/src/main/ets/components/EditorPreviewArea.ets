@@ -8,8 +8,16 @@ import { MAX_PREVIEW_SLOTS, SlotGeometry, buildSlotGeometry, templateAspectRatio
 import { SingleTrackView } from './SingleTrackView'
 import { debugLog } from '../utils/Logger'
 
-interface PersistentSlotState {
-  index: number
+/**
+ * 切模板遮罩的兜底上限。
+ *
+ * 正常情况下遮罩由"所有待载入槽位都出画"撤掉（见 handleSlotReady）；
+ * 这个超时只负责一种情况：某格永远不报（surface 拿不到、prepare 失败、seek 被拒）。
+ * 到点无条件撤罩 —— 宁可露一帧不一致，也不能让预览永久停在底色上。
+ */
+const SWITCH_MASK_TIMEOUT_MS: number = 800
+
+interface PersistentSlotState {  index: number
   visible: boolean
   camera: string
   x: number
@@ -58,6 +66,19 @@ export struct EditorPreviewArea {
   onPlaybackEnded?: () => void
 
   @State private slots: Array<PersistentSlotState> = []
+  /**
+   * 切模板/换机位时盖住预览的那层底色。
+   *
+   * 四个槽位各自异步 prepare，各格完成时间不同 —— 不盖的话就是"四格一个一个换脸"。
+   * 盖到**所有待载入槽位都报出画**再撤，画面才是整块一起变的。
+   * 撤罩条件见 handleSlotReady；超时兜底见 SWITCH_MASK_TIMEOUT_MS。
+   */
+  @State private switching: boolean = false
+  /** 本次切换里还在等出画的槽位下标。 */
+  private pendingSlots: Set<number> = new Set<number>()
+  /** 遮罩代数：每次开始/结束都 +1，让挂起的超时回调自己作废。 */
+  private maskToken: number = 0
+  private maskTimer: number = -1
   private manager: GlobalTimelineManager = new GlobalTimelineManager()
   private disposed: boolean = false
 
@@ -99,6 +120,7 @@ export struct EditorPreviewArea {
 
   aboutToDisappear(): void {
     this.disposed = true
+    this.clearSwitchMaskTimer()
     this.manager.release()
   }
 
@@ -116,6 +138,10 @@ export struct EditorPreviewArea {
       // 按 `i === 0` 会让 T4 预览没有声音（缺陷 7.2）。
       // 现在由 SingleTrackController 按机位（camera === 'Front'）自行判断。
       const controller = new SingleTrackController(`slot_${i}`, camera)
+      // 这一格换段后出画了就报一声，遮罩靠它判断什么时候可以撤。
+      controller.setOnReloaded(() => {
+        this.handleSlotReady(i)
+      })
       this.manager.registerTrack(controller)
       initialSlots.push({
         index: i,
@@ -188,6 +214,8 @@ export struct EditorPreviewArea {
     const grid: TimeGrid = buildTimeGrid(clips)
 
     const nextSlots: Array<PersistentSlotState> = []
+    // 这次切换里真正会重新载入的槽位。只有它们需要等 —— 机位没变的格本来就显示着对的画面。
+    const reloadingSlots: Array<number> = []
     for (let i = 0; i < MAX_PREVIEW_SLOTS && i < this.slots.length; i++) {
       const slot = this.slots[i]
       if (i < geometries.length) {
@@ -203,7 +231,10 @@ export struct EditorPreviewArea {
         slot.zoomX = geometry.zoomX
         slot.hasSource = segments.length > 0
         slot.controller.setCamera(camera)
-        slot.controller.bindSegments(segments)
+        const reloading: boolean = slot.controller.bindSegments(segments)
+        if (reloading && segments.length > 0) {
+          reloadingSlots.push(i)
+        }
       } else {
         slot.visible = false
         slot.hasSource = false
@@ -213,11 +244,71 @@ export struct EditorPreviewArea {
     }
 
     this.slots = nextSlots
+    // 先把遮罩立起来再让下面的协调器干活：@State 的这次赋值和 this.slots 在同一帧生效，
+    // 用户看到的第一帧就已经是"新布局 + 底色"，不会先闪一下半新半旧的四格。
+    this.beginSwitchMask(reloadingSlots)
 
     this.manager.setDuration(grid.durationMs)
     this.manager.updateClockMaster()
     this.syncTransport()
     debugLog('EditorPreviewArea', `applied template=${templateId} slots=${geometries.length} durationMs=${grid.durationMs}`)
+  }
+
+  /**
+   * 开始一次切换遮罩；「没有任何槽位需要重新载入」时**不盖**。
+   *
+   * 后者很常见：两个模板在某一格用的是同一个机位，那一格 `bindSegments` 会命中
+   * `sameSpans` 直接早退。这种情况下切换本来就是瞬时的，盖一下反而多黑一帧。
+   */
+  private beginSwitchMask(reloadingSlots: Array<number>): void {
+    this.clearSwitchMaskTimer()
+    this.maskToken += 1
+    if (reloadingSlots.length === 0) {
+      this.pendingSlots.clear()
+      this.switching = false
+      return
+    }
+    const pending = new Set<number>()
+    for (let i = 0; i < reloadingSlots.length; i++) {
+      pending.add(reloadingSlots[i])
+    }
+    this.pendingSlots = pending
+    this.switching = true
+    const token = this.maskToken
+    this.maskTimer = setTimeout(() => {
+      if (token === this.maskToken) {
+        debugLog('EditorPreviewArea', `切换遮罩超时，强制撤罩，仍有 ${this.pendingSlots.size} 格未报就绪`)
+        this.finishSwitchMask()
+      }
+    }, SWITCH_MASK_TIMEOUT_MS)
+  }
+
+  /** 某一格出画了。所有待载入的格都到齐才撤罩。 */
+  private handleSlotReady(index: number): void {
+    if (this.disposed || !this.switching) {
+      return
+    }
+    if (!this.pendingSlots.has(index)) {
+      return
+    }
+    this.pendingSlots.delete(index)
+    if (this.pendingSlots.size === 0) {
+      this.finishSwitchMask()
+    }
+  }
+
+  private finishSwitchMask(): void {
+    this.clearSwitchMaskTimer()
+    this.maskToken += 1
+    this.pendingSlots.clear()
+    this.switching = false
+  }
+
+  private clearSwitchMaskTimer(): void {
+    if (this.maskTimer >= 0) {
+      clearTimeout(this.maskTimer)
+      this.maskTimer = -1
+    }
   }
 
   /** 只同步"播放意图 / 音量 / 速率"，不改变时钟位置。 */
@@ -333,6 +424,15 @@ export struct EditorPreviewArea {
       .width(templateAspectRatio(this.activeTemplateId) >= 16 / 9 ? '100%' : undefined)
       .height(templateAspectRatio(this.activeTemplateId) < 16 / 9 ? '100%' : undefined)
       .backgroundColor($r('app.color.stage_bg'))
+
+      // 切换遮罩。整块铺底色（和舞台同色），所以看上去不是"多了一层黑框"，
+      // 而是画面先暗下去、等新机位全部出画再一起亮起来。
+      if (this.switching) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor($r('app.color.stage_bg'))
+      }
     }
     .width('100%')
     .height('100%')
