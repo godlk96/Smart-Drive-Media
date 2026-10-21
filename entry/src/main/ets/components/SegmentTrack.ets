@@ -663,18 +663,22 @@ export struct SegmentTrack {
   @Builder
   segmentBlock(segment: Segment) {
     Stack({ alignContent: Alignment.Center }) {
-      Text(this.isRawFull ? '全片' : segmentDisplayName(segmentOrdinal(this.segments, segment.id)))
-        .fontSize(12)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .textAlign(TextAlign.Center)
-        .width('100%')
-        .fontColor(segment.enabled
-          ? (this.isSelected(segment) ? $r('app.color.amber_deep') : $r('app.color.text_secondary'))
-          : $r('app.color.text_disabled'))
-        .decoration(segment.enabled
-          ? { type: TextDecorationType.None }
-          : { type: TextDecorationType.LineThrough, color: $r('app.color.text_disabled') })
+      // 整片态不写字：那一段就是全部素材，写「全片」只是把参数行上的话再说一遍，
+      // 而一个写着字的空框看起来像没填的表单。
+      if (!this.isRawFull) {
+        Text(segmentDisplayName(segmentOrdinal(this.segments, segment.id)))
+          .fontSize(12)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .textAlign(TextAlign.Center)
+          .width('100%')
+          .fontColor(segment.enabled
+            ? (this.isSelected(segment) ? $r('app.color.amber_deep') : $r('app.color.text_secondary'))
+            : $r('app.color.text_disabled'))
+          .decoration(segment.enabled
+            ? { type: TextDecorationType.None }
+            : { type: TextDecorationType.LineThrough, color: $r('app.color.text_disabled') })
+      }
       // 手柄不再画在段块里：覆盖层统一画在整条轨道之上（见 handles 注释）
     }
     // 宽度在这里现算（读 @State），拖手柄时段块跟着手指一起伸缩，而不是等松手才跳。
@@ -682,7 +686,9 @@ export struct SegmentTrack {
     .width(this.widthForSec(this.liveBlockWeight(segment)))
     .height('100%')
     .borderRadius(this.blockRadius(segment))
-    .borderWidth(this.isSelected(segment) ? 1.5 : 1)
+    // 整片态：不描边，填一层浅琥珀 —— 读作"整条素材是一整块"，
+    // 而不是"一个没填的框"。切了第一刀之后才变成有边界的段块。
+    .borderWidth(this.isRawFull ? 0 : (this.isSelected(segment) ? 1.5 : 1))
     .borderColor(segment.enabled
       ? (this.isSelected(segment) ? $r('app.color.amber') : $r('app.color.segment_border'))
       : $r('app.color.segment_off_border'))
@@ -690,7 +696,7 @@ export struct SegmentTrack {
     // 描边是"画了一个框把它圈起来"，填色才是"这一块被选中了"。轨道上本来就是
     // 浅底 + 白块的组合，再叠一层描边框，选中看起来像多了一个容器。
     .backgroundColor(segment.enabled
-      ? (this.isSelected(segment) ? $r('app.color.amber_soft') : $r('app.color.card_bg'))
+      ? (this.isRawFull || this.isSelected(segment) ? $r('app.color.amber_soft') : $r('app.color.card_bg'))
       : $r('app.color.segment_off_bg'))
     .onClick(() => {
       if (this.onSelectSegment) {

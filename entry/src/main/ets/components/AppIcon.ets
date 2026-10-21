@@ -296,14 +296,12 @@ export struct TemplateGlyph {
           .height(this.toPercent(slot.height))
           .position({ x: this.toPercent(slot.x), y: this.toPercent(slot.y) })
           .backgroundColor(this.slotColor())
-          .borderRadius(2)
           // 1px 描边：未选中时它是格子的全部 —— 线框示意图就靠这层线读出版式。
           .border({ width: 1, color: this.slotBorderColor() })
         }, (slot: TemplatePreviewSlot) => slot.slotId)
       }
       .width(this.fittedWidth())
       .height(this.fittedHeight())
-      .borderRadius(2)
     }
     .width(this.boxWidth)
     .height(this.boxHeight)

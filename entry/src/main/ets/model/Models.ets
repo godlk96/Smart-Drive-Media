@@ -47,6 +47,8 @@ export interface Trip {
   tracks: Record<CameraPosition, CameraTrack>
   startTs: number
   endTs: number
+  /** 这趟行程合并了几组；见 TripSnapshot.groupCount。 */
+  groupCount: number
 }
 
 export interface TemplateSlotBinding {
@@ -453,6 +455,7 @@ export function tripFromSnapshot(snapshot: TripSnapshot): Trip {
     rangeText: snapshot.tripRange,
     durationSec: snapshot.durationSec,
     tracks: tracks,
+    groupCount: snapshot.groupCount,
     startTs: snapshot.startTs,
     endTs: snapshot.endTs
   }

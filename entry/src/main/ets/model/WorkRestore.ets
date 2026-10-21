@@ -264,6 +264,7 @@ export function buildRestoredTripSnapshot(meta: WorkMeta, liveClips: Array<DvrMe
   snapshot.durationSec = meta.durationMs / 1000
   snapshot.startTs = meta.tripStartTs
   snapshot.endTs = meta.tripEndTs
+  snapshot.groupCount = meta.sourceTripCount > 0 ? meta.sourceTripCount : 1
   snapshot.clips = collectHitClips(meta.tracks, liveClips)
   snapshot.timeline = []
   for (let i = 0; i < snapshot.clips.length; i++) {

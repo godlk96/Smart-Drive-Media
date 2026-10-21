@@ -1009,13 +1009,18 @@ struct Editor {
    * 也没人看的时钟区间。换成三个能从 state 直接取到的量：素材总时长、切了几段、
    * 这台车这次录到了几个视角。
    */
+  /**
+   * 标题下面那行：`1 组 · 6 视角`。
+   *
+   * 原来还带一个总时长（`1:00 · 1 段 · 6 视角`）。时长在这里是第三重要的信息，
+   * 而它下面的进度条已经写着 0:00 / 1:00 了 —— 同一个数字在一屏里出现两次，
+   * 还会跟进度条抢读。只留「这版切了几组、拍了几路」两个真正的身份信息。
+   */
   private tripIdentityMeta(): string {
-    const duration: string = formatTripDuration(this.state.totalDurationSec)
-    const segments: number = this.state.isRawFull && this.tripSnapshot.segmentCount > 1
-      ? this.tripSnapshot.segmentCount
-      : this.state.segments.length
+    // 「组」= 这趟素材由几组行程合并而来（没合并就是 1），不是切了几段。
+    const groups: number = this.tripSnapshot.groupCount > 0 ? this.tripSnapshot.groupCount : 1
     const cameras: number = this.state.timeline.length
-    return `${duration} · ${segments} 段 · ${cameras} 视角`
+    return `${groups} 组 · ${cameras} 视角`
   }
 
   @Builder
@@ -1198,29 +1203,24 @@ struct Editor {
         onToggleEnabled: () => this.handleDeleteSegment(this.selectedSegmentId())
       })
 
-      // 判据是 `isRawFull`，不是 `segments.length > 1`。
+      // 轨道常驻。
       //
-      // 只有未动过的整片（isRawFull）才没有可做的动作：轨道上是一整条 0→片尾，
-      // 拖两端就是拖全片（进度条已经能拖），剪刀在参数行里。原来它照画不误，
-      // 于是屏幕上出现一个巨大的空框、里面写着「全片」—— 和参数行左边的「全片」
-      // 重复，而且看起来像个没填的表单。
-      //
-      // 写成 `segments.length > 1` 是错的：第一刀落在 isRawFull 上时，
-      // splitOrInsertAt 返回的是**一个** 15 秒的高光片段（不是两段），
-      // 于是切完仍然是 1 段，轨道被这条判断藏掉了 —— 用户点完剪刀，下方什么都没出现。
-      if (!this.state.isRawFull) {
-        SegmentTrack({
-          segments: this.state.segments,
-          totalDurationSec: this.state.totalDurationSec,
-          selectedSegmentId: this.selectedSegmentId(),
-          isRawFull: this.state.isRawFull,
-          onSelectSegment: (id: number) => this.handleSelectSegment(id),
-          onSelectGap: (startSec: number) => this.handleSelectGap(startSec),
-          onAdjustStart: () => this.pauseAllPreview(),
-          onAdjustPreview: (sec: number) => this.handleAdjustPreview(sec),
-          onAdjustBoundary: (id: number, edge: 'start' | 'end', sec: number) => this.handleAdjustBoundary(id, edge, sec)
-        })
-      }
+      // 早先这里有个 `if (!isRawFull)`：整片态不画轨道，因为那时它就是一个巨大的空框、
+      // 里面写着「全片」，和左边参数行重复。但这样一来，切一刀之后页面会凭空长出一条
+      // 轨道、行高跟着跳 —— 同一个东西两种形态，用户会以为"剪了才出现时间轴"。
+      // 现在整片态也画，只是那一条不写字、不描边，就是一根填实的浅琥珀条：
+      // 读作"整条素材是一整块"，而不是"一个没填的表单框"。
+      SegmentTrack({
+        segments: this.state.segments,
+        totalDurationSec: this.state.totalDurationSec,
+        selectedSegmentId: this.selectedSegmentId(),
+        isRawFull: this.state.isRawFull,
+        onSelectSegment: (id: number) => this.handleSelectSegment(id),
+        onSelectGap: (startSec: number) => this.handleSelectGap(startSec),
+        onAdjustStart: () => this.pauseAllPreview(),
+        onAdjustPreview: (sec: number) => this.handleAdjustPreview(sec),
+        onAdjustBoundary: (id: number, edge: 'start' | 'end', sec: number) => this.handleAdjustBoundary(id, edge, sec)
+      })
     }
     .width('100%')
   }
@@ -1232,10 +1232,10 @@ struct Editor {
       // 提示是多余的（四张版式一眼能看出是能选的），标题也降级成一个小标签 ——
       // 白卡一拆，这排缩略图自己就是这一块的主角，不需要再给它一个头。
       Text('模版')
-        .fontSize(12)
+        .fontSize(14)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_tertiary'))
-        .margin({ top: 16, bottom: 2 })
+        .fontColor($r('app.color.text_secondary'))
+        .margin({ top: 16, bottom: 4 })
 
       TemplateStrip({
         cards: this.state.templateCards,

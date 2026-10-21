@@ -426,6 +426,7 @@ export class ExportManager {
     meta.tripTitle = snapshot.trip.title
     meta.tripStartTs = snapshot.trip.startTs
     meta.tripEndTs = snapshot.trip.endTs
+    meta.sourceTripCount = snapshot.trip.groupCount
     meta.tracks = collectWorkTracks(clips, request)
     // 记下**全部**源片段，而不只是导出用到的那几路 —— 还原时"少一个就不让进"靠它判定。
     meta.sourceClips = collectSourceClipNames(clips)

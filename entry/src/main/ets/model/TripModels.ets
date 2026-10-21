@@ -26,6 +26,13 @@ export class TripSnapshot {
   timeline: Array<TimelineTrackModel> = []
   startTs: number = 0
   endTs: number = 0
+  /**
+   * 这趟行程由**几组**行程合并而来；没做过合并就是 1。
+   *
+   * 合并剪辑在 `mergeTrips` 里把选中的几趟拼成一个快照，这个数就是当时选了几趟。
+   * 剪辑页标题下面那行「N 组 · N 视角」里的组数读它 —— 组的单位是**行程**，不是段。
+   */
+  groupCount: number = 1
 }
 
 export class PreviewSource {

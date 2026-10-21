@@ -651,6 +651,7 @@ export class CoreBridge {
     merged.timeline = timeline
     merged.startTs = startTs
     merged.endTs = endTs
+    merged.groupCount = selected.length
     this.trips.set(merged.id, merged)
     debugLog('扫描', `已创建合并行程，片段组数=${selected.length}`)
     return merged.id
@@ -1210,6 +1211,7 @@ export class CoreBridge {
     cloned.previewCamera = snapshot.previewCamera
     cloned.startTs = snapshot.startTs
     cloned.endTs = snapshot.endTs
+    cloned.groupCount = snapshot.groupCount
     cloned.timeline = snapshot.timeline.slice()
     cloned.clips = snapshot.clips.map((item: DvrMeta) => {
       const clip = new DvrMeta()

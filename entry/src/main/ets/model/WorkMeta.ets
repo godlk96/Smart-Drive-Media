@@ -48,6 +48,8 @@ export class WorkMeta {
   tripTitle: string = ''
   tripStartTs: number = 0
   tripEndTs: number = 0
+  /** 这件作品由几组行程合并而来（1 = 没合并）。0 表示旧 sidecar 没记。 */
+  sourceTripCount: number = 0
   tracks: WorkTracks = new WorkTracks()
   /**
    * 这件作品**绑定的全部源片段**：它所在那一趟（或那几趟）行程里**所有视角**的文件名，
@@ -191,6 +193,7 @@ export function parseWorkMeta(raw: string): WorkMeta | undefined {
   meta.tripTitle = typeof source.tripTitle === 'string' ? source.tripTitle : ''
   meta.tripStartTs = typeof source.tripStartTs === 'number' ? source.tripStartTs : 0
   meta.tripEndTs = typeof source.tripEndTs === 'number' ? source.tripEndTs : 0
+  meta.sourceTripCount = typeof source.sourceTripCount === 'number' ? source.sourceTripCount : 0
   meta.tracks = normalizeTracks(source.tracks)
   const rawSourceClips = source.sourceClips
   if (Array.isArray(rawSourceClips)) {
