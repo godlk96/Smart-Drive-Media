@@ -251,29 +251,22 @@ export struct TemplateGlyph {
   /**
    * 槽位底色 / 描边 / 字色。
    *
-   * 三个版本走过：最早六个机位六种暖灰微色差（70vp 高的缩略图上根本分不出来，
-   * 四张版式长得一样）；改成 ink 实心块（对比度太硬，四张卡像四块黑板）；
-   * 再改成 stage_slot 暖灰（还是"一排在比谁更黑"）。
+   * 这里是「白纸 + 墨线」的一层：未选中的版式是一张**线稿**（白格 + 墨色 1px 描边），
+   * 选中的那张直接填成**墨块**。两种状态是同一种材料（墨）的两个形态，不是在比谁更黑。
    *
-   * 现在反过来做：**未选中只画线框**（白底 + 细描边 + 深字），选中的填实琥珀。
-   * 于是整排缩略图平时是一组安静的示意图，只有被选中的那一张是实心的，
-   * 不用靠描边粗细去比。版式仍然靠几何区分：一格 / 上下两格 / 上一下二 / 四宫格。
+   * 为什么选中不用琥珀：琥珀在这个 App 里是**动作色**（导出、进度）。选中模版如果也填琥珀，
+   * 它看起来就像一个能按的按钮，而不是"当前选中的那一个"。
    */
   private slotColor(): Resource {
-    // 未选中是"白纸上的线框"：格子填白（和卡面同色），形状全靠 1px 描边 ——
-    // 描边落在白卡上是 3.63:1，比任何浅色填充都清楚。
-    return this.active ? $r('app.color.amber') : $r('app.color.card_bg')
+    return this.active ? $r('app.color.text_primary') : $r('app.color.card_bg')
   }
 
   private slotBorderColor(): Resource {
-    // 未选中用 glyph_stroke（#8A867D，落在卡面上 3.05:1）而不是更浅的 segment_border：
-    // 后者只有 1.13:1，线几乎融进卡面，四张缩略图看上去就是三个空框。
-    // 界面里的图形按 WCAG 要 3:1 才读得出来。
-    return this.active ? $r('app.color.amber') : $r('app.color.glyph_stroke')
+    return $r('app.color.text_primary')
   }
 
   private slotLabelColor(): Resource {
-    return this.active ? $r('app.color.card_bg') : $r('app.color.text_secondary')
+    return this.active ? $r('app.color.card_bg') : $r('app.color.text_primary')
   }
 
   /** 槽位窄到 40vp 以下降一档字号，否则「左前」会顶到格子边。 */
